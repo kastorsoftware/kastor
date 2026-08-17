@@ -1,0 +1,86 @@
+name: Build Windows binaries
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: development-release
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust MSVC toolchain
+        run: rustup default stable-x86_64-pc-windows-msvc
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build debug binary
+        run: npm run tauri -- build --debug --no-bundle
+
+      - name: Prepare debug artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\debug | Out-Null
+          Copy-Item src-tauri\target\debug\kastor.exe artifacts\debug\Kastor-debug.exe -ErrorAction Stop
+
+      - name: Build release binary
+        run: npm run tauri -- build --no-bundle
+
+      - name: Prepare release artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts\release | Out-Null
+          Copy-Item src-tauri\target\release\kastor.exe artifacts\release\Kastor-release.exe -ErrorAction Stop
+
+      - name: Upload debug workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kastor-debug-${{ github.sha }}
+          path: artifacts/debug/Kastor-debug.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kastor-release-${{ github.sha }}
+          path: artifacts/release/Kastor-release.exe
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish latest development build
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseTag = "development-build"
+          $releaseTitle = "Development build"
+          $releaseNotes = "Built automatically from commit $env:GITHUB_SHA."
+
+          gh release view $releaseTag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $releaseTag --prerelease --title $releaseTitle --notes $releaseNotes
+          } else {
+            gh release edit $releaseTag --title $releaseTitle --notes $releaseNotes --prerelease
+          }
+
+          gh release upload $releaseTag artifacts\debug\Kastor-debug.exe artifacts\release\Kastor-release.exe --clobber
