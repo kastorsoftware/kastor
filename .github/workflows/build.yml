@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: warp-windows-latest-x64-8x
 
     steps:
       - name: Check out source
