@@ -1,45 +1,65 @@
 # Kastor
 
-Desktop-приложение для работы с Telegram-аккаунтами. Интерфейс написан на React, нативная часть — на Rust/Tauri.
+[<kbd>🇷🇺 Русский</kbd>](README.ru.md)
 
-> Проект распространяется по [The Unlicense](LICENSE): код можно использовать, изменять, публиковать и продавать без условий, в том числе без указания автора. Он предоставляется «как есть», без гарантий.
+Desktop application for working with Telegram accounts. The UI is built with React; the native layer uses Rust and Tauri.
 
-## Возможности
+> This project is released under [The Unlicense](LICENSE). You may use, modify, publish, and sell the code without conditions or attribution. It is provided as is, without warranties.
 
-- импорт, авторизация и управление Telegram-аккаунтами;
-- работа с прокси, их проверка и распределение по аккаунтам;
-- проверка аккаунтов, конвертация сессий и массовые действия;
-- инструменты для рассылок, парсинга, инвайтинга, автответов, клонирования и других сценариев;
-- локальное хранение данных в SQLite и очередь фоновых задач.
+## Features
 
-Используйте приложение законно, соблюдая правила Telegram и требования, применимые в вашей юрисдикции.
+- import, authorize, and manage Telegram accounts;
+- work with proxies, validate them, and distribute them among accounts;
+- check accounts, convert sessions, and perform batch actions;
+- tools for messaging, parsing, inviting, auto-replies, cloning, and other workflows;
+- local SQLite data storage and a background task queue.
 
-## Разработка
+Use the application lawfully and in compliance with Telegram's rules. You are responsible for the accounts you use.
 
-Нужны Node.js, Rust и системные зависимости Tauri для Windows. Для релизной сборки на Windows рекомендуется Rust MSVC-тулчейн.
+## Development
+
+Node.js, Rust, and the Windows Tauri system dependencies are required. The Rust MSVC toolchain is strongly recommended for builds.
 
 ```bash
 npm install
 npm run tauri dev
 ```
 
-Сборка фронтенда:
+Build the frontend:
 
 ```bash
 npm run build
 ```
 
-Сборка десктопного приложения:
+Build the desktop application:
 
 ```bash
 npm run tauri build
 ```
 
-## Структура
+## Project structure
 
-- `src/` — React-интерфейс;
-- `src-tauri/` — Rust/Tauri backend и MTProto-клиент.
+- `src/` — React frontend;
+- `src-tauri/` — Rust/Tauri backend and MTProto client.
 
-## Состояние кода
+## Roadmap
 
-Часть проекта создавалась и дорабатывалась в vibe-coding стиле. Перед использованием в продакшене или в чувствительных сценариях самостоятельно проверьте код, безопасность и соответствие своей задаче.
+Improving existing functionality is always the first priority.
+
+1. Update to the latest Telegram layer.
+2. Add macOS support.
+3. Add new modules when they are needed.
+
+## Known issues
+
+Linux and macOS are not supported yet.
+
+## Reporting issues and contributing
+
+If you find a bug, the worst thing to do is stay silent or send an angry message. The most helpful thing is to open an issue with a clear description: what you did, what you expected, what actually happened, and any relevant logs or screenshots. Well-described reports are much more likely to be resolved soon.
+
+Feature ideas are welcome as issues. Pull requests are welcome too — please clearly explain the problem they solve and keep them focused.
+
+## Code status
+
+About 85% of this project was created with AI; it is a hobby project made for fun. No guarantees are made that it works correctly or that using it will be safe for your accounts. Review the code before using it in sensitive or production scenarios.
