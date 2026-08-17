@@ -1,0 +1,12 @@
+[env]
+OPUS_LIB_DIR = { value = "lib/opus/lib", relative = true }
+OPUS_INCLUDE_DIR = { value = "lib/opus/include", relative = true }
+
+[build]
+rustflags = [
+    "--remap-path-prefix=C:\\Seafile\\Seafile\\sea\\combine\\src-tauri=",
+    "--remap-path-prefix=C:\\Users\\=",
+    "--remap-path-prefix=\\\\?\\C:\\=",
+    "--remap-path-prefix=/rustc/=",
+    "--remap-path-prefix=C:\\=",
+]

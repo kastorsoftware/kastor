@@ -1,0 +1,320 @@
+@import url("https://api.fontshare.com/v2/css?f[]=switzer@400,500,600,700,800&display=swap");
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html, body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: "Switzer", system-ui, -apple-system, sans-serif;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  .font-mono {
+    user-select: text;
+  }
+}
+
+:root {
+  --radius: 0.625rem;
+  --background: oklch(0.13 0.03 295);
+  --foreground: oklch(0.96 0.02 300);
+  --card: oklch(0.17 0.04 295);
+  --card-foreground: oklch(0.96 0.02 300);
+  --popover: oklch(0.17 0.04 295);
+  --popover-foreground: oklch(0.96 0.02 300);
+  --primary: oklch(0.62 0.24 300);
+  --primary-foreground: oklch(0.98 0.01 300);
+  --primary-glow: oklch(0.72 0.22 305);
+  --secondary: oklch(0.22 0.05 295);
+  --secondary-foreground: oklch(0.96 0.02 300);
+  --muted: oklch(0.2 0.04 295);
+  --muted-foreground: oklch(0.7 0.05 300);
+  --accent: oklch(0.3 0.12 300);
+  --accent-foreground: oklch(0.98 0.01 300);
+  --destructive: oklch(0.6 0.24 25);
+  --destructive-foreground: oklch(0.98 0.01 300);
+  --success: oklch(0.7 0.18 150);
+  --border: oklch(0.28 0.06 295);
+  --input: oklch(0.15 0.04 295);
+  --ring: oklch(0.62 0.24 300);
+  --gradient-primary: linear-gradient(135deg, oklch(0.62 0.24 300), oklch(0.4 0.2 290));
+  --gradient-glow: radial-gradient(circle at 50% 0%, oklch(0.62 0.24 300 / 0.35), transparent 70%);
+  --shadow-glow: 0 0 40px oklch(0.62 0.24 300 / 0.4);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --sidebar: oklch(0.1 0.03 295);
+  --sidebar-foreground: oklch(0.85 0.04 300);
+  --sidebar-primary: oklch(0.62 0.24 300);
+  --sidebar-primary-foreground: oklch(0.98 0.01 300);
+  --sidebar-accent: oklch(0.2 0.06 295);
+  --sidebar-accent-foreground: oklch(0.98 0.01 300);
+  --sidebar-border: oklch(0.22 0.05 295);
+  --sidebar-ring: oklch(0.62 0.24 300);
+}
+
+/* thin scrollbars */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: oklch(0.4 0 0 / 0.3);
+  border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.4 0 0 / 0.5);
+}
+
+/* global page scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: oklch(0.13 0.03 295);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(0.62 0.24 300 / 0.35);
+  border-radius: 4px;
+  border: 2px solid oklch(0.13 0.03 295);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.62 0.24 300 / 0.6);
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.update-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  width: min(24rem, calc(100vw - 2rem));
+  padding: 0.875rem 0.95rem;
+  border: 1px solid oklch(0.62 0.24 300 / 0.38);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(135deg, oklch(0.2 0.055 295 / 0.96), oklch(0.145 0.035 295 / 0.96)),
+    var(--card);
+  color: var(--foreground);
+  box-shadow:
+    0 18px 45px oklch(0 0 0 / 0.38),
+    0 0 0 1px oklch(1 0 0 / 0.04) inset,
+    0 0 32px oklch(0.62 0.24 300 / 0.16);
+  backdrop-filter: blur(16px);
+}
+
+.update-toast__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 auto;
+  border-radius: 0.625rem;
+  background: oklch(0.62 0.24 300 / 0.16);
+  color: oklch(0.78 0.18 305);
+  box-shadow: 0 0 0 1px oklch(0.62 0.24 300 / 0.22) inset;
+}
+
+.update-toast__title {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 700;
+}
+
+.update-toast__text {
+  margin-top: 0.125rem;
+  font-size: 0.8125rem;
+  line-height: 1.2rem;
+  color: var(--muted-foreground);
+}
+
+.update-toast__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.update-toast__close:hover {
+  background: oklch(1 0 0 / 0.07);
+  color: var(--foreground);
+}
+
+/* native select dropdown styling */
+select option {
+  background: oklch(0.18 0.01 260);
+  color: oklch(0.9 0 0);
+  padding: 6px 12px;
+}
+
+/* horizontal emoji slider used in boost page reaction picker */
+.emoji-slider {
+  display: flex;
+  gap: 0.375rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0.125rem 0.5rem;
+  scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(0.62 0.24 300 / 0.5) transparent;
+}
+.emoji-slider::-webkit-scrollbar {
+  height: 6px;
+}
+.emoji-slider::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+.emoji-slider::-webkit-scrollbar-thumb {
+  background: oklch(0.62 0.24 300 / 0.4);
+  border-radius: 3px;
+  transition: background 120ms ease;
+}
+.emoji-slider::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.62 0.24 300 / 0.7);
+}
+.emoji-slider-item {
+  flex: 0 0 auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.125rem;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+  user-select: none;
+}
+.emoji-slider-item:hover {
+  border-color: oklch(0.62 0.24 300 / 0.5);
+  background: oklch(0.62 0.24 300 / 0.08);
+  transform: translateY(-1px);
+}
+.emoji-slider-item[data-active="true"] {
+  border-color: oklch(0.62 0.24 300 / 0.7);
+  background: oklch(0.62 0.24 300 / 0.15);
+  box-shadow: 0 0 0 1px oklch(0.62 0.24 300 / 0.4) inset;
+}
+
+/* custom checkboxes */
+input[type="checkbox"] {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1.5px solid oklch(0.5 0 0 / 0.4);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+  position: relative;
+}
+input[type="checkbox"]:checked {
+  background: oklch(0.62 0.24 300);
+  border-color: oklch(0.62 0.24 300);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 5px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+input[type="checkbox"]:hover {
+  border-color: oklch(0.62 0.24 300 / 0.7);
+}
+
+/* number input arrows */
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  display: none;
+}
+
+/* custom thread counter with styled arrows */
+.thread-input-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: var(--card);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.thread-input-wrap:focus-within {
+  border-color: oklch(0.62 0.24 300 / 0.5);
+}
+.thread-input-wrap input {
+  width: 2.5rem;
+  text-align: center;
+  border: none;
+  background: transparent;
+  font-size: 0.875rem;
+  padding: 0.25rem 0;
+  outline: none;
+  color: var(--foreground);
+}
+.thread-input-wrap button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.75rem;
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.thread-input-wrap button:hover {
+  color: oklch(0.62 0.24 300);
+  background: oklch(0.62 0.24 300 / 0.08);
+}
+.thread-input-wrap button:active {
+  background: oklch(0.62 0.24 300 / 0.15);
+}
+.thread-input-wrap button svg {
+  width: 12px;
+  height: 12px;
+}

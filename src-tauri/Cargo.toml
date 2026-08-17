@@ -1,0 +1,51 @@
+[package]
+name = "kastor"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-clipboard-manager = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+lazy_static = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "io-util", "net", "fs", "macros", "process"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
+uuid = { version = "1", features = ["v4"], default-features = false }
+dirs = "5"
+aes = "0.8"
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+md5 = { version = "0.10", package = "md-5" }
+num-bigint = "0.4"
+rand = "0.8"
+hex = "0.4"
+byteorder = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+phonenumber = "0.3.9"
+ureq = { version = "3.3.0", features = ["json", "socks-proxy"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tokio-tungstenite = "0.24"
+httparse = "1.9"
+futures-util = "0.3"
+symphonia = { version = "0.5", features = ["mp3", "wav", "isomp4", "aac"] }
+ogg-opus = "0.1"
+rubato = "0.14"
+
+[profile.release]
+strip = true
+debug = false
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.release.build-override]
+debug = false

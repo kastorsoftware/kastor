@@ -1,0 +1,162 @@
+// word database for warmer: search terms and random phrases
+
+use rand::Rng;
+
+// popular russian search terms (4+ chars, guaranteed to have results on telegram)
+const SEARCH_WORDS: &[&str] = &[
+    "новости", "музыка", "фильмы", "рецепты", "спорт", "футбол", "хоккей",
+    "путешествия", "фотография", "программирование", "криптовалюта", "биткоин",
+    "инвестиции", "бизнес", "маркетинг", "дизайн", "мода", "красота",
+    "здоровье", "фитнес", "йога", "медитация", "психология", "книги",
+    "история", "наука", "космос", "технологии", "автомобили", "мотоциклы",
+    "кулинария", "выпечка", "садоводство", "рыбалка", "охота", "туризм",
+    "альпинизм", "велоспорт", "плавание", "теннис", "баскетбол", "волейбол",
+    "шахматы", "покер", "настольные", "кино", "сериалы", "аниме",
+    "комиксы", "игры", "minecraft", "fortnite", "valorant", "dota",
+    "образование", "английский", "математика", "физика", "химия",
+    "литература", "поэзия", "живопись", "скульптура", "архитектура",
+    "политика", "экономика", "финансы", "недвижимость", "строительство",
+    "ремонт", "интерьер", "мебель", "электроника", "смартфоны",
+    "компьютеры", "ноутбуки", "планшеты", "гаджеты", "робототехника",
+    "искусственный", "нейросети", "машинное", "блокчейн", "стартапы",
+    "фриланс", "удалённая", "вакансии", "резюме", "карьера",
+    "свадьба", "дети", "воспитание", "беременность", "материнство",
+    "домашние", "кошки", "собаки", "аквариум", "попугаи",
+    "астрология", "гороскоп", "эзотерика", "философия", "религия",
+    "волонтёрство", "благотворительность", "экология", "вегетарианство",
+    "кофе", "чай", "вино", "пиво", "коктейли", "рестораны",
+    "доставка", "скидки", "распродажа", "купоны", "кэшбэк",
+    "telegram", "youtube", "instagram", "tiktok", "twitter",
+    "подкасты", "радио", "стриминг", "блогинг", "контент",
+    "юмор", "мемы", "приколы", "анекдоты", "комедия",
+    "москва", "петербург", "казань", "новосибирск", "екатеринбург",
+    "краснодар", "сочи", "крым", "байкал", "камчатка",
+    "турция", "египет", "таиланд", "грузия", "армения",
+    "рисование", "вышивка", "вязание", "оригами", "керамика",
+    "гитара", "пианино", "барабаны", "скрипка", "саксофон",
+    "танцы", "балет", "хореография", "сальса", "хипхоп",
+    "кроссфит", "бодибилдинг", "пилатес", "стретчинг", "бокс",
+    "единоборства", "каратэ", "дзюдо", "тхэквондо", "самбо",
+    "сноуборд", "горные лыжи", "сёрфинг", "дайвинг", "парашют",
+    "квадрокоптер", "фотоаппарат", "объектив", "видеосъёмка", "монтаж",
+    "подкаст", "интервью", "дебаты", "лекция", "семинар",
+    "стипендия", "олимпиада", "конкурс", "грант", "диплом",
+    "рецензия", "обзор", "рейтинг", "топ", "подборка",
+    "лайфхак", "совет", "инструкция", "гайд", "туториал",
+    "распаковка", "тестирование", "сравнение", "выбор", "рекомендация",
+    "скандал", "расследование", "документальный", "репортаж", "интервью",
+    "концерт", "фестиваль", "выставка", "премьера", "спектакль",
+    "рецепт торта", "пицца дома", "суши рецепт", "борщ рецепт", "шашлык",
+    "ремонт квартиры", "дизайн кухни", "планировка", "перепланировка",
+    "автосервис", "тюнинг", "запчасти", "техосмотр", "страховка",
+    // English search terms
+    "news", "music", "movies", "recipes", "sports", "football", "basketball",
+    "travel", "photography", "programming", "cryptocurrency", "bitcoin",
+    "investing", "business", "marketing", "design", "fashion", "beauty",
+    "health", "fitness", "yoga", "meditation", "psychology", "books",
+    "history", "science", "space", "technology", "cars", "motorcycles",
+    "cooking", "baking", "gardening", "fishing", "hiking", "camping",
+    "cycling", "swimming", "tennis", "chess", "poker", "cinema",
+    "gaming", "education", "english", "mathematics", "physics", "chemistry",
+    "literature", "poetry", "painting", "architecture", "politics", "economics",
+    "finance", "real estate", "construction", "electronics", "smartphones",
+    "computers", "laptops", "gadgets", "robotics", "artificial intelligence",
+    "blockchain", "startups", "freelance", "remote work", "career",
+    "wedding", "parenting", "pets", "cats", "dogs", "aquarium",
+    "astrology", "philosophy", "ecology", "vegan", "coffee", "wine",
+    "podcast", "streaming", "blogging", "memes", "comedy", "humor",
+    // Spanish search terms
+    "noticias", "música", "películas", "recetas", "deportes", "fútbol",
+    "viajes", "fotografía", "programación", "criptomonedas", "inversiones",
+    "negocios", "diseño", "moda", "belleza", "salud", "fitness",
+    "yoga", "meditación", "psicología", "libros", "historia", "ciencia",
+    "tecnología", "coches", "cocina", "jardinería", "pesca", "senderismo",
+    "educación", "matemáticas", "física", "química", "literatura", "arte",
+    "economía", "finanzas", "mascotas", "gatos", "perros", "café",
+    "podcasts", "humor", "memes", "comedia", "videojuegos", "anime",
+];
+
+// short casual words/phrases for saved messages and fake chats
+const CASUAL_WORDS: &[&str] = &[
+    // Russian
+    "привет", "окей", "понял", "хорошо", "ладно", "спасибо", "пока",
+    "да", "нет", "может быть", "конечно", "точно", "согласен",
+    "интересно", "круто", "класс", "супер", "отлично", "норм",
+    "завтра", "сегодня", "вечером", "утром", "потом", "скоро",
+    "как дела", "что нового", "как сам", "всё ок", "нормально",
+    "дерево", "камень", "река", "облако", "солнце", "ветер",
+    "кофе", "чай", "обед", "ужин", "завтрак", "перекус",
+    "работа", "дом", "дорога", "метро", "автобус", "такси",
+    "фильм", "книга", "музыка", "игра", "прогулка", "сон",
+    "погода", "дождь", "снег", "жара", "холод", "весна",
+    "лето", "осень", "зима", "утро", "вечер", "ночь",
+    "кот", "собака", "птица", "рыба", "цветок", "лес",
+    "море", "горы", "парк", "город", "улица", "площадь",
+    // English
+    "hey", "okay", "got it", "good", "alright", "thanks", "bye",
+    "yes", "no", "maybe", "sure", "exactly", "agreed",
+    "interesting", "cool", "nice", "awesome", "great", "fine",
+    "tomorrow", "today", "tonight", "morning", "later", "soon",
+    "how are you", "what's up", "all good", "not bad", "doing well",
+    "tree", "stone", "river", "cloud", "sun", "wind",
+    "coffee", "tea", "lunch", "dinner", "breakfast", "snack",
+    "work", "home", "road", "subway", "bus", "taxi",
+    "movie", "book", "music", "game", "walk", "sleep",
+    "weather", "rain", "snow", "hot", "cold", "spring",
+    "summer", "autumn", "winter", "morning", "evening", "night",
+    "cat", "dog", "bird", "fish", "flower", "forest",
+    "sea", "mountains", "park", "city", "street", "square",
+    // Spanish
+    "hola", "vale", "entendido", "bien", "bueno", "gracias", "adiós",
+    "sí", "no", "quizás", "claro", "exacto", "de acuerdo",
+    "interesante", "genial", "guay", "increíble", "perfecto", "normal",
+    "mañana", "hoy", "esta noche", "por la mañana", "luego", "pronto",
+    "qué tal", "qué hay", "todo bien", "no está mal", "vamos bien",
+    "café", "té", "almuerzo", "cena", "desayuno", "merienda",
+    "trabajo", "casa", "camino", "metro", "autobús", "taxi",
+    "película", "libro", "música", "juego", "paseo", "dormir",
+    "tiempo", "lluvia", "nieve", "calor", "frío", "primavera",
+    "verano", "otoño", "invierno", "mañana", "tarde", "noche",
+    "gato", "perro", "pájaro", "pez", "flor", "bosque",
+    "mar", "montañas", "parque", "ciudad", "calle", "plaza",
+];
+
+pub fn random_search_word(rng: &mut impl Rng) -> String {
+    SEARCH_WORDS[rng.gen_range(0..SEARCH_WORDS.len())].to_string()
+}
+
+pub fn random_phrase(rng: &mut impl Rng) -> String {
+    let word_count = weighted_word_count(rng);
+    let mut words = Vec::with_capacity(word_count);
+    for _ in 0..word_count {
+        words.push(CASUAL_WORDS[rng.gen_range(0..CASUAL_WORDS.len())]);
+    }
+    words.join(" ")
+}
+
+// biased toward shorter messages: 1-2 words most common, 3-5 less common
+fn weighted_word_count(rng: &mut impl Rng) -> usize {
+    let roll = rng.gen_range(0..100);
+    if roll < 40 { 1 }
+    else if roll < 70 { 2 }
+    else if roll < 85 { 3 }
+    else if roll < 95 { 4 }
+    else { rng.gen_range(5..8) }
+}
+
+// public channels for direct resolve (fallback when searchGlobal returns empty)
+const PUBLIC_CHANNELS: &[&str] = &[
+    "telegram", "durov", "tginfo", "ru_python", "habr_com",
+    "rian_ru", "breakingmash", "varlamov", "medaborty", "lentachold",
+    "raborabot", "techcrunch", "bbcrussian", "fontanka_spb", "kommersant",
+    "rbc_news", "vedomosti", "thebell_io", "baza_channel", "shot_shot",
+    "readovkanews", "ria_novosti", "tass_agency", "iz_ru", "rt_russian",
+    "moscowmap", "moscowach", "spb_today", "krasnodar_kray", "novosibirsk_news",
+    "music_charts", "kinopoisk", "afaboronin", "sports_ru", "championat",
+    "crypto_lenta", "coindesk_ru", "forklog", "bits_media", "incrypted",
+    "cooking_book", "recipes_daily", "travel_blog", "photo_art", "design_mania",
+];
+
+pub fn random_public_channel(rng: &mut impl Rng) -> &'static str {
+    PUBLIC_CHANNELS[rng.gen_range(0..PUBLIC_CHANNELS.len())]
+}

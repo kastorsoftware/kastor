@@ -1,0 +1,11 @@
+{
+  "identifier": "default",
+  "description": "default app capability",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "dialog:allow-open",
+    "clipboard-manager:default"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "productName": "Kastor",
+  "version": "0.1.0",
+  "identifier": "com.kastor.desktop",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "kastor | free to use",
+        "width": 1504,
+        "height": 871,
+        "resizable": false,
+        "fullscreen": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline' https://api.fontshare.com; style-src-elem 'self' 'unsafe-inline' https://api.fontshare.com; font-src 'self' https://cdn.fontshare.com; img-src 'self' data: https://flagcdn.com https://t.me; connect-src 'self' ipc: http://ipc.localhost https://api.fontshare.com https://cdn.fontshare.com"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.png",
+      "icons/icon.ico"
+    ]
+  }
+}
