@@ -38,8 +38,7 @@ npm run tauri build
 ## Структура
 
 - `src/` — React-интерфейс;
-- `src-tauri/` — Rust/Tauri backend и MTProto-клиент;
-- `docs/` — документация в отдельном Git-репозитории.
+- `src-tauri/` — Rust/Tauri backend и MTProto-клиент.
 
 ## Состояние кода
 
