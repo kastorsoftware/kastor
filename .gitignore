@@ -3,6 +3,7 @@ dist/
 coverage/
 
 src-tauri/target/
+src-tauri/src/mtproto/tl_gen.rs
 
 .env
 .env.*
