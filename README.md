@@ -46,9 +46,9 @@ npm run tauri build
 
 Improving existing functionality is always the first priority.
 
-1. Update to the latest Telegram layer.
-2. Add macOS support.
-3. Add new modules when they are needed.
+- [x] Update the Telegram API to Layer 228.
+- [ ] Add macOS support.
+- [ ] Add new modules when they are needed.
 
 ## Known issues
 
