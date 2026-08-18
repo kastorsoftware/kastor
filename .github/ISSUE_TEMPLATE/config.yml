@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and general discussion
+    url: https://github.com/kastorsoftware/kastor/discussions
+    about: Use GitHub Discussions for questions that are not bug reports or feature requests.
