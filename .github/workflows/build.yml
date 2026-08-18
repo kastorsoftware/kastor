@@ -12,7 +12,7 @@ concurrency:
 
 jobs:
   build:
-    runs-on: warp-windows-latest-x64-8x
+    runs-on: windows-latest
 
     steps:
       - name: Check out source
