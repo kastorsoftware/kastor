@@ -185,43 +185,13 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
         let result = if path.is_dir() {
             match fmt {
                 ImportFormat::Tdata => {
-                    match import::import_tdata_folder(&path, &storage) {
-                        Ok(ids) => {
-                            let is_multi = ids.len() > 1;
-                            for id in ids {
-                                let session_path = storage.session_path(&id);
-                                let is_dupe = if let Ok(session) = super::session::TelethonSession::from_file(&session_path) {
-                                    existing_keys.contains(&session.auth_key)
-                                } else {
-                                    false
-                                };
-
-                                if is_dupe {
-                                    std::fs::remove_file(&session_path).ok();
-                                    std::fs::remove_file(storage.json_path(&id)).ok();
-                                    std::fs::remove_dir_all(storage.tdata_dir(&id)).ok();
-                                    dbg_log!("import_accounts: DUPLICATE, removed id={}", id);
-                                    results.push(ImportedAccount {
-                                        id: String::new(),
-                                        success: false,
-                                        missing_json: false,
-                                        error: Some("duplicate".to_string()),
-                                        multi_account_split: false,
-                                    });
-                                } else {
-                                    results.push(ImportedAccount {
-                                        id,
-                                        success: true,
-                                        missing_json: false,
-                                        error: None,
-                                        multi_account_split: is_multi,
-                                    });
-                                }
-                            }
-                            continue;
-                        }
-                        Err(e) => Err(e),
-                    }
+                    append_tdata_results(
+                        import::import_tdata_tree(&path, &storage),
+                        &storage,
+                        &existing_keys,
+                        &mut results,
+                    );
+                    continue;
                 }
                 _ => {
                     let session_file = find_session_in_dir(&path);
@@ -233,6 +203,24 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
                 }
             }
         } else if path.extension().map(|e| e == "zip").unwrap_or(false) {
+            if fmt == ImportFormat::Tdata {
+                match import::import_tdata_archive(&path, &storage) {
+                    Ok(import_results) => append_tdata_results(
+                        import_results,
+                        &storage,
+                        &existing_keys,
+                        &mut results,
+                    ),
+                    Err(e) => results.push(ImportedAccount {
+                        id: String::new(),
+                        success: false,
+                        missing_json: false,
+                        error: Some(e),
+                        multi_account_split: false,
+                    }),
+                }
+                continue;
+            }
             import::import_from_zip(&path, &fmt, &storage)
         } else if path.extension().map(|e| e == "session").unwrap_or(false) {
             let json_path = path.with_extension("json");
@@ -307,6 +295,59 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
 
     invalidate_accounts_cache();
     results
+}
+
+fn append_tdata_results(
+    import_results: Vec<import::TdataImportResult>,
+    storage: &AccountStorage,
+    existing_keys: &[Vec<u8>],
+    results: &mut Vec<ImportedAccount>,
+) {
+    for import_result in import_results {
+        match import_result {
+            Ok(ids) => {
+                let is_multi = ids.len() > 1;
+                for id in ids {
+                    let session_path = storage.session_path(&id);
+                    let is_dupe = super::session::TelethonSession::from_file(&session_path)
+                        .map(|session| existing_keys.contains(&session.auth_key))
+                        .unwrap_or(false);
+
+                    if is_dupe {
+                        std::fs::remove_file(&session_path).ok();
+                        std::fs::remove_file(storage.json_path(&id)).ok();
+                        std::fs::remove_dir_all(storage.tdata_dir(&id)).ok();
+                        dbg_log!("import_accounts: DUPLICATE, removed id={}", id);
+                        results.push(ImportedAccount {
+                            id: String::new(),
+                            success: false,
+                            missing_json: false,
+                            error: Some("duplicate".to_string()),
+                            multi_account_split: false,
+                        });
+                    } else {
+                        results.push(ImportedAccount {
+                            id,
+                            success: true,
+                            missing_json: false,
+                            error: None,
+                            multi_account_split: is_multi,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                dbg_log!("import_accounts: tdata import FAILED: {}", e);
+                results.push(ImportedAccount {
+                    id: String::new(),
+                    success: false,
+                    missing_json: false,
+                    error: Some(e),
+                    multi_account_split: false,
+                });
+            }
+        }
+    }
 }
 
 #[tauri::command]

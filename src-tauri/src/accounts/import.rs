@@ -14,6 +14,8 @@ pub enum ImportFormat {
     Pyrogram,
 }
 
+pub type TdataImportResult = Result<Vec<String>, String>;
+
 fn default_json() -> AccountJson {
     let dev = super::devices::generate_random_device();
     let config = crate::get_app_config();
@@ -224,6 +226,41 @@ pub fn import_tdata_folder(
     Ok(ids)
 }
 
+// Import every tdata root below a selected directory. A selected directory may
+// itself be a tdata root or may contain any number of nested account folders.
+pub fn import_tdata_tree(root: &Path, storage: &AccountStorage) -> Vec<TdataImportResult> {
+    let tdata_dirs = collect_tdata_dirs(root);
+    if tdata_dirs.is_empty() {
+        return vec![Err("no tdata folders found".to_string())];
+    }
+
+    tdata_dirs
+        .into_iter()
+        .map(|dir| import_tdata_folder(&dir, storage))
+        .collect()
+}
+
+// Extract a ZIP once, then apply the same recursive tdata discovery used for
+// directly selected folders.
+pub fn import_tdata_archive(zip_path: &Path, storage: &AccountStorage) -> Result<Vec<TdataImportResult>, String> {
+    let file = fs::File::open(zip_path)
+        .map_err(|e| format!("failed to open zip: {e}"))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("failed to read zip: {e}"))?;
+    let temp_dir = std::env::temp_dir().join(format!("combine_import_{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_dir).map_err(|e| format!("failed to create temporary directory: {e}"))?;
+
+    let extracted = archive.extract(&temp_dir)
+        .map_err(|e| format!("failed to extract zip: {e}"));
+    let results = extracted.map(|()| import_tdata_tree(&temp_dir, storage));
+
+    if let Err(e) = fs::remove_dir_all(&temp_dir) {
+        dbg_log!("import::import_tdata_archive cleanup failed: {}", e);
+    }
+
+    results
+}
+
 fn import_session_from_dir(
     dir: &Path,
     format: &ImportFormat,
@@ -247,6 +284,45 @@ fn import_tdata_from_dir(
 
     let ids = import_tdata_folder(&tdata_dir, storage)?;
     ids.into_iter().next().ok_or_else(|| "no accounts imported".to_string())
+}
+
+fn collect_tdata_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut results = Vec::new();
+    collect_tdata_dirs_recursive(root, &mut results);
+    results
+}
+
+fn collect_tdata_dirs_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
+    if let Some(tdata_dir) = tdata_root_in(dir) {
+        results.push(tdata_dir);
+        return;
+    }
+
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            collect_tdata_dirs_recursive(&path, results);
+        }
+    }
+}
+
+fn tdata_root_in(dir: &Path) -> Option<PathBuf> {
+    if has_tdata_key_files(dir) {
+        return Some(dir.to_path_buf());
+    }
+
+    let nested = dir.join("tdata");
+    has_tdata_key_files(&nested).then_some(nested)
+}
+
+fn has_tdata_key_files(dir: &Path) -> bool {
+    dir.is_dir() && ["key_datas", "key_data1", "key_data0"]
+        .iter()
+        .any(|name| dir.join(name).exists())
 }
 
 fn find_file_with_ext(dir: &Path, ext: &str) -> Option<PathBuf> {
@@ -286,3 +362,24 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::collect_tdata_dirs;
+    use std::fs;
+
+    #[test]
+    fn finds_nested_tdata_roots_without_descending_into_tdata() {
+        let root = std::env::temp_dir().join(format!("kastor_tdata_scan_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("one/tdata")).unwrap();
+        fs::create_dir_all(root.join("two/deep")).unwrap();
+        fs::write(root.join("one/tdata/key_datas"), []).unwrap();
+        fs::write(root.join("two/deep/key_data1"), []).unwrap();
+
+        let found = collect_tdata_dirs(&root);
+
+        assert_eq!(found.len(), 2);
+        assert!(found.contains(&root.join("one/tdata")));
+        assert!(found.contains(&root.join("two/deep")));
+        fs::remove_dir_all(root).unwrap();
+    }
+}
