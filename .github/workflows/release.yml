@@ -1,0 +1,77 @@
+name: Publish release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: versioned-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: warp-windows-latest-x64-8x
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Rust MSVC toolchain
+        run: rustup default stable-x86_64-pc-windows-msvc
+
+      - name: Restore Rust build cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Read and verify release version
+        id: version
+        shell: pwsh
+        run: |
+          $tauriVersion = (Get-Content src-tauri\tauri.conf.json -Raw | ConvertFrom-Json).version
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+
+          if ($tauriVersion -ne $packageVersion) {
+            throw "Version mismatch: tauri.conf.json is $tauriVersion, package.json is $packageVersion."
+          }
+
+          "number=$tauriVersion" >> $env:GITHUB_OUTPUT
+          "tag=v$tauriVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build release binary
+        run: npm run tauri -- build --no-bundle
+
+      - name: Prepare release asset
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.version.outputs.number }}
+        run: |
+          New-Item -ItemType Directory -Force artifacts\release | Out-Null
+          Copy-Item src-tauri\target\release\kastor.exe "artifacts\release\Kastor-v$env:VERSION.exe" -ErrorAction Stop
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.number }}
+        run: |
+          $asset = "artifacts\release\Kastor-v$env:VERSION.exe"
+
+          gh release view $env:TAG 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Release $env:TAG already exists. Bump the app version before publishing another release."
+          }
+
+          gh release create $env:TAG $asset --title "Kastor v$env:VERSION" --generate-notes
