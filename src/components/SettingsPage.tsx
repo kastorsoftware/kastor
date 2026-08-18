@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { AlertTriangle, RefreshCw, MessageCircle } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useT } from "@/i18n";
 
 interface AppSettings {
@@ -225,22 +225,6 @@ export function SettingsPage() {
           </div>
         </div>
       )}
-
-      <div className="rounded-xl border border-border bg-card p-5 space-y-3">
-        <h3 className="text-sm font-semibold">{t("settings.supportTitle")}</h3>
-        <p className="text-xs text-muted-foreground">
-          {t("settings.supportDesc")}
-        </p>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <button
-            onClick={() => invoke("open_url", { url: "https://t.me/kastorsoftware" })}
-            className="inline-flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs font-medium text-foreground transition hover:bg-accent/50"
-          >
-            <MessageCircle className="h-3.5 w-3.5 text-[oklch(0.55_0.15_250)]" />
-            {t("settings.channelLink")}
-          </button>
-        </div>
-      </div>
 
     </div>
   );
