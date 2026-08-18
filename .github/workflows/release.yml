@@ -1,6 +1,11 @@
 name: Publish release
 
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - src-tauri/tauri.conf.json
   workflow_dispatch:
 
 permissions:
@@ -11,7 +16,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  version-changed:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.version.outputs.changed }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check whether the app version changed
+        id: version
+        shell: bash
+        run: |
+          current_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
+          previous_version="$(git show '${{ github.event.before }}:src-tauri/tauri.conf.json' 2>/dev/null | node -e "let input = ''; process.stdin.on('data', chunk => input += chunk).on('end', () => console.log(JSON.parse(input).version))" || true)"
+
+          if [[ -n "$previous_version" && "$current_version" != "$previous_version" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
+    needs: version-changed
+    if: github.event_name == 'workflow_dispatch' || needs.version-changed.outputs.changed == 'true'
     runs-on: warp-windows-latest-x64-8x
 
     steps:
