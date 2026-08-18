@@ -293,9 +293,16 @@ fn collect_tdata_dirs(root: &Path) -> Vec<PathBuf> {
 }
 
 fn collect_tdata_dirs_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
-    if let Some(tdata_dir) = tdata_root_in(dir) {
-        results.push(tdata_dir);
+    if has_tdata_key_files(dir) {
+        results.push(dir.to_path_buf());
         return;
+    }
+
+    // A selected folder can contain its own tdata plus folders for other
+    // accounts. Keep walking the siblings after recording the nested tdata.
+    let nested_tdata = dir.join("tdata");
+    if has_tdata_key_files(&nested_tdata) {
+        results.push(nested_tdata.clone());
     }
 
     let entries = match fs::read_dir(dir) {
@@ -304,19 +311,10 @@ fn collect_tdata_dirs_recursive(dir: &Path, results: &mut Vec<PathBuf>) {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+        if path != nested_tdata && entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
             collect_tdata_dirs_recursive(&path, results);
         }
     }
-}
-
-fn tdata_root_in(dir: &Path) -> Option<PathBuf> {
-    if has_tdata_key_files(dir) {
-        return Some(dir.to_path_buf());
-    }
-
-    let nested = dir.join("tdata");
-    has_tdata_key_files(&nested).then_some(nested)
 }
 
 fn has_tdata_key_files(dir: &Path) -> bool {
@@ -368,18 +366,18 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn finds_nested_tdata_roots_without_descending_into_tdata() {
+    fn finds_tdata_roots_without_skipping_sibling_account_folders() {
         let root = std::env::temp_dir().join(format!("kastor_tdata_scan_{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(root.join("one/tdata")).unwrap();
-        fs::create_dir_all(root.join("two/deep")).unwrap();
-        fs::write(root.join("one/tdata/key_datas"), []).unwrap();
-        fs::write(root.join("two/deep/key_data1"), []).unwrap();
+        fs::create_dir_all(root.join("tdata")).unwrap();
+        fs::create_dir_all(root.join("account/deep")).unwrap();
+        fs::write(root.join("tdata/key_datas"), []).unwrap();
+        fs::write(root.join("account/deep/key_data1"), []).unwrap();
 
         let found = collect_tdata_dirs(&root);
 
         assert_eq!(found.len(), 2);
-        assert!(found.contains(&root.join("one/tdata")));
-        assert!(found.contains(&root.join("two/deep")));
+        assert!(found.contains(&root.join("tdata")));
+        assert!(found.contains(&root.join("account/deep")));
         fs::remove_dir_all(root).unwrap();
     }
 }
