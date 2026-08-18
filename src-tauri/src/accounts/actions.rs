@@ -1188,6 +1188,7 @@ async fn mark_dialogs_read_from_parts(
         let (peer, top_message, unread_count) = match dialog {
             crate::mtproto::tl_gen::TlDialog::Dialog { peer, top_message, unread_count, .. } => (peer, top_message, unread_count),
             crate::mtproto::tl_gen::TlDialog::Folder { .. } => continue,
+            crate::mtproto::tl_gen::TlDialog::Community { .. } => continue,
         };
 
         // Skip already-read dialogs (optimization: avoid unnecessary API calls)

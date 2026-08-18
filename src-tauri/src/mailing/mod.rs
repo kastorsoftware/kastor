@@ -256,7 +256,7 @@ async fn process_account(
                     let random_id: i64 = rand::random();
                     let send_req = tl_gen::build_messages_sendMessage(
                         config.no_webpage, false, false, false, false, false, false, false,
-                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None,
+                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None, None,
                     );
                     match client.invoke(&send_req).await {
                         Ok(resp) => {
@@ -369,7 +369,7 @@ async fn process_account(
                             "postbot" => {
                                 let req = tl_gen::build_messages_sendMessage(
                                     config.no_webpage, config.silent, false, false, false, false, false, false,
-                                    &peer, None, &format!("@PostBot {}", config.postbot_hash), random_id, None, None, None, None, None, None, None, None, None,
+                                    &peer, None, &format!("@PostBot {}", config.postbot_hash), random_id, None, None, None, None, None, None, None, None, None, None,
                                 );
                                 client.invoke(&req).await.is_ok()
                             }
@@ -382,7 +382,7 @@ async fn process_account(
                                 } else {
                                     let req = tl_gen::build_messages_sendMessage(
                                         config.no_webpage, config.silent, false, false, false, false, false, false,
-                                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None,
+                                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None, None,
                                     );
                                     client.invoke(&req).await.is_ok()
                                 }

@@ -465,7 +465,7 @@ async fn run_invites(
 
                     let (uid, ah, uname) = user;
                     let admin_rights = tl_gen::serialize_chatAdminRights(
-                        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false,
+                        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false,
                     );
                     let channel_input = tl_gen::serialize_input_channel(resolved.channel_id, resolved.access_hash);
                     let user_input = tl_gen::serialize_input_user(*uid, *ah);
@@ -497,7 +497,7 @@ async fn run_invites(
 
                             // Revoke admin immediately
                             let no_rights = tl_gen::serialize_chatAdminRights(
-                                false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+                                false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
                             );
                             let channel_input2 = tl_gen::serialize_input_channel(resolved.channel_id, resolved.access_hash);
                             let user_input2 = tl_gen::serialize_input_user(*uid, *ah);
@@ -923,7 +923,7 @@ async fn setup_main_account_inviter(
     emit(t_with("inviter_target_channel_info", &[("id", &dest.channel_id.to_string()), ("title", &dest.title_hint)]));
 
     let admin_rights = tl_gen::serialize_chatAdminRights(
-        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false,
+        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false,
     );
     let mut promoted: Vec<i64> = Vec::new();
 
@@ -972,7 +972,7 @@ async fn try_promote_single_inviter(
     let dest = resolve_channel_link(&mut client, target).await
         .map_err(|e| format!("dest: {e}"))?;
     let admin_rights = tl_gen::serialize_chatAdminRights(
-        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false,
+        false, false, false, false, false, true, false, false, false, false, false, false, false, false, false, false, false, false,
     );
     let channel_input = tl_gen::serialize_input_channel(dest.channel_id, dest.access_hash);
     let user_input = tl_gen::serialize_input_user(user_id, 0);
@@ -1015,7 +1015,7 @@ async fn revoke_all_admins_inviter(
     let target = targets.first().ok_or(t("inviter_no_target_groups_err"))?;
     let Ok(dest) = resolve_channel_link(&mut client, target).await else { return Ok(()); };
     let no_rights = tl_gen::serialize_chatAdminRights(
-        false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+        false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
     );
 
     emit(t("inviter_revoking_msg"));

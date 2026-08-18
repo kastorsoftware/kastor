@@ -537,7 +537,7 @@ async fn send_comment(
 
     let req = tl_gen::build_messages_sendMessage(
         true, false, false, false, false, false, false, false,
-        &disc_peer, Some(&reply_to), &plain, random_id, None, entities_opt, None, None, None, None, None, None, None,
+        &disc_peer, Some(&reply_to), &plain, random_id, None, entities_opt, None, None, None, None, None, None, None, None,
     );
     client.invoke(&req).await.map_err(|e| format!("sendMessage: {e}"))?;
     Ok(())

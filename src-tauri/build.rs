@@ -1162,7 +1162,7 @@ fn write_wrap_helpers(out: &mut fs::File) {
     writeln!(out, r#"
 // --- invokeWithLayer + initConnection wrapper ---
 
-pub const CURRENT_LAYER: i32 = 225;
+pub const CURRENT_LAYER: i32 = 228;
 
 // wrap a request in invokeWithLayer(layer, initConnection(..., query))
 pub fn wrap_invoke_with_layer(

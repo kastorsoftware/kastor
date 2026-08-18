@@ -273,7 +273,7 @@ fn build_send_story_reply(user_id: i64, access_hash: i64, story_id: i32, text: &
     let reply_to = tl_gen::serialize_inputReplyToMessage(story_id, None, None, None, None, None, None, None, None);
     tl_gen::build_messages_sendMessage(
         true, false, false, false, false, false, false, false,
-        &peer, Some(&reply_to), text, random_id, None, None, None, None, None, None, None, None, None,
+        &peer, Some(&reply_to), text, random_id, None, None, None, None, None, None, None, None, None, None,
     )
 }
 

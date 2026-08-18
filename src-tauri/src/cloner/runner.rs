@@ -505,7 +505,7 @@ async fn send_as_copy(
         let reply_to_bytes = crate::mtproto::tl_gen::serialize_inputReplyToMessage(reply_id, None, None, None, None, None, None, None, None);
         crate::mtproto::tl_gen::build_messages_sendMessage(
             false, false, false, false, false, false, false, false,
-            &peer, Some(&reply_to_bytes), &plain, rid, None, None, None, None, None, None, None, None, None,
+            &peer, Some(&reply_to_bytes), &plain, rid, None, None, None, None, None, None, None, None, None, None,
         )
     } else {
         tl::build_send_message_with_entities(dest.channel_id, dest.access_hash, true, &plain, &entities, rid)

@@ -194,7 +194,7 @@ async fn run(
                                             let rid: i64 = rand::random();
                                             let send_req = tl_gen::build_messages_sendMessage(
                                                 false, false, false, false, false, false, false, false,
-                                                &to_peer, None, &modified_text, rid, None, None, None, None, None, None, None, None, None,
+                                                &to_peer, None, &modified_text, rid, None, None, None, None, None, None, None, None, None, None,
                                             );
                                             if let Ok(resp) = client.invoke(&send_req).await {
                                                 if let Some(fwd_id) = extract_forwarded_msg_id(&resp) {
@@ -340,7 +340,7 @@ async fn run(
                                     let rid: i64 = rand::random();
                                     let send_req = tl_gen::build_messages_sendMessage(
                                         false, false, false, false, false, false, false, false,
-                                        &to_peer, None, &modified_text, rid, None, None, None, None, None, None, None, None, None,
+                                        &to_peer, None, &modified_text, rid, None, None, None, None, None, None, None, None, None, None,
                                     );
                                     match client.invoke(&send_req).await {
                                         Ok(resp) => {
@@ -480,7 +480,7 @@ async fn send_text_message(
     let ent_opt: Option<&[&[u8]]> = if ent_refs.is_empty() { None } else { Some(&ent_refs) };
     let req = tl_gen::build_messages_sendMessage(
         false, false, false, false, false, false, false, false,
-        peer, None, text, random_id, None, ent_opt, None, None, None, None, None, None, None,
+        peer, None, text, random_id, None, ent_opt, None, None, None, None, None, None, None, None,
     );
     client.invoke(&req).await.map_err(|e| format!("sendMessage: {e}"))?;
     Ok(())

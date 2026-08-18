@@ -769,7 +769,7 @@ async fn process_messages(
                     let random_id: i64 = rand::random();
                     let req = tl_gen::build_messages_sendMessage(
                         config.no_webpage, config.silent, false, false, false, false, false, false,
-                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None,
+                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None, None,
                     );
                     client.invoke(&req).await.map(|_| ())
                 } else {

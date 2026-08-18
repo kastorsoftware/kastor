@@ -208,7 +208,7 @@ pub fn build_resolve_username(username: &str) -> Vec<u8> {
 
 // contacts.search#11f812d8 q:string limit:int = contacts.Found
 pub fn build_contacts_search(query: &str, limit: i32) -> Vec<u8> {
-    tl_gen::build_contacts_search(query, limit)
+    tl_gen::build_contacts_search(false, false, query, limit)
 }
 
 #[derive(Debug, Clone)]
@@ -260,7 +260,7 @@ pub fn build_send_message(peer_id: i64, access_hash: i64, message: &str, random_
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     tl_gen::build_messages_sendMessage(
         true, true, false, false, false, false, false, false,
-        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None,
+        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
     )
 }
 
@@ -1851,7 +1851,7 @@ pub fn build_send_message_with_entities(
     if entities.is_empty() {
         tl_gen::build_messages_sendMessage(
             false, false, false, false, false, false, false, false,
-            &peer, None, message, random_id, None, None, None, None, None, None, None, None, None,
+            &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
         )
     } else {
         let mut entity_bufs: Vec<Vec<u8>> = Vec::with_capacity(entities.len());
@@ -1863,7 +1863,7 @@ pub fn build_send_message_with_entities(
         let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|v| v.as_slice()).collect();
         tl_gen::build_messages_sendMessage(
             false, false, false, false, false, false, false, false,
-            &peer, None, message, random_id, None, Some(&entity_refs), None, None, None, None, None, None, None,
+            &peer, None, message, random_id, None, Some(&entity_refs), None, None, None, None, None, None, None, None,
         )
     }
 }
@@ -2220,7 +2220,7 @@ pub fn build_edit_message_channel(
 ) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     if entities.is_empty() {
-        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, None, None, None, None)
+        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, None, None, None, None, None)
     } else {
         let mut entity_bufs: Vec<Vec<u8>> = Vec::with_capacity(entities.len());
         for e in entities {
@@ -2229,7 +2229,7 @@ pub fn build_edit_message_channel(
             entity_bufs.push(b);
         }
         let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|v| v.as_slice()).collect();
-        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, Some(&entity_refs), None, None, None)
+        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, Some(&entity_refs), None, None, None, None)
     }
 }
 
@@ -2296,6 +2296,7 @@ pub fn parse_full_channel(data: &[u8]) -> Result<FullChannelInfo, String> {
                     }
                 }
             }
+            tl_gen::TlChatFull::CommunityFull { .. } => {}
         }
     }
 
@@ -2861,7 +2862,7 @@ pub fn build_send_saved_message(message: &str) -> Vec<u8> {
     let random_id: i64 = rand::random();
     tl_gen::build_messages_sendMessage(
         true, false, false, false, false, false, false, false,
-        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None,
+        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
     )
 }
 
@@ -2871,7 +2872,7 @@ pub fn build_search_global(query: &str) -> Vec<u8> {
     let filter = tl_gen::INPUT_MESSAGES_FILTER_EMPTY.to_le_bytes().to_vec();
     let empty_peer = tl_gen::INPUT_PEER_EMPTY.to_le_bytes().to_vec();
     tl_gen::build_messages_searchGlobal(
-        false, false, false, None, query, &filter,
+        false, false, false, None, None, query, &filter,
         0, 0, 0, &empty_peer, 0, 20,
     )
 }

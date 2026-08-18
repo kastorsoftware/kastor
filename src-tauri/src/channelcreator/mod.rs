@@ -454,7 +454,7 @@ async fn resolve_and_add_admin(
     let channel = tl_gen::serialize_input_channel(channel_id, channel_access_hash);
     let user = tl_gen::serialize_input_user(user_id, user_hash);
     let rights = tl_gen::serialize_chatAdminRights(
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false,
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false,
     );
     let req = tl_gen::build_channels_editAdmin(&channel, &user, &rights, None);
     client.invoke(&req).await.map_err(|e| format!("editAdmin @{}: {e}", username))?;

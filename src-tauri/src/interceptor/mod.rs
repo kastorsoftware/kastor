@@ -257,7 +257,7 @@ async fn try_promote_single(
     client.set_max_flood_wait(config.max_flood_wait);
 
     let admin_rights = tl_gen::serialize_chatAdminRights(
-        false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+        false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
     );
 
     for dest_link in &config.destinations {
@@ -313,7 +313,7 @@ async fn setup_main_account(
 
     // promote each worker to admin with post_messages in all dest channels
     let admin_rights = tl_gen::serialize_chatAdminRights(
-        false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+        false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
     );
     let mut promoted: Vec<i64> = Vec::new();
 
@@ -371,7 +371,7 @@ async fn revoke_all_admins(
 
     let Ok(mut client) = crate::accounts::connect::connect_account(main_id).await else { return Ok(()); };
     let no_rights = tl_gen::serialize_chatAdminRights(
-        false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
+        false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
     );
 
     emit(t("interceptor_revoking"));
@@ -683,7 +683,7 @@ async fn process_account(
                             let send_req = tl_gen::build_messages_sendMessage(
                                 false, false, false, false, true, false, false, false,
                                 &dest_peer, None, text, random_id,
-                                None, None, None, None, None, None, None, None, None,
+                                None, None, None, None, None, None, None, None, None, None,
                             );
                             match invoke_with_flood_wait(&mut client, &send_req, config.max_flood_wait, token).await {
                                 Ok(_) => sent_count += 1,
