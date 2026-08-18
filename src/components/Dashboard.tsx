@@ -4,7 +4,7 @@ import {
   Send, ShieldCheck, Users, UserPlus, MessageSquare,
   Activity, Settings as SettingsIcon,
   Cpu, Wifi, Construction, Repeat, UserCog, Flag, PlusCircle, Radio, TrendingUp, Copy, Download, Shuffle, AtSign,
-  Eye, Upload, Zap, Link2, Search, Forward, ChevronDown, Bot, LifeBuoy,
+  Eye, Upload, Zap, Link2, Search, Forward, ChevronDown, Bot, Github,
 } from "lucide-react";
 import { useI18n, useT } from "@/i18n";
 
@@ -309,7 +309,15 @@ export function Dashboard() {
   return (
     <div className="flex h-screen bg-background text-foreground">
       <aside className="flex w-64 flex-col border-r border-border bg-sidebar h-screen">
-        <div className="flex items-center gap-3 px-6 py-5 border-b border-sidebar-border">
+        <div className="px-6 py-5 border-b border-sidebar-border">
+          <button
+            onClick={() => invoke("open_url", { url: "https://github.com/kastorsoftware/kastor" })}
+            className="mb-2 flex h-8 w-8 items-center justify-center rounded-md border border-sidebar-border text-muted-foreground transition hover:border-primary/50 hover:text-sidebar-foreground"
+            title="GitHub"
+            aria-label="Open Kastor on GitHub"
+          >
+            <Github className="h-4 w-4" />
+          </button>
           <div>
             <div className="text-base font-bold text-sidebar-foreground">Kastor</div>
             <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -377,14 +385,6 @@ export function Dashboard() {
           </h1>
           <div className="flex items-center gap-3">
             <LanguageToggle />
-            <button
-              onClick={() => invoke("open_url", { url: "https://t.me/kastorsupport" })}
-              className="flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground transition"
-              title={t("settings.support")}
-            >
-              <LifeBuoy className="h-4 w-4" />
-              <span className="hidden sm:inline">{t("settings.support")}</span>
-            </button>
             <button
               onClick={() => navigate("settings")}
               className={`flex h-9 w-9 items-center justify-center rounded-md border transition ${

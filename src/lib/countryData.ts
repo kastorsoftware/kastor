@@ -104,7 +104,7 @@ export const COUNTRY_NAMES_EN: Record<string, string> = {
 };
 
 export function getCountryName(code: string): string {
-  const locale = (typeof localStorage !== "undefined" && localStorage.getItem("app_locale")) || "ru";
+  const locale = (typeof localStorage !== "undefined" && localStorage.getItem("app_locale")) || "en";
   if (locale === "en") return COUNTRY_NAMES_EN[code] || COUNTRY_NAMES[code] || code;
   return COUNTRY_NAMES[code] || code;
 }
@@ -133,7 +133,7 @@ const geoLabels: Record<string, { ru: string; en: string }> = {
 };
 
 function gl(key: string): string {
-  const locale = (typeof localStorage !== "undefined" && localStorage.getItem("app_locale")) || "ru";
+  const locale = (typeof localStorage !== "undefined" && localStorage.getItem("app_locale")) || "en";
   const entry = geoLabels[key];
   if (entry) return locale === "en" ? entry.en : entry.ru;
   return key;

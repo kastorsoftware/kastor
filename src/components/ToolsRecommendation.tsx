@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { ExternalLink, Download, CheckCircle, Database, FileEdit, X } from "lucide-react";
-import { useT } from "@/i18n";
+import { useI18n, useT } from "@/i18n";
 
 interface ToolStatus {
   beekeeper: boolean;
@@ -18,6 +18,7 @@ export function ToolsRecommendation({ onDismiss }: Props) {
     onDismiss();
   };
   const t = useT();
+  const { locale, setLocale } = useI18n();
   const [status, setStatus] = useState<ToolStatus | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -83,6 +84,15 @@ export function ToolsRecommendation({ onDismiss }: Props) {
         className="pointer-events-none absolute inset-0"
         style={{ background: "var(--gradient-glow)" }}
       />
+      <button
+        onClick={() => setLocale(locale === "en" ? "ru" : "en")}
+        className="absolute right-4 top-4 z-10 flex h-11 w-11 flex-col items-center justify-center rounded-lg border border-border bg-card text-base shadow-sm transition hover:border-primary/50 hover:bg-accent/50"
+        title={locale === "en" ? "Переключить на русский" : "Switch to English"}
+        aria-label={locale === "en" ? "Switch to Russian" : "Switch to English"}
+      >
+        <span className={locale === "en" ? "opacity-100" : "opacity-45"}>🇬🇧</span>
+        <span className={locale === "ru" ? "opacity-100" : "opacity-45"}>🇷🇺</span>
+      </button>
       <div className="relative w-full max-w-lg">
         <div className="rounded-2xl border border-border bg-card/90 backdrop-blur-xl p-8 shadow-2xl">
           <div className="flex items-start justify-between">

@@ -30,7 +30,7 @@ function App() {
 
     invoke<boolean>("check_telegram_connectivity").then((ok) => {
       if (ok) return;
-      const locale = localStorage.getItem("app_locale") || "ru";
+      const locale = localStorage.getItem("app_locale") || "en";
       const dict = locale === "en" ? en : ru;
       toast.custom(
         (id) => (
