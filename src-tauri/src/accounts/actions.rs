@@ -916,6 +916,12 @@ async fn process_account(
                 let req = tl::build_account_reset_password();
                 match client.invoke(&req).await {
                     Ok(_) => emit(format!("{} {}", prefix, t("actions_reset_2fa_sent"))),
+                    Err(e) if e.contains("PASSWORD_EMPTY") => {
+                        json.two_fa.clear();
+                        let _ = json.to_file(&json_path);
+                        super::commands::invalidate_accounts_cache();
+                        emit(format!("{} {}", prefix, t("actions_2fa_not_set")));
+                    }
                     Err(e) => action_err!(e, "{} {}", prefix, t_with("actions_reset_2fa_error", &[("error", &e)])),
                 }
             } else {
@@ -938,6 +944,12 @@ async fn process_account(
             let req = tl::build_account_reset_password();
             match client.invoke(&req).await {
                 Ok(_) => emit(format!("{} {}", prefix, t("actions_reset_2fa_sent"))),
+                Err(e) if e.contains("PASSWORD_EMPTY") => {
+                    json.two_fa.clear();
+                    let _ = json.to_file(&json_path);
+                    super::commands::invalidate_accounts_cache();
+                    emit(format!("{} {}", prefix, t("actions_2fa_not_set")));
+                }
                 Err(e) => action_err!(e, "{} {}", prefix, t_with("actions_reset_2fa_error", &[("error", &e)])),
             }
         } else if config.set_password && !config.password_value.is_empty() {

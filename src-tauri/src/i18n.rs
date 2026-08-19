@@ -495,6 +495,7 @@ lazy_static::lazy_static! {
         m.insert("actions_reset_2fa", "запрос сброса 2FA...");
         m.insert("actions_reset_2fa_sent", "запрос на сброс 2FA отправлен");
         m.insert("actions_reset_2fa_error", "сброс 2FA ошибка: {error}");
+        m.insert("actions_2fa_not_set", "2FA не установлена");
         m.insert("actions_set_2fa", "установка 2FA...");
         m.insert("actions_2fa_set", "2FA установлен");
         m.insert("actions_2fa_already_set", "2FA уже установлен, пропуск");
@@ -1523,6 +1524,7 @@ lazy_static::lazy_static! {
         m.insert("actions_reset_2fa", "requesting 2FA reset...");
         m.insert("actions_reset_2fa_sent", "2FA reset request sent");
         m.insert("actions_reset_2fa_error", "2FA reset error: {error}");
+        m.insert("actions_2fa_not_set", "2FA is not set");
         m.insert("actions_set_2fa", "setting up 2FA...");
         m.insert("actions_2fa_set", "2FA set");
         m.insert("actions_2fa_already_set", "2FA already set, skipping");
