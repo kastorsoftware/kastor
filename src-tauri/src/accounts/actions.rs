@@ -208,21 +208,13 @@ async fn rate_limit() {
     tokio::time::sleep(std::time::Duration::from_millis(100 + jitter)).await;
 }
 
-async fn delay_between_actions(client: &mut MtpClient, min_sec: u32, max_sec: u32) {
+async fn delay_between_actions(_client: &mut MtpClient, min_sec: u32, max_sec: u32) {
     if min_sec == 0 && max_sec == 0 { return; }
     let min = min_sec.max(1) as u64;
     let max = max_sec.max(min as u32) as u64;
     let secs = if min == max { min } else { min + rand::random::<u64>() % (max - min + 1) };
     dbg_log!("account_actions::delay_between_actions range={}..{}, selected={} sec", min, max, secs);
-    // set online
-    let online_req = tl_gen::build_account_updateStatus(false);
-    let online_result = client.invoke(&online_req).await;
-    dbg_log!("account_actions::delay_between_actions updateStatus(online) result={:?}", online_result.as_ref().err());
     tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-    // set offline
-    let offline_req = tl_gen::build_account_updateStatus(true);
-    let offline_result = client.invoke(&offline_req).await;
-    dbg_log!("account_actions::delay_between_actions updateStatus(offline) result={:?}", offline_result.as_ref().err());
 }
 
 fn action_name(action_tag: u8) -> &'static str {
@@ -286,6 +278,11 @@ async fn process_account(
     let prefix = format!("[{}/{}] +{}", idx, total, if json.phone.is_empty() { "?" } else { &json.phone });
     client.set_log_prefix(&prefix);
 
+    let online_req = tl_gen::build_account_updateStatus(false);
+    if let Err(e) = client.invoke(&online_req).await {
+        dbg_log!("account_actions::process_account prefix='{}' could not set online: {e}", prefix);
+    }
+
     macro_rules! action_err {
         ($e:expr, $($arg:tt)*) => {{
             if crate::mtproto::is_fatal_session_error(&$e) {
@@ -303,6 +300,7 @@ async fn process_account(
         };
     }
 
+    let result = async {
     // execute actions
     if config.delete_account {
         emit(format!("{} {}", prefix, t("actions_delete_account")));
@@ -717,7 +715,12 @@ async fn process_account(
                     }
 
                     let (next_id, next_peer) = extract_last_dialog_offset(&dialogs_raw);
-                    dbg_log!("account_actions::delete_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, next_id != offset_id || next_peer != offset_peer);
+                    let cursor_changed = next_id != offset_id || next_peer != offset_peer;
+                    dbg_log!("account_actions::delete_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, cursor_changed);
+                    if !cursor_changed {
+                        dbg_log!("account_actions::delete_all_dialogs prefix='{}' stopping: pagination cursor did not advance", prefix);
+                        break;
+                    }
                     offset_id = next_id;
                     offset_peer = next_peer;
                     rate_limit().await;
@@ -811,7 +814,12 @@ async fn process_account(
                         Err(e) => { action_err!(e, "{} {}", prefix, t_with("actions_read_error", &[("error", &e)])); break; }
                     }
                     let (next_id, next_peer) = extract_last_dialog_offset(&dialogs_raw);
-                    dbg_log!("account_actions::read_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, next_id != offset_id || next_peer != offset_peer);
+                    let cursor_changed = next_id != offset_id || next_peer != offset_peer;
+                    dbg_log!("account_actions::read_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, cursor_changed);
+                    if !cursor_changed {
+                        dbg_log!("account_actions::read_all_dialogs prefix='{}' stopping: pagination cursor did not advance", prefix);
+                        break;
+                    }
                     offset_id = next_id;
                     offset_peer = next_peer;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1038,6 +1046,14 @@ async fn process_account(
     }
 
     Ok(())
+    }.await;
+
+    let offline_req = tl_gen::build_account_updateStatus(true);
+    if let Err(e) = client.invoke(&offline_req).await {
+        dbg_log!("account_actions::process_account prefix='{}' could not set offline: {e}", prefix);
+    }
+
+    result
 }
 
 fn extract_last_dialog_offset(dialogs_raw: &[Vec<u8>]) -> (i32, Vec<u8>) {
