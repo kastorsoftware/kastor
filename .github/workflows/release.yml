@@ -25,7 +25,9 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          # The push can contain several commits, so github.event.before may be
+          # older than HEAD~1 and must be available for the version comparison.
+          fetch-depth: 0
 
       - name: Check whether the app version changed
         id: version
