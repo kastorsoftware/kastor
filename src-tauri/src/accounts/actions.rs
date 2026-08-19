@@ -213,13 +213,44 @@ async fn delay_between_actions(client: &mut MtpClient, min_sec: u32, max_sec: u3
     let min = min_sec.max(1) as u64;
     let max = max_sec.max(min as u32) as u64;
     let secs = if min == max { min } else { min + rand::random::<u64>() % (max - min + 1) };
+    dbg_log!("account_actions::delay_between_actions range={}..{}, selected={} sec", min, max, secs);
     // set online
     let online_req = tl_gen::build_account_updateStatus(false);
-    let _ = client.invoke(&online_req).await;
+    let online_result = client.invoke(&online_req).await;
+    dbg_log!("account_actions::delay_between_actions updateStatus(online) result={:?}", online_result.as_ref().err());
     tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
     // set offline
     let offline_req = tl_gen::build_account_updateStatus(true);
-    let _ = client.invoke(&offline_req).await;
+    let offline_result = client.invoke(&offline_req).await;
+    dbg_log!("account_actions::delay_between_actions updateStatus(offline) result={:?}", offline_result.as_ref().err());
+}
+
+fn action_name(action_tag: u8) -> &'static str {
+    match action_tag {
+        0 => "delete_username",
+        1 => "change_username",
+        2 => "delete_all_photos",
+        3 => "delete_all_stories",
+        4 => "set_photo",
+        5 => "set_auto_photo",
+        6 => "set_emoji_avatar",
+        7 => "change_name",
+        8 => "change_bio",
+        9 => "delete_bio",
+        10 => "set_birthday",
+        11 => "delete_contacts",
+        12 => "delete_all_dialogs",
+        13 => "delete_bot_dialogs",
+        14 => "read_all_dialogs",
+        15 => "delete_folders",
+        16 => "unsubscribe_channels",
+        17 => "hide_phone_number",
+        18 => "hide_online_status",
+        19 => "account_ttl",
+        20 => "session_ttl",
+        21 => "password",
+        _ => "unknown",
+    }
 }
 
 async fn process_account(
@@ -316,8 +347,11 @@ async fn process_account(
         action_queue.shuffle(&mut rand::thread_rng());
     }
 
+    dbg_log!("account_actions::process_account id={} prefix='{}' actions={:?}", id, prefix, action_queue);
+
     for action_tag in &action_queue {
     check_cancel!();
+    dbg_log!("account_actions::process_account prefix='{}' starting action={} ({})", prefix, action_tag, action_name(*action_tag));
     match *action_tag {
 
     0 => { // delete username
@@ -605,6 +639,7 @@ async fn process_account(
                 match tl::parse_contacts_response(&data) {
                     Ok(contacts) if !contacts.is_empty() => {
                         let total_contacts = contacts.len();
+                        dbg_log!("account_actions::delete_contacts prefix='{}' contacts={}", prefix, total_contacts);
                         let mut deleted = 0u32;
                         for contact in &contacts {
                             check_cancel!();
@@ -647,6 +682,7 @@ async fn process_account(
         let mut offset_id = 0i32;
         let mut offset_peer = tl_gen::INPUT_PEER_EMPTY.to_le_bytes().to_vec();
         let mut total_deleted = 0u32;
+        let mut page = 0u32;
         loop {
             check_cancel!();
             let req = tl::build_get_dialogs_paged(0, 100, offset_date, offset_id, &offset_peer);
@@ -662,7 +698,9 @@ async fn process_account(
                         tl_gen::TlMessagesDialogs::NotModified { .. } => break,
                     };
                     if dialogs_raw.is_empty() { break; }
+                    page += 1;
                     let peers = tl::parse_dialog_peers_from_parts(&chats_raw, &users_raw);
+                    dbg_log!("account_actions::delete_all_dialogs prefix='{}' page={} cursor_id={} dialogs={} peers={}", prefix, page, offset_id, dialogs_raw.len(), peers.len());
 
                     // Delete one by one with 1s delay
                     for peer in &peers {
@@ -679,6 +717,7 @@ async fn process_account(
                     }
 
                     let (next_id, next_peer) = extract_last_dialog_offset(&dialogs_raw);
+                    dbg_log!("account_actions::delete_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, next_id != offset_id || next_peer != offset_peer);
                     offset_id = next_id;
                     offset_peer = next_peer;
                     rate_limit().await;
@@ -749,6 +788,7 @@ async fn process_account(
         let mut offset_id = 0i32;
         let mut offset_peer = tl_gen::INPUT_PEER_EMPTY.to_le_bytes().to_vec();
         let mut total_read = 0u32;
+        let mut page = 0u32;
         loop {
             check_cancel!();
             let req = tl::build_get_dialogs_paged(0, 100, offset_date, offset_id, &offset_peer);
@@ -764,11 +804,14 @@ async fn process_account(
                         tl_gen::TlMessagesDialogs::NotModified { .. } => break,
                     };
                     if dialogs_raw.is_empty() { break; }
+                    page += 1;
+                    dbg_log!("account_actions::read_all_dialogs prefix='{}' page={} cursor_id={} dialogs={}", prefix, page, offset_id, dialogs_raw.len());
                     match mark_dialogs_read_from_parts(&dialogs_raw, &chats_raw, &users_raw, &mut client).await {
                         Ok(count) => total_read += count,
                         Err(e) => { action_err!(e, "{} {}", prefix, t_with("actions_read_error", &[("error", &e)])); break; }
                     }
                     let (next_id, next_peer) = extract_last_dialog_offset(&dialogs_raw);
+                    dbg_log!("account_actions::read_all_dialogs prefix='{}' page={} next_cursor_id={} cursor_changed={}", prefix, page, next_id, next_id != offset_id || next_peer != offset_peer);
                     offset_id = next_id;
                     offset_peer = next_peer;
                     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -797,6 +840,7 @@ async fn process_account(
                 match tl::parse_dialog_filter_ids(&data) {
                     Ok(ids) if !ids.is_empty() => {
                         let mut deleted = 0u32;
+                        dbg_log!("account_actions::delete_folders prefix='{}' folders={}", prefix, ids.len());
                         for fid in &ids {
                             let del_req = tl::build_delete_dialog_filter(*fid);
                             if client.invoke(&del_req).await.is_ok() { deleted += 1; }
@@ -821,6 +865,8 @@ async fn process_account(
                 match tl::parse_dialog_peers(&data) {
                     Ok(peers) => {
                         let mut left = 0u32;
+                        let channels = peers.iter().filter(|peer| matches!(peer, tl::DialogPeer::Channel { .. })).count();
+                        dbg_log!("account_actions::unsubscribe_channels prefix='{}' peers={} channels={}", prefix, peers.len(), channels);
                         for peer in &peers {
                             if let tl::DialogPeer::Channel { id, access_hash } = peer {
                                 check_cancel!();

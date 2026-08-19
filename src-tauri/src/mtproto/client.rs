@@ -371,11 +371,11 @@ impl MtpClient {
                     if inner_ctor == super::service_ctors::RPC_ERROR { // RPC_ERROR
                         if let Some(wait) = parse_flood_wait(&result) {
                             if self.max_flood_wait > 0 && wait > self.max_flood_wait {
-                                dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec exceeds cap {} sec, returning error", wait, self.max_flood_wait);
+                                dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec exceeds cap {} sec, prefix='{}', request_ctor={:?}, returning error", wait, self.max_flood_wait, self.log_prefix, request_constructor(request));
                                 self.emit_log(&crate::i18n::t_with("mtproto_flood_over_limit", &[("wait", &wait.to_string()), ("limit", &self.max_flood_wait.to_string())]));
                                 return Err(format!("FLOOD_WAIT_{}", wait));
                             }
-                            dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec, sleeping...", wait);
+                            dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec, prefix='{}', request_ctor={:?}, sleeping...", wait, self.log_prefix, request_constructor(request));
                             self.emit_log(&crate::i18n::t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())]));
                             tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                             return self.invoke_inner(request).await;
@@ -391,11 +391,11 @@ impl MtpClient {
             Err(e) if e.contains("FLOOD_WAIT") || e.contains("SLOWMODE_WAIT") => {
                 if let Some(wait) = extract_wait_from_error(&e) {
                     if self.max_flood_wait > 0 && wait > self.max_flood_wait {
-                        dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string exceeds cap {} sec", wait, self.max_flood_wait);
+                        dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string exceeds cap {} sec, prefix='{}', request_ctor={:?}", wait, self.max_flood_wait, self.log_prefix, request_constructor(request));
                         self.emit_log(&crate::i18n::t_with("mtproto_flood_over_limit", &[("wait", &wait.to_string()), ("limit", &self.max_flood_wait.to_string())]));
                         return Err(e);
                     }
-                    dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string", wait);
+                    dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string, prefix='{}', request_ctor={:?}", wait, self.log_prefix, request_constructor(request));
                     self.emit_log(&crate::i18n::t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())]));
                     tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                     return self.invoke_inner(request).await;
@@ -666,6 +666,12 @@ fn parse_flood_wait(data: &[u8]) -> Option<u64> {
     };
     let msg = std::str::from_utf8(msg_bytes).ok()?;
     extract_wait_from_error(msg)
+}
+
+fn request_constructor(request: &[u8]) -> Option<u32> {
+    request
+        .get(..4)
+        .map(|bytes| u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
 }
 
 // extract wait seconds from error message like "FLOOD_WAIT_35" or "SLOWMODE_WAIT_60"
