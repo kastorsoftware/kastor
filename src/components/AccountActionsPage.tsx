@@ -118,8 +118,8 @@ const defaultConfig: ActionConfig = {
 
   randomizeOrder: false,
   setAutoPhoto: false,
-  delayBetweenMin: 2,
-  delayBetweenMax: 3,
+  delayBetweenMin: 5,
+  delayBetweenMax: 7,
   accountTtl: 0,
   sessionTtl: 0,
 
