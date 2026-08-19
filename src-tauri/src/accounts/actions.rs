@@ -613,7 +613,7 @@ async fn process_account(
                                 Ok(_) => deleted += 1,
                                 Err(e) => {
                                     if let Some(wait) = extract_flood_seconds(&e) {
-                                        emit(format!("{} FLOOD_WAIT {}s, жду...", prefix, wait));
+                                        emit(format!("{} {}", prefix, t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())])));
                                         tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                                         if client.invoke(&del_req).await.is_ok() { deleted += 1; }
                                     }
@@ -686,7 +686,7 @@ async fn process_account(
                 Err(e) => {
                     // Handle FLOOD_WAIT: parse seconds from error, sleep, retry
                     if let Some(wait) = extract_flood_seconds(&e) {
-                        emit(format!("{} FLOOD_WAIT {}s, жду...", prefix, wait));
+                        emit(format!("{} {}", prefix, t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())])));
                         tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                         continue;
                     }
@@ -775,7 +775,7 @@ async fn process_account(
                 }
                 Err(e) => {
                     if let Some(wait) = extract_flood_seconds(&e) {
-                        emit(format!("{} FLOOD_WAIT {}s, жду...", prefix, wait));
+                        emit(format!("{} {}", prefix, t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())])));
                         tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                         continue;
                     }
@@ -829,7 +829,7 @@ async fn process_account(
                                     Ok(_) => left += 1,
                                     Err(e) => {
                                         if let Some(wait) = extract_flood_seconds(&e) {
-                                            emit(format!("{} FLOOD_WAIT {}s, жду...", prefix, wait));
+                                            emit(format!("{} {}", prefix, t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())])));
                                             tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                                             // retry this one
                                             if client.invoke(&r).await.is_ok() { left += 1; }
@@ -846,7 +846,7 @@ async fn process_account(
             }
             Err(e) => {
                 if let Some(wait) = extract_flood_seconds(&e) {
-                    emit(format!("{} FLOOD_WAIT {}s, жду...", prefix, wait));
+                    emit(format!("{} {}", prefix, t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())])));
                     tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                 } else {
                     action_err!(e, "{} {}", prefix, t_with("actions_dialogs_get_error", &[("error", &e)]));
