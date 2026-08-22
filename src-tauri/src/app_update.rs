@@ -99,7 +99,8 @@ pub async fn download_and_apply_update(state: tauri::State<'_, UpdateState>) -> 
         .clone()
         .ok_or_else(|| "no checked update is available".to_string())?;
     let current_exe = std::env::current_exe().map_err(|e| format!("current exe path: {e}"))?;
-    let new_exe = tokio::task::spawn_blocking(move || download_update(&update, &current_exe))
+    let download_target = current_exe.clone();
+    let new_exe = tokio::task::spawn_blocking(move || download_update(&update, &download_target))
         .await
         .map_err(|e| format!("update download task failed: {e}"))??;
 

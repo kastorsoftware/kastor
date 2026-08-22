@@ -355,11 +355,11 @@ async fn get_queue_stats(queue: tauri::State<'_, TaskQueue>) -> Result<(u32, u32
 async fn get_active_task_count(
     queue: tauri::State<'_, TaskQueue>,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
-) -> u32 {
+) -> Result<u32, String> {
     let queued = queue.queue_size().await;
     let running = queue.running_count().await;
     let validating = state.lock().unwrap().validating_ids.len() as u32;
-    queued + running + validating
+    Ok(queued + running + validating)
 }
 
 #[tauri::command]
