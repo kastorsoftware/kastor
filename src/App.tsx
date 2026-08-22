@@ -48,14 +48,34 @@ function UpdateToast({ update, automatic, onInstall, onCancel }: {
         </div>
       </div>
       {automatic ? (
-        <button className="update-toast__close" type="button" onClick={onCancel}>
-          {ru ? "Отменить" : "Cancel"}
+        <button className="update-toast__close" type="button" onClick={onCancel} title={ru ? "Отменить" : "Cancel"} aria-label={ru ? "Отменить" : "Cancel"}>
+          <X className="h-4 w-4" />
         </button>
       ) : (
-        <button className="update-toast__close" type="button" onClick={onInstall}>
-          {ru ? "Обновить" : "Update"}
+        <button className="update-toast__close" type="button" onClick={onInstall} title={ru ? "Обновить" : "Update"} aria-label={ru ? "Обновить" : "Update"}>
+          <Download className="h-4 w-4" />
         </button>
       )}
+    </div>
+  );
+}
+
+function WaitingForTasksToast({ update, onCancel }: { update: UpdateInfo; onCancel: () => void }) {
+  const locale = localStorage.getItem("app_locale") || "en";
+  const ru = locale !== "en";
+
+  return (
+    <div className="update-toast">
+      <div className="update-toast__icon"><Download className="h-4 w-4" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="update-toast__title">{ru ? "Обновление ожидает" : "Update pending"}</div>
+        <div className="update-toast__text">
+          {update.current_version} → {update.version} · {ru ? "установится через 30 сек. после завершения задач" : "will install 30s after tasks finish"}
+        </div>
+      </div>
+      <button className="update-toast__close" type="button" onClick={onCancel} title={ru ? "Отменить" : "Cancel"} aria-label={ru ? "Отменить" : "Cancel"}>
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }
@@ -100,18 +120,20 @@ function App() {
       );
     };
 
-    const waitForTasks = async (update: UpdateInfo) => {
+    const waitForTasks = async (update: UpdateInfo, waitingToastId: string | number) => {
       if (dismissed || updateCancelled.current) return;
       try {
         const activeTasks = await invoke<number>("get_active_task_count");
         if (activeTasks === 0) {
+          toast.dismiss(waitingToastId);
           showUpdate(update, true);
           return;
         }
       } catch {
+        toast.dismiss(waitingToastId);
         return;
       }
-      retryTimer = window.setTimeout(() => { void waitForTasks(update); }, 2000);
+      retryTimer = window.setTimeout(() => { void waitForTasks(update, waitingToastId); }, 2000);
     };
 
     const check = async () => {
@@ -119,8 +141,15 @@ function App() {
         const settings = await invoke<StoredSettings>("get_settings");
         const update = await invoke<UpdateInfo | null>("check_for_update");
         if (!update) return;
-        if (settings.auto_update) await waitForTasks(update);
-        else showUpdate(update, false);
+        if (!settings.auto_update) {
+          showUpdate(update, false);
+          return;
+        }
+        const waitingToastId = toast.custom(
+          (id) => <WaitingForTasksToast update={update} onCancel={() => { updateCancelled.current = true; toast.dismiss(id); }} />,
+          { duration: Infinity, position: "bottom-right" },
+        );
+        await waitForTasks(update, waitingToastId);
       } catch {
         // The update check must never block application startup.
       }
