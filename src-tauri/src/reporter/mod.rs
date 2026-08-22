@@ -257,7 +257,7 @@ async fn process_reporter_account(
             // If target is a bot, send /start first (like Python does)
             let is_bot = resolve_data.windows(4).any(|w| {
                 u32::from_le_bytes([w[0], w[1], w[2], w[3]]) == tl_gen::PEER_USER
-            }) && target.ends_with("bot") || target.ends_with("Bot");
+            }) && (target.ends_with("bot") || target.ends_with("Bot"));
             if is_bot && !is_channel {
                 let random_id: i64 = rand::random();
                 let start_req = tl::build_send_message(peer_id, access_hash, "/start", random_id);
@@ -378,28 +378,49 @@ async fn process_reporter_account(
                 let req = build_messages_report(peer_id, access_hash, *mid, option, "");
                 let resp = client.invoke(&req).await;
 
-                match resp {
+                let status = match resp {
                     Ok(_data) => {
                         let subopts = channel_report_suboptions(&reason_key);
                         if !subopts.is_empty() {
                             let sub = subopts[rand::random::<usize>() % subopts.len()];
                             let req2 = build_messages_report(peer_id, access_hash, *mid, sub, &message);
                             match client.invoke(&req2).await {
-                                Ok(_) => emit(format!("{} {}", prefix, t_with("reporter_channel_report_sent", &[("target", &target_label), ("msg_id", &mid.to_string()), ("idx", &(post_idx + 1).to_string()), ("total", &msg_ids.len().to_string()), ("reason", &reason_key)]))),
-                                Err(e) => emit(format!("{} {}", prefix, t_with("reporter_error_sub", &[("error", &e)]))),
+                                Ok(_) => {
+                                    emit(format!("{} {}", prefix, t_with("reporter_channel_report_sent", &[("target", &target_label), ("msg_id", &mid.to_string()), ("idx", &(post_idx + 1).to_string()), ("total", &msg_ids.len().to_string()), ("reason", &reason_key)])));
+                                    "done"
+                                }
+                                Err(e) => {
+                                    emit(format!("{} {}", prefix, t_with("reporter_error_sub", &[("error", &e)])));
+                                    "error"
+                                }
                             }
                         } else if reason_key == "copyright" {
                             let comment_option = b"383a63";
                             let req2 = build_messages_report(peer_id, access_hash, *mid, comment_option, &message);
                             match client.invoke(&req2).await {
-                                Ok(_) => emit(format!("{} {}", prefix, t_with("reporter_channel_report_sent", &[("target", &target_label), ("msg_id", &mid.to_string()), ("idx", &(post_idx + 1).to_string()), ("total", &msg_ids.len().to_string()), ("reason", &reason_key)]))),
-                                Err(e) => emit(format!("{} {}", prefix, t_with("reporter_error_comment", &[("error", &e)]))),
+                                Ok(_) => {
+                                    emit(format!("{} {}", prefix, t_with("reporter_channel_report_sent", &[("target", &target_label), ("msg_id", &mid.to_string()), ("idx", &(post_idx + 1).to_string()), ("total", &msg_ids.len().to_string()), ("reason", &reason_key)])));
+                                    "done"
+                                }
+                                Err(e) => {
+                                    emit(format!("{} {}", prefix, t_with("reporter_error_comment", &[("error", &e)])));
+                                    "error"
+                                }
                             }
                         } else {
                             emit(format!("{} {}", prefix, t_with("reporter_channel_report_sent", &[("target", &target_label), ("msg_id", &mid.to_string()), ("idx", &(post_idx + 1).to_string()), ("total", &msg_ids.len().to_string()), ("reason", &reason_key)])));
+                            "done"
                         }
                     }
-                    Err(e) => emit(format!("{} {}", prefix, t_with("reporter_error", &[("error", &e)]))),
+                    Err(e) => {
+                        emit(format!("{} {}", prefix, t_with("reporter_error", &[("error", &e)])));
+                        "error"
+                    }
+                };
+
+                if let Some(db_arc) = reporter_db {
+                    let db = db_arc.lock().await;
+                    record_report(&db, id, &format!("{target_label}/{mid}"), &reason_key, &message, status);
                 }
 
                 // View the post after reporting (like Python does)
