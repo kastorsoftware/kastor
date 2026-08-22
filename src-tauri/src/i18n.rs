@@ -911,6 +911,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_autoclaim", "Автозанятие: {free} свободных тегов, {accounts} аккаунтов");
         m.insert("uchecker_claimed", "  @{name} — занят на аккаунте {phone}");
         m.insert("uchecker_claim_failed", "  @{name} — не удалось занять: {error}");
+        m.insert("uchecker_claim_unassigned", "Свободных тегов осталось без аккаунта: {count}");
         m.insert("uchecker_result", "Готово: свободно={free}, занято={taken}, файл: {path}");
 
         // Masslooking extended
@@ -1939,6 +1940,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_autoclaim", "Auto-claim: {free} free tags, {accounts} accounts");
         m.insert("uchecker_claimed", "  @{name} — claimed on account {phone}");
         m.insert("uchecker_claim_failed", "  @{name} — could not claim: {error}");
+        m.insert("uchecker_claim_unassigned", "Free tags left without an account: {count}");
         m.insert("uchecker_result", "Done: free={free}, taken={taken}, file: {path}");
 
         // Masslooking extended

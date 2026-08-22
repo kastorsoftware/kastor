@@ -205,11 +205,8 @@ async fn auto_claim_usernames(names: &[String], account_ids: &[String], app: &ta
     use crate::accounts::connect::connect_account;
     use crate::accounts::commands::get_storage_pub;
     let storage = get_storage_pub();
-    let mut account_idx = 0;
-    for name in names {
+    for (name, id) in names.iter().zip(account_ids) {
         if !token.load(Ordering::Relaxed) { break; }
-        if account_idx >= account_ids.len() { account_idx = 0; }
-        let id = &account_ids[account_idx]; account_idx += 1;
         let json = if let Some(p) = storage.json_path(id).exists().then(|| storage.json_path(id)) {
             crate::accounts::session::AccountJson::from_file(&p).unwrap_or_default()
         } else {
@@ -222,6 +219,10 @@ async fn auto_claim_usernames(names: &[String], account_ids: &[String], app: &ta
             Err(e) => { emit(app, t_with("uchecker_claim_failed", &[("name", name), ("error", &e)])); let w = writer.lock().await; w.execute("INSERT INTO username_check (username, status) VALUES (?1, ?2)", rusqlite::params![name, format!("claim_failed:{e}")]).ok(); }
         }
         interruptible_sleep(1000, token).await;
+    }
+
+    if names.len() > account_ids.len() {
+        emit(app, t_with("uchecker_claim_unassigned", &[("count", &(names.len() - account_ids.len()).to_string())]));
     }
 }
 
