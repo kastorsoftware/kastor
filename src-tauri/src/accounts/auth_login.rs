@@ -217,6 +217,11 @@ pub async fn auth_sign_in(
                 put_state(&sessions, &session_id, state);
                 return Ok(AuthResultResp { account_id: None, two_fa_required: true, hint: String::new() });
             }
+            if mapped == "PHONE_CODE_INVALID" {
+                // A mistyped code is retryable; keep the authorization session alive.
+                state.client = Some(client);
+                put_state(&sessions, &session_id, state);
+            }
             Err(mapped)
         }
     }
