@@ -270,7 +270,7 @@ fn build_send_story_reaction(user_id: i64, access_hash: i64, story_id: i32, emoj
 
 fn build_send_story_reply(user_id: i64, access_hash: i64, story_id: i32, text: &str, random_id: i64) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_user(user_id, access_hash);
-    let reply_to = tl_gen::serialize_inputReplyToMessage(story_id, None, None, None, None, None, None, None, None);
+    let reply_to = tl_gen::serialize_inputReplyToStory(&peer, story_id);
     tl_gen::build_messages_sendMessage(
         true, false, false, false, false, false, false, false,
         &peer, Some(&reply_to), text, random_id, None, None, None, None, None, None, None, None, None, None,
