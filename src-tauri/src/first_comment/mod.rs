@@ -261,15 +261,21 @@ async fn run_account(
                 tl_gen::TlUpdatesChannelDifference::Empty { pts: new_pts, .. } => {
                     watcher.pts = new_pts;
                 }
-                tl_gen::TlUpdatesChannelDifference::TooLong { messages, .. } => {
-                    let new_pts = extract_max_msg_id(&messages);
-                    if new_pts > watcher.pts { watcher.pts = new_pts + 1; }
+                tl_gen::TlUpdatesChannelDifference::TooLong { .. } => {
+                    // Message IDs and channel pts are unrelated counters. Re-read the
+                    // authoritative channel pts instead of deriving it from messages.
+                    if let Ok(pts) = get_channel_pts(&mut client, watcher.id, watcher.access_hash).await {
+                        watcher.pts = pts;
+                    }
                 }
                 tl_gen::TlUpdatesChannelDifference::ChannelDifference { pts: new_pts, new_messages, .. } => {
-                    watcher.pts = new_pts;
+                    let mut handled_all = true;
 
                     for msg_raw in &new_messages {
-                        if !token.load(Ordering::Relaxed) { break; }
+                        if !token.load(Ordering::Relaxed) {
+                            handled_all = false;
+                            break;
+                        }
 
                         let post = match parse_channel_post(msg_raw) {
                             Some(p) => p,
@@ -318,6 +324,9 @@ async fn run_account(
                                 emit(t_with("first_comment_comment_error", &[("id", &post.msg_id.to_string()), ("error", &e)]));
                             }
                         }
+                    }
+                    if handled_all {
+                        watcher.pts = new_pts;
                     }
                 }
             }
@@ -413,16 +422,6 @@ async fn get_channel_pts(client: &mut MtpClient, channel_id: i64, access_hash: i
         Ok(tl_gen::TlChatFull::ChannelFull { pts, .. }) => Ok(pts),
         _ => Err("not a channelFull".into()),
     }
-}
-
-fn extract_max_msg_id(messages: &[Vec<u8>]) -> i32 {
-    let mut max = 0i32;
-    for msg in messages {
-        if let Ok(tl_gen::TlMessage::Message { id, .. }) = tl_gen::deserialize_tl_obj::<tl_gen::TlMessage>(msg) {
-            if id > max { max = id; }
-        }
-    }
-    max
 }
 
 fn compute_delay(config: &FirstCommentConfig) -> u64 {
