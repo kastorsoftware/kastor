@@ -383,7 +383,7 @@ pub async fn connect_via_proxy(
     match proxy.proxy_type {
         ProxyType::Socks5 => socks5_handshake(&mut stream, proxy, target_host, target_port).await,
         ProxyType::Socks4 => socks4_handshake(&mut stream, proxy, target_host, target_port).await,
-        ProxyType::Https => https_connect(&mut stream, target_host, target_port).await,
+        ProxyType::Https => https_connect(&mut stream, proxy, target_host, target_port).await,
     }?;
 
     Ok(stream)
@@ -515,12 +515,25 @@ async fn socks4_handshake(
 
 async fn https_connect(
     stream: &mut TcpStream,
+    proxy: &ProxyConfig,
     target_host: &str,
     target_port: u16,
 ) -> Result<(), String> {
-    let connect_line = format!(
-        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n\r\n"
+    let mut connect_line = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n"
     );
+    if let Some(username) = proxy.username.as_deref() {
+        let password = proxy.password.as_deref().unwrap_or("");
+        if username.contains(['\r', '\n']) || password.contains(['\r', '\n']) {
+            return Err("https proxy credentials contain a line break".into());
+        }
+        let credentials = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            format!("{username}:{password}"),
+        );
+        connect_line.push_str(&format!("Proxy-Authorization: Basic {credentials}\r\n"));
+    }
+    connect_line.push_str("\r\n");
     stream.write_all(connect_line.as_bytes()).await
         .map_err(|e| format!("https connect write: {e}"))?;
 
