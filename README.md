@@ -47,6 +47,7 @@ npm run tauri build
 Improving existing functionality is always the first priority.
 
 - [x] Update the Telegram API to Layer 228.
+- [ ] Expand the Stories module.
 - [ ] Add macOS support.
 - [ ] Add new modules when they are needed.
 
