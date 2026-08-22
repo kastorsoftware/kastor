@@ -1,4 +1,13 @@
-#![allow(unused_variables, dead_code, dropping_references)]
+#![allow(
+    unused_variables,
+    dead_code,
+    dropping_references,
+    clippy::writeln_empty_string,
+    clippy::unnecessary_cast,
+    clippy::double_ended_iterator_last,
+    clippy::unnecessary_map_or,
+    clippy::for_kv_map
+)]
 
 use std::collections::HashMap;
 use std::env;

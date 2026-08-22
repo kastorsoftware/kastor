@@ -4,6 +4,9 @@ pub mod crypto;
 pub mod invite;
 pub mod text_parse;
 pub mod tl;
+// Generated from schema.txt; clippy's style lints do not apply to protocol
+// names and mechanically expanded TL constructors.
+#[allow(clippy::all)]
 pub mod tl_gen;
 pub mod transport;
 
