@@ -787,13 +787,15 @@ async fn run_comments_mode(
 
                             let db = db.lock().unwrap();
                             db.execute(
-                                "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, status, source, source_group, msg_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'unknown','comment',?10,?11)",
+                                "INSERT INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, status, source, source_group, msg_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'unknown','comment',?10,?11)
+                                 ON CONFLICT(user_id) DO UPDATE SET source = excluded.source, source_group = excluded.source_group, msg_id = excluded.msg_id",
                                 params![u.id, u.access_hash, u.username, u.phone, u.first_name, u.last_name, u.bot as i32, u.deleted as i32, u.premium as i32, resolved.channel_id, reply.id],
                             ).ok();
                         } else {
                             let db = db.lock().unwrap();
                             db.execute(
-                                "INSERT OR IGNORE INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'comment', ?2, ?3)",
+                                "INSERT INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'comment', ?2, ?3)
+                                 ON CONFLICT(user_id) DO UPDATE SET source = excluded.source, source_group = excluded.source_group, msg_id = excluded.msg_id",
                                 params![user_id, resolved.channel_id, reply.id],
                             ).ok();
                         }
@@ -1003,7 +1005,8 @@ fn parse_messages_senders(
                                 // user not in users vector — insert minimal record
                                 let db = db.lock().unwrap();
                                 db.execute(
-                                    "INSERT OR IGNORE INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'message', ?2, ?3)",
+                                    "INSERT INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'message', ?2, ?3)
+                                     ON CONFLICT(user_id) DO UPDATE SET source = excluded.source, source_group = excluded.source_group, msg_id = excluded.msg_id",
                                     params![user_id, source_group, id],
                                 ).ok();
                                 *collected += 1;
@@ -1053,7 +1056,8 @@ fn extract_user_id_from_peer(peer_bytes: &[u8]) -> Option<i64> {
 fn insert_user_from_msg(db: &std::sync::Mutex<rusqlite::Connection>, u: &UserFromMsg, msg_id: i32, source_group: i64) {
     let db = db.lock().unwrap();
     db.execute(
-        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, source, source_group, msg_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'message', ?10, ?11)",
+        "INSERT INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, source, source_group, msg_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'message', ?10, ?11)
+         ON CONFLICT(user_id) DO UPDATE SET source = excluded.source, source_group = excluded.source_group, msg_id = excluded.msg_id",
         params![
             u.id, u.access_hash, u.username, u.phone,
             u.first_name, u.last_name,
@@ -1066,7 +1070,8 @@ fn insert_user_from_msg(db: &std::sync::Mutex<rusqlite::Connection>, u: &UserFro
 fn insert_user_participant(db: &std::sync::Mutex<rusqlite::Connection>, u: &ParticipantUser, source_group: i64) {
     let db = db.lock().unwrap();
     db.execute(
-        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_admin, is_deleted, premium, status, source, source_group) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'participants', ?12)",
+        "INSERT INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_admin, is_deleted, premium, status, source, source_group) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'participants', ?12)
+         ON CONFLICT(user_id) DO UPDATE SET source = excluded.source, source_group = excluded.source_group, is_admin = excluded.is_admin",
         params![
             u.id, u.access_hash, u.username, u.phone,
             u.first_name, u.last_name,
