@@ -342,10 +342,7 @@ fn save_account(
         validated: true,
         valid: true,
         status: crate::i18n::t("status_clean"),
-        register_time: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64,
+        register_time: super::aging::estimate_registration_ts(user.user_id),
         ..Default::default()
     };
     json.to_file(&storage.json_path(&id))?;
