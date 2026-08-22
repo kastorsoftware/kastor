@@ -722,6 +722,7 @@ export const ru = {
     modeBot: "Бот (@SearchReport)",
     modePhoto: "Фото профиля",
     target: "Цель",
+    botContent: "Содержимое жалобы",
     randomReason: "Случайная причина",
     reasons: "Причины",
     limitPerAccount: "Лимит на аккаунт",

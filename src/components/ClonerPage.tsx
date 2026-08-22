@@ -552,7 +552,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="text-sm font-medium text-foreground">{label}</label>
+      <label className="block text-sm font-medium text-foreground">{label}</label>
       {children}
     </div>
   );

@@ -722,6 +722,7 @@ export const en = {
     modeBot: "Bot (@SearchReport)",
     modePhoto: "Profile photo",
     target: "Target",
+    botContent: "Report content",
     randomReason: "Random reason",
     reasons: "Reasons",
     limitPerAccount: "Limit per account",

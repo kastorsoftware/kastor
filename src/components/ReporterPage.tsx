@@ -146,7 +146,7 @@ export function ReporterPage() {
 
   const handleStart = () => {
     if (!config.target.trim()) {
-      setLogs((prev) => [...prev, `${t("common.error")}: ${config.mode === "bot" ? t("reporter.target") : t("reporter.target")}`]);
+      setLogs((prev) => [...prev, `${t("common.error")}: ${config.mode === "bot" ? t("reporter.botContent") : t("reporter.target")}`]);
       return;
     }
     if (config.mode !== "bot" && !hasValidReasons) {
@@ -241,7 +241,7 @@ export function ReporterPage() {
           {/* bot mode: search query */}
           {config.mode === "bot" && (
           <div>
-            <label className="block text-sm font-medium text-foreground">{t("reporter.target")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.botContent")}</label>
             <input
               value={config.target}
               onChange={(e) => set("target", e.target.value)}
