@@ -54,21 +54,18 @@ fn persist_common_account(
     json.user_id = acc.user_id;
     json.to_file(&storage.json_path(&id))?;
 
-    // generate tdata for dual storage
-    let tdata_acc = crate::converter::tdata::TDataAccount {
-        dc_id: acc.dc_id,
-        user_id: acc.user_id,
-        auth_key: acc.auth_key.clone(),
-    };
-    let _ = crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata_acc);
-
-    // optionally copy raw tdata source
+    // Preserve the original Desktop layout when importing tdata. For other
+    // sources, generate a compatible tdata directory from the parsed session.
     if let Some(src) = store_tdata_source {
         let dest = storage.tdata_dir(&id);
-        if !dest.exists() {
-            fs::create_dir_all(&dest).ok();
-            copy_dir_recursive(src, &dest).ok();
-        }
+        copy_dir_recursive(src, &dest)?;
+    } else {
+        let tdata_acc = crate::converter::tdata::TDataAccount {
+            dc_id: acc.dc_id,
+            user_id: acc.user_id,
+            auth_key: acc.auth_key.clone(),
+        };
+        crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata_acc)?;
     }
 
     Ok(id)
