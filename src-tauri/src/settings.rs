@@ -105,19 +105,26 @@ pub fn save_settings(settings: AppSettings) -> Result<(), String> {
     settings.save()
 }
 
+fn patch_u32(patch: &serde_json::Value, key: &str, field: &mut u32) -> Result<(), String> {
+    let Some(value) = patch.get(key) else { return Ok(()); };
+    let value = value.as_u64().ok_or_else(|| format!("{key} must be an unsigned integer"))?;
+    *field = u32::try_from(value).map_err(|_| format!("{key} exceeds u32 range"))?;
+    Ok(())
+}
+
 // partial update: load existing, merge provided fields, save
 #[tauri::command]
 pub fn patch_settings(patch: serde_json::Value) -> Result<(), String> {
     let mut current = AppSettings::load();
     if let Some(v) = patch.get("allow_no_proxy").and_then(|v| v.as_bool()) { current.allow_no_proxy = v; }
-    if let Some(v) = patch.get("account_threads").and_then(|v| v.as_u64()) { current.account_threads = v as u32; }
-    if let Some(v) = patch.get("proxy_threads").and_then(|v| v.as_u64()) { current.proxy_threads = v as u32; }
-    if let Some(v) = patch.get("checker_threads").and_then(|v| v.as_u64()) { current.checker_threads = v as u32; }
-    if let Some(v) = patch.get("converter_threads").and_then(|v| v.as_u64()) { current.converter_threads = v as u32; }
-    if let Some(v) = patch.get("checker_channels_min").and_then(|v| v.as_u64()) { current.checker_channels_min = v as u32; }
-    if let Some(v) = patch.get("checker_groups_min").and_then(|v| v.as_u64()) { current.checker_groups_min = v as u32; }
-    if let Some(v) = patch.get("reauth_threads").and_then(|v| v.as_u64()) { current.reauth_threads = v as u32; }
-    if let Some(v) = patch.get("account_actions_threads").and_then(|v| v.as_u64()) { current.account_actions_threads = v as u32; }
+    patch_u32(&patch, "account_threads", &mut current.account_threads)?;
+    patch_u32(&patch, "proxy_threads", &mut current.proxy_threads)?;
+    patch_u32(&patch, "checker_threads", &mut current.checker_threads)?;
+    patch_u32(&patch, "converter_threads", &mut current.converter_threads)?;
+    patch_u32(&patch, "checker_channels_min", &mut current.checker_channels_min)?;
+    patch_u32(&patch, "checker_groups_min", &mut current.checker_groups_min)?;
+    patch_u32(&patch, "reauth_threads", &mut current.reauth_threads)?;
+    patch_u32(&patch, "account_actions_threads", &mut current.account_actions_threads)?;
     if let Some(v) = patch.get("llm_api_url").and_then(|v| v.as_str()) { current.llm_api_url = v.to_string(); }
     if let Some(v) = patch.get("llm_token").and_then(|v| v.as_str()) { current.llm_token = v.to_string(); }
     if let Some(v) = patch.get("llm_model").and_then(|v| v.as_str()) { current.llm_model = v.to_string(); }
