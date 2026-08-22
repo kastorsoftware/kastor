@@ -72,15 +72,15 @@ fn build_caption(base: &str, tags: &[String], is_premium: bool) -> Result<String
             format!("{}{}", base, TAG_SEPARATOR)
         };
 
-        if prefix.len() >= limit {
+        if prefix.chars().count() >= limit {
             return Err(t("stories_caption_too_long"));
         }
 
-        let available = limit - prefix.len();
+        let available = limit - prefix.chars().count();
         let mut tag_str = String::new();
         for tag in tags {
             let mention = format!("@{} ", tag.trim_start_matches('@'));
-            if tag_str.len() + mention.len() > available {
+            if tag_str.chars().count() + mention.chars().count() > available {
                 break;
             }
             tag_str.push_str(&mention);
@@ -92,7 +92,7 @@ fn build_caption(base: &str, tags: &[String], is_premium: bool) -> Result<String
 
         Ok(format!("{}{}", prefix, tag_str.trim_end()))
     } else if !base.is_empty() {
-        if base.len() > limit {
+        if base.chars().count() > limit {
             return Err(t_with("stories_caption_over_limit", &[("limit", &limit.to_string())]));
         }
         Ok(base.to_string())
@@ -103,7 +103,11 @@ fn build_caption(base: &str, tags: &[String], is_premium: bool) -> Result<String
 
 fn calc_tags_per_account(caption: &str, tags: &[String], is_premium: bool) -> usize {
     let limit = if is_premium { CAPTION_LIMIT_PREMIUM } else { CAPTION_LIMIT_REGULAR };
-    let prefix_len = if caption.is_empty() { 0 } else { caption.len() + TAG_SEPARATOR.len() };
+    let prefix_len = if caption.is_empty() {
+        0
+    } else {
+        caption.chars().count() + TAG_SEPARATOR.chars().count()
+    };
     if prefix_len >= limit { return 0; }
     let available = limit - prefix_len;
 
@@ -112,8 +116,9 @@ fn calc_tags_per_account(caption: &str, tags: &[String], is_premium: bool) -> us
     let mut count = 0;
     for tag in tags {
         let mention = format!("@{} ", tag.trim_start_matches('@'));
-        if used + mention.len() > available { break; }
-        used += mention.len();
+        let mention_len = mention.chars().count();
+        if used + mention_len > available { break; }
+        used += mention_len;
         count += 1;
     }
     count
