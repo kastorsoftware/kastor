@@ -62,15 +62,19 @@ pub fn ige_decrypt(data: &[u8], key: &[u8; 32], iv: &[u8; 32]) -> Vec<u8> {
     result
 }
 
-// msg_key = sha256(auth_key[88..120] + plaintext)[8..24]
-pub fn calc_msg_key(auth_key: &[u8; 256], plaintext: &[u8]) -> [u8; 16] {
+// msg_key = sha256(auth_key[88+x..120+x] + plaintext)[8..24]
+fn calc_msg_key_with_x(auth_key: &[u8; 256], plaintext: &[u8], x: usize) -> [u8; 16] {
     let mut hasher = Sha256::new();
-    hasher.update(&auth_key[88..120]);
+    hasher.update(&auth_key[88 + x..120 + x]);
     hasher.update(plaintext);
     let hash = hasher.finalize();
     let mut msg_key = [0u8; 16];
     msg_key.copy_from_slice(&hash[8..24]);
     msg_key
+}
+
+pub fn calc_msg_key(auth_key: &[u8; 256], plaintext: &[u8]) -> [u8; 16] {
+    calc_msg_key_with_x(auth_key, plaintext, 0)
 }
 
 // kdf for client->server (x=0)
@@ -143,7 +147,7 @@ pub fn encrypt_message(auth_key: &[u8; 256], plaintext: &[u8]) -> Vec<u8> {
 
 // decrypt received message
 pub fn decrypt_message(auth_key: &[u8; 256], data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() < 24 {
+    if data.len() < 40 || (data.len() - 24) % 16 != 0 {
         return Err("message too short".into());
     }
     let msg_key: [u8; 16] = data[8..24].try_into().unwrap();
@@ -151,6 +155,9 @@ pub fn decrypt_message(auth_key: &[u8; 256], data: &[u8]) -> Result<Vec<u8>, Str
 
     let (aes_key, aes_iv) = kdf_server(auth_key, &msg_key);
     let decrypted = ige_decrypt(encrypted, &aes_key, &aes_iv);
+    if calc_msg_key_with_x(auth_key, &decrypted, 8) != msg_key {
+        return Err("message key mismatch".into());
+    }
 
     Ok(decrypted)
 }
