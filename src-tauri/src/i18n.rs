@@ -895,7 +895,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_task_name", "Чекер юзернеймов");
         m.insert("uchecker_no_input_file", "не указан входной файл");
         m.insert("uchecker_read_file_error", "не удалось прочитать файл: {error}");
-        m.insert("uchecker_invalid_short", "@{name} — тег невалиден (менее 4 символов), пропуск");
+        m.insert("uchecker_invalid_short", "@{name} — тег невалиден (длина должна быть от 5 до 32 символов), пропуск");
         m.insert("uchecker_invalid_chars", "@{name} — тег невалиден (недопустимые символы), пропуск");
         m.insert("uchecker_skipped_invalid", "Пропущено невалидных/дублей: {count}");
         m.insert("uchecker_file_empty", "файл пуст или не содержит валидных юзернеймов");
@@ -1928,7 +1928,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_task_name", "Username Checker");
         m.insert("uchecker_no_input_file", "no input file specified");
         m.insert("uchecker_read_file_error", "could not read file: {error}");
-        m.insert("uchecker_invalid_short", "@{name} — tag invalid (less than 4 chars), skipping");
+        m.insert("uchecker_invalid_short", "@{name} — tag invalid (length must be 5–32 characters), skipping");
         m.insert("uchecker_invalid_chars", "@{name} — tag invalid (disallowed chars), skipping");
         m.insert("uchecker_skipped_invalid", "Skipped invalid/duplicates: {count}");
         m.insert("uchecker_file_empty", "file is empty or contains no valid usernames");

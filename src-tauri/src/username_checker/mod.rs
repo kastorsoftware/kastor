@@ -76,7 +76,7 @@ async fn run(
     let mut skipped = 0u32;
     let mut seen = std::collections::HashSet::new();
     for name in &raw_names {
-        if name.len() < 4 { emit(app, t_with("uchecker_invalid_short", &[("name", name)])); skipped += 1; continue; }
+        if !(5..=32).contains(&name.len()) { emit(app, t_with("uchecker_invalid_short", &[("name", name)])); skipped += 1; continue; }
         if !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') { emit(app, t_with("uchecker_invalid_chars", &[("name", name)])); skipped += 1; continue; }
         if !seen.insert(name.clone()) { skipped += 1; continue; }
         usernames.push(name.clone());
