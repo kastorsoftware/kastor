@@ -226,7 +226,7 @@ export function ReporterPage() {
           {/* target */}
           {config.mode !== "bot" && (
           <div>
-            <label className="text-sm font-medium text-foreground">
+            <label className="block text-sm font-medium text-foreground">
               {t("reporter.target")}
             </label>
             <input
@@ -241,7 +241,7 @@ export function ReporterPage() {
           {/* bot mode: search query */}
           {config.mode === "bot" && (
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.target")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.target")}</label>
             <input
               value={config.target}
               onChange={(e) => set("target", e.target.value)}
@@ -255,7 +255,7 @@ export function ReporterPage() {
           {/* reasons (not for bot mode) */}
           {config.mode !== "bot" && (
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.reasons")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.reasons")}</label>
             <div className="mt-2 space-y-2">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input type="checkbox" checked={config.randomReason} onChange={(e) => toggleRandomReason(e.target.checked)} className="rounded border-border accent-primary h-4 w-4" />
@@ -281,7 +281,7 @@ export function ReporterPage() {
 
           {/* delay */}
           <div>
-            <label className="text-sm font-medium text-foreground">{t("common.delayMin")} — {t("common.delayMax")} ({t("common.seconds")})</label>
+            <label className="block text-sm font-medium text-foreground">{t("common.delayMin")} — {t("common.delayMax")} ({t("common.seconds")})</label>
             <div className="flex items-center gap-2 mt-1.5">
               <input
                 type="number"
@@ -305,7 +305,7 @@ export function ReporterPage() {
 
           {/* limit per account */}
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.limitPerAccount")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.limitPerAccount")}</label>
             <input
               type="number"
               min={1}
@@ -319,7 +319,7 @@ export function ReporterPage() {
           {/* channel mode: post targeting */}
           {config.mode === "channel" && (
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.postTarget")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.postTarget")}</label>
             <div className="flex items-center gap-2 mt-1.5">
               <ModeButton active={config.postTarget === "last"} onClick={() => set("postTarget", "last")}>{t("reporter.postTargetLast")}</ModeButton>
               <ModeButton active={config.postTarget === "all"} onClick={() => set("postTarget", "all")}>{t("reporter.postTargetAll")}</ModeButton>
@@ -338,7 +338,7 @@ export function ReporterPage() {
           {/* photo mode: option */}
           {config.mode === "photo" && (
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.modePhoto")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.modePhoto")}</label>
             <div className="flex items-center gap-2 mt-1.5">
               <ModeButton active={config.photoOption === "one"} onClick={() => set("photoOption", "one")}>{t("reporter.photoOptionOne")}</ModeButton>
               <ModeButton active={config.photoOption === "all"} onClick={() => set("photoOption", "all")}>{t("reporter.photoOptionAll")}</ModeButton>
@@ -357,7 +357,7 @@ export function ReporterPage() {
           {/* message (not for bot mode) */}
           {config.mode !== "bot" && (
           <div>
-            <label className="text-sm font-medium text-foreground">{t("reporter.message")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("reporter.message")}</label>
             <div className="flex items-center gap-2 mt-1.5">
               <ModeButton active={config.messageMode === "none"} onClick={() => set("messageMode", "none")}>{t("reporter.messageNone")}</ModeButton>
               <ModeButton active={config.messageMode === "single"} onClick={() => set("messageMode", "single")}>{t("reporter.messageSingle")}</ModeButton>
