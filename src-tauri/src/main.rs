@@ -188,7 +188,10 @@ async fn check_telegram_connectivity() -> bool {
     for &(host, port) in targets {
         let addr = format!("{}:{}", host, port);
         handles.push(tokio::spawn(async move {
-            tokio::time::timeout(timeout, TcpStream::connect(&addr)).await.is_ok()
+            matches!(
+                tokio::time::timeout(timeout, TcpStream::connect(&addr)).await,
+                Ok(Ok(_))
+            )
         }));
     }
 
