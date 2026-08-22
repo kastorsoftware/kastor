@@ -666,7 +666,7 @@ pub async fn enqueue_validate_proxies(
 ) -> Result<String, String> {
     let task_id = uuid::Uuid::new_v4().to_string();
     let tid = task_id.clone();
-    let concurrency = threads.unwrap_or(10).max(1).min(1000);
+    let concurrency = threads.unwrap_or(10).clamp(1, 1000);
     let count = if ids.is_empty() {
         ProxyList::load().proxies.len()
     } else {

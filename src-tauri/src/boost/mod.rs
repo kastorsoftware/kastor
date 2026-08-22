@@ -143,7 +143,7 @@ pub async fn boost_start(
     max_flood_wait: Option<u64>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let concurrency = threads.unwrap_or(5).max(1).min(100);
+    let concurrency = threads.unwrap_or(5).clamp(1, 100);
     let max_flood_wait = max_flood_wait.unwrap_or(0);
 
     let task_id = uuid::Uuid::new_v4().to_string();

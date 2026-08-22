@@ -86,7 +86,7 @@ pub async fn interceptor_start(
     if ids.is_empty() {
         return Err(t("interceptor_no_accounts"));
     }
-    let concurrency = threads.unwrap_or(ids.len()).max(1).min(100);
+    let concurrency = threads.unwrap_or(ids.len()).clamp(1, 100);
     let task_id = uuid::Uuid::new_v4().to_string();
     let tid = task_id.clone();
 

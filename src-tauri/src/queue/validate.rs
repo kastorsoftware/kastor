@@ -18,7 +18,7 @@ pub async fn enqueue_validate(
     let do_restrictions = check_restrictions.unwrap_or(false);
     let do_2fa = check_2fa.unwrap_or(false);
     let do_aging = check_aging.unwrap_or(false);
-    let concurrency = threads.unwrap_or(5).max(1).min(1000);
+    let concurrency = threads.unwrap_or(5).clamp(1, 1000);
 
     dbg_log!(
         "enqueue_validate {} accounts, task_id={}, restrictions={}, 2fa={}, aging={}, threads={}",

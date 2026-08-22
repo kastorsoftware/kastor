@@ -91,7 +91,7 @@ pub async fn account_actions_start(
     threads: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let concurrency = threads.unwrap_or(5).max(1).min(1000);
+    let concurrency = threads.unwrap_or(5).clamp(1, 1000);
     let task_id = uuid::Uuid::new_v4().to_string();
     let tid = task_id.clone();
 

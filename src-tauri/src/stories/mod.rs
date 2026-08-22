@@ -152,7 +152,7 @@ pub async fn stories_start(
     threads: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let concurrency = threads.unwrap_or(5).max(1).min(100);
+    let concurrency = threads.unwrap_or(5).clamp(1, 100);
 
     // read media file(s)
     let media_files: Vec<Arc<Vec<u8>>> = if !config.media_paths.is_empty() {

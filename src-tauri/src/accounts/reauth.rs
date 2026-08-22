@@ -27,7 +27,7 @@ pub async fn reauth_accounts(
     threads: Option<usize>,
     terminate_others: Option<bool>,
 ) -> Result<ReauthResults, String> {
-    let concurrency = threads.unwrap_or(5).max(1).min(1000);
+    let concurrency = threads.unwrap_or(5).clamp(1, 1000);
     let do_terminate = terminate_others.unwrap_or(false);
     let storage = get_storage_pub();
 

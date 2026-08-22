@@ -133,7 +133,7 @@ pub async fn reporter_start(
     threads: Option<usize>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
-    let concurrency = threads.unwrap_or(5).max(1).min(100);
+    let concurrency = threads.unwrap_or(5).clamp(1, 100);
     // clamp to match frontend bounds and guard against malicious payloads
     config.delay_min = config.delay_min.clamp(2, 30);
     config.delay_max = config.delay_max.clamp(2, 30);

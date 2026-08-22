@@ -782,7 +782,7 @@ pub async fn validate_proxies(ids: Vec<String>, threads: Option<usize>) -> Vec<(
     } else {
         ids
     };
-    let concurrency = threads.unwrap_or(10).max(1).min(1000);
+    let concurrency = threads.unwrap_or(10).clamp(1, 1000);
     crate::proxy::validate_proxies_batch(&mut list, &target_ids, concurrency).await
 }
 
