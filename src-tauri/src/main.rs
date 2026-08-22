@@ -141,8 +141,6 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Serialize, Clone)]
 pub struct DashboardStats {
     accounts: u32,
-    messages_today: u32,
-    queue: u32,
     proxies: u32,
 }
 
@@ -267,8 +265,6 @@ fn get_stats() -> DashboardStats {
     dbg_log!("get_stats accounts={} proxies={}", accounts, proxies);
     DashboardStats {
         accounts,
-        messages_today: 0,
-        queue: 0,
         proxies,
     }
 }

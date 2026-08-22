@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   Send, ShieldCheck, Users, UserPlus, MessageSquare,
   Activity, Settings as SettingsIcon,
-  Cpu, Wifi, Construction, Repeat, UserCog, Flag, PlusCircle, Radio, TrendingUp, Copy, Download, Shuffle, AtSign,
+  Wifi, Construction, Repeat, UserCog, Flag, PlusCircle, Radio, TrendingUp, Copy, Download, Shuffle, AtSign,
   Eye, Upload, Zap, Link2, Search, Forward, ChevronDown, Bot, Github,
 } from "lucide-react";
 import { useI18n, useT } from "@/i18n";
@@ -38,8 +38,6 @@ const MailingPage = lazy(() => import("@/components/MailingPage").then(m => ({ d
 
 interface DashboardStats {
   accounts: number;
-  messages_today: number;
-  queue: number;
   proxies: number;
 }
 
@@ -154,7 +152,7 @@ export function Dashboard() {
     const IS_DEV = !("__TAURI_INTERNALS__" in window);
     if (IS_DEV) {
       setVersion("0.1");
-      setStats({ accounts: 0, messages_today: 0, queue: 0, proxies: 0 });
+      setStats({ accounts: 0, proxies: 0 });
       return;
     }
     invoke<string>("get_version").then(setVersion);
@@ -492,10 +490,8 @@ function DashboardHome({ stats }: { stats: DashboardStats }) {
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <StatCard icon={Users} label={t("common.accounts")} value={stats.accounts.toLocaleString()} />
-        <StatCard icon={Send} label={t("dashboard.messagesToday")} value={stats.messages_today.toLocaleString()} />
-        <StatCard icon={Cpu} label={t("dashboard.queue")} value={stats.queue.toLocaleString()} />
         <StatCard icon={Wifi} label={t("common.proxies")} value={stats.proxies.toLocaleString()} />
       </div>
 

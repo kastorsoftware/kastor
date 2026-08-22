@@ -89,8 +89,6 @@ export const en = {
     sqliteNote: "Results are saved to SQLite .db",
   },
   dashboard: {
-    messagesToday: "Messages today",
-    queue: "In queue",
     recentTasks: "Recent tasks",
     noTasks: "No tasks",
     statusDone: "Done",

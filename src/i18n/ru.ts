@@ -89,8 +89,6 @@ export const ru = {
     sqliteNote: "Результаты сохраняются в SQLite .db",
   },
   dashboard: {
-    messagesToday: "Сообщений сегодня",
-    queue: "В очереди",
     recentTasks: "Последние задачи",
     noTasks: "Нет задач",
     statusDone: "Выполнено",
