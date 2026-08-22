@@ -726,7 +726,7 @@ function ModeButton({ active, onClick, children }: { active: boolean; onClick: (
 function Field({ label, indent, children }: { label: string; indent?: boolean; children: React.ReactNode }) {
   return (
     <div className={indent ? "ml-7" : ""}>
-      <label className="text-sm font-medium text-foreground">{label}</label>
+      <label className="block text-sm font-medium text-foreground">{label}</label>
       {children}
     </div>
   );
