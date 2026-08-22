@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { Download, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dashboard } from "@/components/Dashboard";
@@ -20,6 +21,11 @@ interface StoredSettings {
   auto_update: boolean;
 }
 
+interface DownloadProgress {
+  downloaded_bytes: number;
+  total_bytes: number | null;
+}
+
 function UpdateToast({ update, automatic, onInstall, onCancel }: {
   update: UpdateInfo;
   automatic: boolean;
@@ -27,15 +33,32 @@ function UpdateToast({ update, automatic, onInstall, onCancel }: {
   onCancel: () => void;
 }) {
   const [seconds, setSeconds] = useState(30);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const locale = localStorage.getItem("app_locale") || "en";
   const ru = locale !== "en";
 
   useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void listen<DownloadProgress>("update-download-progress", (event) => setProgress(event.payload)).then((stop) => { unlisten = stop; });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
     if (!automatic) return;
-    if (seconds === 0) { onInstall(); return; }
+    if (seconds === 0) { setDownloading(true); onInstall(); return; }
     const timer = window.setTimeout(() => setSeconds((value) => value - 1), 1000);
     return () => window.clearTimeout(timer);
   }, [automatic, onInstall, seconds]);
+
+  const startInstall = () => {
+    setDownloading(true);
+    onInstall();
+  };
+
+  const progressText = progress?.total_bytes
+    ? `${Math.min(100, Math.floor(progress.downloaded_bytes / progress.total_bytes * 100))}%`
+    : progress ? `${Math.round(progress.downloaded_bytes / 1024 / 1024)} MB` : null;
 
   return (
     <div className="update-toast">
@@ -43,8 +66,9 @@ function UpdateToast({ update, automatic, onInstall, onCancel }: {
       <div className="min-w-0 flex-1">
         <div className="update-toast__title">{ru ? "Доступно обновление" : "Update available"}</div>
         <div className="update-toast__text">
-          {update.current_version} → {update.version}
-          {automatic && ` · ${ru ? `через ${seconds} сек.` : `in ${seconds}s`}`}
+          {downloading
+            ? (ru ? `Скачивание обновления: ${progressText ?? "0%"}` : `Downloading update: ${progressText ?? "0%"}`)
+            : <>{update.current_version} → {update.version}{automatic && ` · ${ru ? `через ${seconds} сек.` : `in ${seconds}s`}`}</>}
         </div>
       </div>
       {automatic ? (
@@ -52,7 +76,7 @@ function UpdateToast({ update, automatic, onInstall, onCancel }: {
           <X className="h-4 w-4" />
         </button>
       ) : (
-        <button className="update-toast__close" type="button" onClick={onInstall} title={ru ? "Обновить" : "Update"} aria-label={ru ? "Обновить" : "Update"}>
+        <button className="update-toast__close" type="button" onClick={startInstall} disabled={downloading} title={ru ? "Обновить" : "Update"} aria-label={ru ? "Обновить" : "Update"}>
           <Download className="h-4 w-4" />
         </button>
       )}

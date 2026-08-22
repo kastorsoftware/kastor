@@ -1,8 +1,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
+use tauri::Emitter;
 
 const RELEASE_API: &str = "https://api.github.com/repos/kastorsoftware/kastor/releases/latest";
 const USER_AGENT: &str = "Kastor-updater";
@@ -16,6 +18,12 @@ pub struct UpdateInfo {
 }
 
 pub struct UpdateState(pub Mutex<Option<UpdateInfo>>);
+
+#[derive(Clone, Serialize)]
+struct DownloadProgress {
+    downloaded_bytes: u64,
+    total_bytes: Option<u64>,
+}
 
 #[derive(Deserialize)]
 struct GithubRelease {
@@ -91,7 +99,10 @@ fn check_for_update_sync() -> Result<Option<UpdateInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn download_and_apply_update(state: tauri::State<'_, UpdateState>) -> Result<(), String> {
+pub async fn download_and_apply_update(
+    state: tauri::State<'_, UpdateState>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let update = state
         .0
         .lock()
@@ -100,7 +111,7 @@ pub async fn download_and_apply_update(state: tauri::State<'_, UpdateState>) -> 
         .ok_or_else(|| "no checked update is available".to_string())?;
     let current_exe = std::env::current_exe().map_err(|e| format!("current exe path: {e}"))?;
     let download_target = current_exe.clone();
-    let new_exe = tokio::task::spawn_blocking(move || download_update(&update, &download_target))
+    let new_exe = tokio::task::spawn_blocking(move || download_update(&update, &download_target, &app))
         .await
         .map_err(|e| format!("update download task failed: {e}"))??;
 
@@ -112,7 +123,11 @@ pub async fn download_and_apply_update(state: tauri::State<'_, UpdateState>) -> 
     std::process::exit(0);
 }
 
-fn download_update(update: &UpdateInfo, current_exe: &Path) -> Result<PathBuf, String> {
+fn download_update(
+    update: &UpdateInfo,
+    current_exe: &Path,
+    app: &tauri::AppHandle,
+) -> Result<PathBuf, String> {
     let target_dir = writable_parent(current_exe).unwrap_or_else(update_dir);
     std::fs::create_dir_all(&target_dir).map_err(|e| format!("create update directory: {e}"))?;
     let target = target_dir.join(format!("Kastor-v{}.exe", update.version));
@@ -131,19 +146,63 @@ fn download_update(update: &UpdateInfo, current_exe: &Path) -> Result<PathBuf, S
         .filter(|hash| hash.len() == 64 && hash.bytes().all(|b| b.is_ascii_hexdigit()))
         .ok_or_else(|| "update checksum format is invalid".to_string())?;
 
-    let bytes = ureq::get(&update.download_url)
+    let body = ureq::get(&update.download_url)
         .header("User-Agent", USER_AGENT)
         .call()
         .map_err(|e| format!("download update: {e}"))?
-        .into_body()
-        .read_to_vec()
-        .map_err(|e| format!("read update: {e}"))?;
-    let actual = format!("{:x}", Sha256::digest(&bytes));
+        .into_body();
+    let total_bytes = body.content_length();
+    let mut reader = body.into_reader();
+    let mut file = std::fs::File::create(&temporary).map_err(|e| format!("create update: {e}"))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded_bytes = 0u64;
+    let mut last_reported_percent = None;
+    let mut buffer = [0u8; 64 * 1024];
+
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|e| format!("read update: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        file.write_all(&buffer[..read])
+            .map_err(|e| format!("write update: {e}"))?;
+        hasher.update(&buffer[..read]);
+        downloaded_bytes += read as u64;
+
+        let percent = total_bytes.map(|total| {
+            if total == 0 {
+                100
+            } else {
+                ((downloaded_bytes.saturating_mul(100) / total).min(100)) as u8
+            }
+        });
+        if percent != last_reported_percent {
+            let _ = app.emit(
+                "update-download-progress",
+                DownloadProgress {
+                    downloaded_bytes,
+                    total_bytes,
+                },
+            );
+            last_reported_percent = percent;
+        }
+    }
+    file.flush().map_err(|e| format!("flush update: {e}"))?;
+
+    let actual = format!("{:x}", hasher.finalize());
     if !actual.eq_ignore_ascii_case(expected) {
         return Err("downloaded update checksum does not match".into());
     }
 
-    std::fs::write(&temporary, bytes).map_err(|e| format!("write update: {e}"))?;
+    let _ = app.emit(
+        "update-download-progress",
+        DownloadProgress {
+            downloaded_bytes,
+            total_bytes,
+        },
+    );
     std::fs::rename(&temporary, &target).map_err(|e| format!("finalize update: {e}"))?;
     Ok(target)
 }
