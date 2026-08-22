@@ -1207,7 +1207,7 @@ async fn run_subscribe_list(
 
     let mut subscribed = 0usize;
     let mut failed = 0usize;
-    for link in links {
+    for link in &links {
         if !token.load(Ordering::Relaxed) {
             break;
         }
