@@ -4,6 +4,9 @@ use tokio::net::TcpStream;
 use crate::proxy::{self, ProxyConfig};
 use crate::i18n::t_with;
 
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+const IO_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(45);
+
 // mtproto TcpFull transport
 // wire format: length(4) + seq_no(4) + payload + crc32(4)
 
@@ -21,8 +24,9 @@ impl MtpTransport {
             let (host, port) = parse_host_port(addr)?;
             proxy::connect_via_proxy(px, host, port).await?
         } else {
-            TcpStream::connect(addr)
+            tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
                 .await
+                .map_err(|_| "MTProto connection timed out".to_string())?
                 .map_err(|e| t_with("mtproto_connect_error", &[("error", &e.to_string())]))?
         };
 
@@ -43,9 +47,11 @@ impl MtpTransport {
         let crc = crc32(&packet);
         packet.extend_from_slice(&crc.to_le_bytes());
 
-        self.stream.write_all(&packet).await
+        tokio::time::timeout(IO_TIMEOUT, self.stream.write_all(&packet)).await
+            .map_err(|_| "MTProto write timed out".to_string())?
             .map_err(|e| format!("write failed: {e}"))?;
-        self.stream.flush().await
+        tokio::time::timeout(IO_TIMEOUT, self.stream.flush()).await
+            .map_err(|_| "MTProto flush timed out".to_string())?
             .map_err(|e| format!("flush failed: {e}"))?;
 
         dbg_log!("transport::send {} bytes OK", packet.len());
@@ -54,7 +60,8 @@ impl MtpTransport {
 
     pub async fn recv(&mut self) -> Result<Vec<u8>, String> {
         let mut len_buf = [0u8; 4];
-        self.stream.read_exact(&mut len_buf).await
+        tokio::time::timeout(IO_TIMEOUT, self.stream.read_exact(&mut len_buf)).await
+            .map_err(|_| "MTProto read timed out".to_string())?
             .map_err(|e| format!("read length failed: {e}"))?;
 
         let packet_len = u32::from_le_bytes(len_buf) as usize;
@@ -74,7 +81,8 @@ impl MtpTransport {
 
         let remaining = packet_len - 4;
         let mut rest = vec![0u8; remaining];
-        self.stream.read_exact(&mut rest).await
+        tokio::time::timeout(IO_TIMEOUT, self.stream.read_exact(&mut rest)).await
+            .map_err(|_| "MTProto read timed out".to_string())?
             .map_err(|e| format!("read data failed: {e}"))?;
 
         // verify crc32
