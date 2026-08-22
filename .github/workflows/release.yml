@@ -92,6 +92,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force artifacts\release | Out-Null
           Copy-Item src-tauri\target\release\kastor.exe "artifacts\release\Kastor-v$env:VERSION.exe" -ErrorAction Stop
+          $asset = "artifacts\release\Kastor-v$env:VERSION.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $asset).Hash.ToLowerInvariant()
+          "$hash  Kastor-v$env:VERSION.exe" | Set-Content "$asset.sha256" -NoNewline
 
       - name: Publish GitHub release
         shell: pwsh
@@ -101,10 +104,11 @@ jobs:
           VERSION: ${{ steps.version.outputs.number }}
         run: |
           $asset = "artifacts\release\Kastor-v$env:VERSION.exe"
+          $checksum = "$asset.sha256"
 
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
             throw "Release $env:TAG already exists. Bump the app version before publishing another release."
           }
 
-          gh release create $env:TAG $asset --title "Kastor v$env:VERSION" --generate-notes
+          gh release create $env:TAG $asset $checksum --title "Kastor v$env:VERSION" --generate-notes

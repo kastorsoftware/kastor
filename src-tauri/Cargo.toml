@@ -1,6 +1,6 @@
 [package]
 name = "kastor"
-version = "1.0.5+3"
+version = "1.0.6"
 edition = "2021"
 
 [build-dependencies]
@@ -39,6 +39,7 @@ futures-util = "0.3"
 symphonia = { version = "0.5", features = ["mp3", "wav", "isomp4", "aac"] }
 ogg-opus = "0.1"
 rubato = "0.14"
+semver = "1"
 
 [profile.release]
 strip = true

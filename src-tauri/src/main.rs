@@ -4,6 +4,7 @@
 #[macro_use]
 mod debug;
 mod accounts;
+mod app_update;
 mod audio;
 mod auto_reply;
 mod boost;
@@ -358,6 +359,7 @@ fn get_validating_ids(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Vec<Stri
 }
 
 fn main() {
+    app_update::apply_previous_cleanup_from_args();
     dbg_log!("=== Kastor v{} starting (DEBUG BUILD) ===", APP_VERSION);
 
     let state = Arc::new(Mutex::new(AppState {
@@ -382,6 +384,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(state)
         .manage(task_queue)
+        .manage(app_update::UpdateState(Mutex::new(None)))
         .manage(accounts::auth_login::AuthSessions::new())
         .invoke_handler(tauri::generate_handler![
             i18n::set_locale,
@@ -398,6 +401,8 @@ fn main() {
             get_task_queue,
             get_queue_stats,
             get_validating_ids,
+            app_update::check_for_update,
+            app_update::download_and_apply_update,
             settings::get_settings,
             settings::save_settings,
             settings::patch_settings,
