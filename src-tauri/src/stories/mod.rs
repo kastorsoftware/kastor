@@ -30,6 +30,10 @@ const CAPTION_LIMIT_PREMIUM: usize = 2048;
 const TAG_SEPARATOR: &str = "\nㅤ\nㅤ\nㅤ\n";
 const CHUNK_SIZE: usize = 512 * 1024;
 
+fn telegram_text_len(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
 #[derive(Deserialize, Clone)]
 pub struct StoriesConfig {
     pub media_type: String, // "photo" | "video"
@@ -82,15 +86,15 @@ fn build_caption(base: &str, tags: &[String], is_premium: bool) -> Result<String
             format!("{}{}", base, TAG_SEPARATOR)
         };
 
-        if prefix.chars().count() >= limit {
+        if telegram_text_len(&prefix) >= limit {
             return Err(t("stories_caption_too_long"));
         }
 
-        let available = limit - prefix.chars().count();
+        let available = limit - telegram_text_len(&prefix);
         let mut tag_str = String::new();
         for tag in tags {
             let mention = format!("@{} ", tag.trim_start_matches('@'));
-            if tag_str.chars().count() + mention.chars().count() > available {
+            if telegram_text_len(&tag_str) + telegram_text_len(&mention) > available {
                 break;
             }
             tag_str.push_str(&mention);
@@ -102,7 +106,7 @@ fn build_caption(base: &str, tags: &[String], is_premium: bool) -> Result<String
 
         Ok(format!("{}{}", prefix, tag_str.trim_end()))
     } else if !base.is_empty() {
-        if base.chars().count() > limit {
+        if telegram_text_len(base) > limit {
             return Err(t_with(
                 "stories_caption_over_limit",
                 &[("limit", &limit.to_string())],
@@ -123,7 +127,7 @@ fn calc_tags_per_account(caption: &str, tags: &[String], is_premium: bool) -> us
     let prefix_len = if caption.is_empty() {
         0
     } else {
-        caption.chars().count() + TAG_SEPARATOR.chars().count()
+        telegram_text_len(caption) + telegram_text_len(TAG_SEPARATOR)
     };
     if prefix_len >= limit {
         return 0;
@@ -135,7 +139,7 @@ fn calc_tags_per_account(caption: &str, tags: &[String], is_premium: bool) -> us
     let mut count = 0;
     for tag in tags {
         let mention = format!("@{} ", tag.trim_start_matches('@'));
-        let mention_len = mention.chars().count();
+        let mention_len = telegram_text_len(&mention);
         if used + mention_len > available {
             break;
         }
