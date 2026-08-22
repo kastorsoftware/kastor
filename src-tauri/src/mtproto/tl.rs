@@ -194,7 +194,7 @@ fn tl_user_to_info(user: tl_gen::TlUser) -> Result<UserInfo, String> {
 pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, String> {
     use std::io::Read;
     const MAX_DECOMPRESSED_SIZE: u64 = 64 * 1024 * 1024;
-    let mut decoder = flate2::read::GzDecoder::new(data);
+    let decoder = flate2::read::GzDecoder::new(data);
     let mut result = Vec::new();
     decoder
         .take(MAX_DECOMPRESSED_SIZE + 1)
