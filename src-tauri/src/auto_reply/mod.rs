@@ -484,12 +484,9 @@ async fn run_account(
             }
             tl_gen::TlUpdatesDifference::Difference { new_messages, users, state, .. } => {
                 dbg_log!("auto_reply: getDifference returned Difference with {} messages", new_messages.len());
-                // update state
-                if let Ok(s) = tl_gen::TlUpdatesState::deserialize(&mut std::io::Cursor::new(state.as_slice())) {
-                    pts = s.pts;
-                    date = s.date;
-                    qts = s.qts;
-                }
+                let next_state = tl_gen::TlUpdatesState::deserialize(
+                    &mut std::io::Cursor::new(state.as_slice()),
+                ).ok();
                 let errs = process_messages(
                     &new_messages, &users, my_user_id, config, voice_bytes,
                     uploaded_image_file.as_deref(), &image_filename,
@@ -498,6 +495,11 @@ async fn run_account(
                     token, &reply_count, &mut replied_users,
                     &replied_users_path,
                 ).await?;
+                if let Some(state) = next_state {
+                    pts = state.pts;
+                    date = state.date;
+                    qts = state.qts;
+                }
                 if config.autostop_enabled {
                     autostop_ban_count += errs.bans;
                     autostop_spamblock_count += errs.spamblocks;
@@ -510,11 +512,9 @@ async fn run_account(
             }
             tl_gen::TlUpdatesDifference::Slice { new_messages, users, intermediate_state, .. } => {
                 dbg_log!("auto_reply: getDifference returned Slice with {} messages", new_messages.len());
-                if let Ok(s) = tl_gen::TlUpdatesState::deserialize(&mut std::io::Cursor::new(intermediate_state.as_slice())) {
-                    pts = s.pts;
-                    date = s.date;
-                    qts = s.qts;
-                }
+                let next_state = tl_gen::TlUpdatesState::deserialize(
+                    &mut std::io::Cursor::new(intermediate_state.as_slice()),
+                ).ok();
                 let errs = process_messages(
                     &new_messages, &users, my_user_id, config, voice_bytes,
                     uploaded_image_file.as_deref(), &image_filename,
@@ -523,6 +523,11 @@ async fn run_account(
                     token, &reply_count, &mut replied_users,
                     &replied_users_path,
                 ).await?;
+                if let Some(state) = next_state {
+                    pts = state.pts;
+                    date = state.date;
+                    qts = state.qts;
+                }
                 if config.autostop_enabled {
                     autostop_ban_count += errs.bans;
                     autostop_spamblock_count += errs.spamblocks;
