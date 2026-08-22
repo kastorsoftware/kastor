@@ -189,6 +189,7 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_limit_reached", "достигнут лимит {limit} ответов");
         m.insert("auto_reply_get_diff_error", "getDifference ошибка: {error}");
         m.insert("auto_reply_parse_diff_error", "parse diff ошибка: {error}");
+        m.insert("auto_reply_difference_too_long", "пропущена слишком большая очередь обновлений; новые сообщения будут обработаны дальше");
         m.insert("auto_reply_no_access_hash", "пропущено: не удалось получить access_hash для user_id={user_id}");
         m.insert("auto_reply_not_in_list", "пропущено (не в списке): user_id={user_id}");
         m.insert("auto_reply_ban_word_skip", "пропущено (бан-слово): user_id={user_id}");
@@ -1222,6 +1223,7 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_limit_reached", "reached limit of {limit} replies");
         m.insert("auto_reply_get_diff_error", "getDifference error: {error}");
         m.insert("auto_reply_parse_diff_error", "parse diff error: {error}");
+        m.insert("auto_reply_difference_too_long", "an oversized update backlog was skipped; new messages will be processed from now on");
         m.insert("auto_reply_no_access_hash", "skipped: could not get access_hash for user_id={user_id}");
         m.insert("auto_reply_not_in_list", "skipped (not in list): user_id={user_id}");
         m.insert("auto_reply_ban_word_skip", "skipped (ban word): user_id={user_id}");

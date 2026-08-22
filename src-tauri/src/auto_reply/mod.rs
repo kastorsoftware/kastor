@@ -539,6 +539,7 @@ async fn run_account(
                 }
             }
             tl_gen::TlUpdatesDifference::TooLong { pts: new_pts } => {
+                emit(t("auto_reply_difference_too_long"));
                 pts = new_pts;
                 continue;
             }
