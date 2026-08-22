@@ -1018,6 +1018,8 @@ lazy_static::lazy_static! {
 
         // Proxy
         m.insert("proxy_no_available", "нет доступных прокси, добавьте прокси или включите работу без прокси в настройках");
+        m.insert("proxy_connect_timeout", "таймаут подключения к прокси");
+        m.insert("proxy_handshake_timeout", "таймаут рукопожатия с прокси");
         m.insert("proxy_connect_error", "Не удалось подключиться к серверам Telegram. Проверьте прокси на валидность. ({error})");
         m.insert("proxy_validate_task", "Проверка {count} прокси");
 
@@ -2047,6 +2049,8 @@ lazy_static::lazy_static! {
 
         // Proxy
         m.insert("proxy_no_available", "no available proxies, add proxies or enable no-proxy mode in settings");
+        m.insert("proxy_connect_timeout", "proxy connection timed out");
+        m.insert("proxy_handshake_timeout", "proxy handshake timed out");
         m.insert("proxy_connect_error", "Could not connect to Telegram servers. Check proxy validity. ({error})");
         m.insert("proxy_validate_task", "Validating {count} proxies");
 

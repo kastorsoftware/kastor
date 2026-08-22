@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -376,15 +377,17 @@ pub async fn connect_via_proxy(
     let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
     dbg_log!("proxy::connect_via_proxy to {} via {:?} {}", target_host, proxy.proxy_type, proxy_addr);
 
-    let mut stream = TcpStream::connect(&proxy_addr)
+    let mut stream = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(&proxy_addr))
         .await
+        .map_err(|_| crate::i18n::t("proxy_connect_timeout"))?
         .map_err(|e| crate::i18n::t_with("proxy_connect_error", &[("error", &e.to_string())]))?;
 
-    match proxy.proxy_type {
-        ProxyType::Socks5 => socks5_handshake(&mut stream, proxy, target_host, target_port).await,
-        ProxyType::Socks4 => socks4_handshake(&mut stream, proxy, target_host, target_port).await,
-        ProxyType::Https => https_connect(&mut stream, proxy, target_host, target_port).await,
-    }?;
+    let handshake = match proxy.proxy_type {
+        ProxyType::Socks5 => tokio::time::timeout(Duration::from_secs(15), socks5_handshake(&mut stream, proxy, target_host, target_port)).await,
+        ProxyType::Socks4 => tokio::time::timeout(Duration::from_secs(15), socks4_handshake(&mut stream, proxy, target_host, target_port)).await,
+        ProxyType::Https => tokio::time::timeout(Duration::from_secs(15), https_connect(&mut stream, proxy, target_host, target_port)).await,
+    };
+    handshake.map_err(|_| crate::i18n::t("proxy_handshake_timeout"))??;
 
     Ok(stream)
 }
