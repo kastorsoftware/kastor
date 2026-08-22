@@ -1497,7 +1497,9 @@ fn write_deser_field_v2(out: &mut fs::File, ftype: FType, name: &str, is_option:
         FType::VecBytes => {
             writeln!(out, "{}{{", indent).unwrap();
             writeln!(out, "{}    let vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;", indent).unwrap();
+            writeln!(out, "{}    if vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}", indent).unwrap();
             writeln!(out, "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;", indent).unwrap();
+            writeln!(out, "{}    check_vector_count(cnt)?;", indent).unwrap();
             writeln!(out, "{}    let mut v = Vec::with_capacity(cnt as usize);", indent).unwrap();
             writeln!(out, "{}    for _ in 0..cnt {{ v.push(deserialize_bytes(cursor).map_err(|_| \"vb\".to_string())?); }}", indent).unwrap();
             writeln!(out, "{}    {}v{}", indent, assign, close).unwrap();
@@ -1517,7 +1519,9 @@ fn write_deser_field_v2(out: &mut fs::File, ftype: FType, name: &str, is_option:
             // capture each object in vector as raw bytes
             writeln!(out, "{}{{", indent).unwrap();
             writeln!(out, "{}    let _vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;", indent).unwrap();
+            writeln!(out, "{}    if _vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}", indent).unwrap();
             writeln!(out, "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;", indent).unwrap();
+            writeln!(out, "{}    check_vector_count(cnt)?;", indent).unwrap();
             writeln!(out, "{}    let mut v = Vec::with_capacity(cnt as usize);", indent).unwrap();
             writeln!(out, "{}    for _ in 0..cnt {{", indent).unwrap();
             writeln!(out, "{}        let s = cursor.position() as usize;", indent).unwrap();
@@ -1706,7 +1710,9 @@ fn write_deser_expr(out: &mut fs::File, ftype: FType, indent: &str) {
         FType::VecObj => {
             writeln!(out, "{}{{", indent).unwrap();
             writeln!(out, "{}    let _vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vc\")?;", indent).unwrap();
+            writeln!(out, "{}    if _vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}", indent).unwrap();
             writeln!(out, "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"cnt\")?;", indent).unwrap();
+            writeln!(out, "{}    check_vector_count(cnt)?;", indent).unwrap();
             writeln!(out, "{}    let mut v = Vec::new();", indent).unwrap();
             writeln!(out, "{}    for _ in 0..cnt {{ let s = cursor.position() as usize; skip_tl(cursor)?; let e = cursor.position() as usize; v.push(cursor.get_ref()[s..e].to_vec()); }}", indent).unwrap();
             writeln!(out, "{}    Some(v)", indent).unwrap();
@@ -1733,7 +1739,7 @@ fn write_deser_expr_direct(out: &mut fs::File, ftype: FType, indent: &str) {
             writeln!(out, "{}{{ let s = cursor.position() as usize; skip_tl(cursor)?; let e = cursor.position() as usize; cursor.get_ref()[s..e].to_vec() }}", indent).unwrap();
         }
         FType::VecObj => {
-            writeln!(out, "{}{{ let _vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vc\")?; let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"cnt\")?; let mut v = Vec::new(); for _ in 0..cnt {{ let s = cursor.position() as usize; skip_tl(cursor)?; let e = cursor.position() as usize; v.push(cursor.get_ref()[s..e].to_vec()); }} v }}", indent).unwrap();
+            writeln!(out, "{}{{ let vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vc\")?; if vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }} let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"cnt\")?; check_vector_count(cnt)?; let mut v = Vec::new(); for _ in 0..cnt {{ let s = cursor.position() as usize; skip_tl(cursor)?; let e = cursor.position() as usize; v.push(cursor.get_ref()[s..e].to_vec()); }} v }}", indent).unwrap();
         }
         FType::Int128 => writeln!(out, "{}{{ let mut b = [0u8; 16]; cursor.read_exact(&mut b).map_err(|_| \"i128\")?; b }}", indent).unwrap(),
         FType::Int256 => writeln!(out, "{}{{ let mut b = [0u8; 32]; cursor.read_exact(&mut b).map_err(|_| \"i256\")?; b }}", indent).unwrap(),
