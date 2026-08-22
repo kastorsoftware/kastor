@@ -874,6 +874,7 @@ lazy_static::lazy_static! {
         m.insert("cloner_skipped_media", "пропущено: msg={id} ({reason})");
         m.insert("cloner_skipped_size", "пропущено: msg={id} ({reason}, {kb} КБ)");
         m.insert("cloner_error_msg", "ошибка: msg={id} {error}");
+        m.insert("cloner_media_resend_unsupported", "медиа нельзя безопасно скопировать в режиме пересылки без автора");
         m.insert("cloner_copied_msg", "скопировано: msg={id} -> dst={dst}");
         m.insert("cloner_sweep_count", "Подчищено служебных сообщений: {count}");
         m.insert("cloner_sweep_result", "Очистка служебных сообщений вернула: {error}");
@@ -1907,6 +1908,7 @@ lazy_static::lazy_static! {
         m.insert("cloner_skipped_media", "skipped: msg={id} ({reason})");
         m.insert("cloner_skipped_size", "skipped: msg={id} ({reason}, {kb} KB)");
         m.insert("cloner_error_msg", "error: msg={id} {error}");
+        m.insert("cloner_media_resend_unsupported", "media cannot be copied safely in resend mode");
         m.insert("cloner_copied_msg", "copied: msg={id} -> dst={dst}");
         m.insert("cloner_sweep_count", "Cleaned up service messages: {count}");
         m.insert("cloner_sweep_result", "Service message cleanup returned: {error}");

@@ -282,9 +282,11 @@ async fn process_message(
         || !cfg.copy_photos
         || !cfg.copy_videos
         || !cfg.copy_messages_with_video;
+    let mut media_info = None;
     if needs_media_check {
-        let raw = fetch_message_blob(client, source, msg.id).await.unwrap_or_default();
+        let raw = fetch_message_blob(client, source, msg.id).await?;
         let info = detect_media(&raw);
+        media_info = Some(info);
 
         // type gates
         let kind_skip = match info.kind {
@@ -328,6 +330,22 @@ async fn process_message(
     // If there's a mapped reply or content is protected (noforwards),
     // we must re-send instead of forward (forward doesn't support reply_to)
     let use_send_mode = mapped_reply.is_some() || source.noforwards;
+
+    // Re-sending via sendMessage preserves neither photos nor documents. Do
+    // not turn a protected media post into a text-only post without telling
+    // the user; the regular forward path still preserves media intact.
+    if use_send_mode {
+        let info = match media_info {
+            Some(info) => info,
+            None => {
+                let raw = fetch_message_blob(client, source, msg.id).await?;
+                detect_media(&raw)
+            }
+        };
+        if info.kind != MediaKind::None {
+            return Err(t("cloner_media_resend_unsupported"));
+        }
+    }
 
     let new_id = if use_send_mode {
         // send as new message (preserves reply chain, works for protected content)
@@ -482,9 +500,7 @@ async fn load_source_full(
     SourceContext { channel_id, access_hash, title, about, photo, joined_now, noforwards: false }
 }
 
-/// Send a message as a copy (for reply chains and noforwards channels).
-/// Re-sends the source message's text via sendMessage. Media is handled
-/// by forwarding first and falling back — for text-only posts this works directly.
+/// Send a text message as a copy (for reply chains and noforwards channels).
 async fn send_as_copy(
     client: &mut MtpClient,
     _source: &SourceContext,
@@ -496,9 +512,8 @@ async fn send_as_copy(
     let (plain, entities) = tl::parse_markdown_v2(text);
     let rid: i64 = rand::random();
 
-    // For text-only messages, use sendMessage with reply_to
-    // (media messages would need sendMedia — for now we send text only;
-    // media will be lost in send mode, but reply chain is preserved)
+    // Media posts are rejected before this function: sendMessage only handles
+    // text, so accepting them here would silently discard the attachment.
     let req = if let Some(reply_id) = reply_to {
         // build with reply_to
         let peer = crate::mtproto::tl_gen::serialize_input_peer_channel(dest.channel_id, dest.access_hash);
