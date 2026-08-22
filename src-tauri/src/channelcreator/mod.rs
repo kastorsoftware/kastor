@@ -113,7 +113,7 @@ pub async fn create_channels_start(
     let db = init_db(&output_path)?;
     let db = Arc::new(tokio::sync::Mutex::new(db));
 
-    let _ = app.emit("channelcreator-log", format!("DB: {}", output_path.display()));
+    let _ = app.emit("create-channels-log", format!("DB: {}", output_path.display()));
 
     let config = Arc::new(config);
     let titles = Arc::new(titles);
