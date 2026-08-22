@@ -22,7 +22,7 @@ pub async fn connect_account_with_info(account_id: &str) -> Result<(MtpClient, t
     let mut key = [0u8; 256];
     key.copy_from_slice(&session.auth_key);
     let addr = format!("{}:{}", session.server_address, session.port);
-    let proxy = proxy::select_proxy_for_account(json.proxy.as_deref()).ok().flatten();
+    let proxy = proxy::select_proxy_for_account(json.proxy.as_deref())?;
 
     let mut client = {
         let mut last_err = String::new();
