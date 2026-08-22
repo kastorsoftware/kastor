@@ -814,32 +814,19 @@ async fn warm_session(
                 sleep_jitter(500, 300).await;
             }
         }
-        // saved messages: fetch last N from history and delete by real IDs
-        let saved_count = saved_msg_ids.len() as i32;
-        if saved_count > 0 {
-            emit_log(t_with("warmer_cleanup_saved", &[("count", &saved_count.to_string())]));
-            let history_req = tl::build_get_history_self(saved_count.min(100));
-            match client.invoke(&history_req).await {
-                Ok(hist_data) => {
-                    let msgs = tl::parse_messages_structured(&hist_data).unwrap_or_default();
-                    let ids: Vec<i32> = msgs.iter().map(|m| m.id).filter(|id| *id > 0).collect();
-                    if !ids.is_empty() {
-                        emit_log(t_with("warmer_cleanup_saved_found", &[("count", &ids.len().to_string())]));
-                        for &msg_id in &ids {
-                            if !token.load(Ordering::Relaxed) { break; }
-                            let del_req = tl::build_delete_messages(&[msg_id], false);
-                            if let Err(e) = client.invoke(&del_req).await {
-                                emit_log(t_with("warmer_del_msg_error", &[("id", &msg_id.to_string()), ("error", &e)]));
-                            }
-                            sleep_jitter(200, 100).await;
-                        }
-                    } else {
-                        emit_log(t("warmer_cleanup_saved_no_ids"));
-                    }
+        // Delete only messages created during this warmup. Reading the latest N messages
+        // can include the user's pre-existing Saved Messages after concurrent activity.
+        if !saved_msg_ids.is_empty() {
+            saved_msg_ids.sort_unstable();
+            saved_msg_ids.dedup();
+            emit_log(t_with("warmer_cleanup_saved", &[("count", &saved_msg_ids.len().to_string())]));
+            for &msg_id in &saved_msg_ids {
+                if !token.load(Ordering::Relaxed) { break; }
+                let del_req = tl::build_delete_messages(&[msg_id], false);
+                if let Err(e) = client.invoke(&del_req).await {
+                    emit_log(t_with("warmer_del_msg_error", &[("id", &msg_id.to_string()), ("error", &e)]));
                 }
-                Err(e) => {
-                    emit_log(t_with("warmer_cleanup_saved_history_error", &[("error", &e)]));
-                }
+                sleep_jitter(200, 100).await;
             }
         }
         if !fake_chat_peers.is_empty() {
