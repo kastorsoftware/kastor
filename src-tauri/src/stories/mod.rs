@@ -149,6 +149,25 @@ fn calc_tags_per_account(caption: &str, tags: &[String], is_premium: bool) -> us
     count
 }
 
+fn build_mention_entities(caption: &str, tags: &[String]) -> Vec<Vec<u8>> {
+    let mut entities = Vec::new();
+    let mut search_from = 0;
+    for tag in tags {
+        let mention = format!("@{}", tag.trim_start_matches('@'));
+        let Some(relative) = caption[search_from..].find(&mention) else {
+            continue;
+        };
+        let start = search_from + relative;
+        let offset = telegram_text_len(&caption[..start]) as i32;
+        entities.push(tl_gen::serialize_messageEntityMention(
+            offset,
+            telegram_text_len(&mention) as i32,
+        ));
+        search_from = start + mention.len();
+    }
+    entities
+}
+
 #[tauri::command]
 pub async fn stories_start(
     ids: Vec<String>,
@@ -443,6 +462,8 @@ async fn process_account(
         } else {
             Some(caption.as_str())
         };
+        let entities = build_mention_entities(&caption, &story_tags);
+        let entity_refs: Vec<&[u8]> = entities.iter().map(Vec::as_slice).collect();
 
         let story_req = if config.media_type == "photo" {
             if is_big {
@@ -451,6 +472,7 @@ async fn process_account(
                     total_parts,
                     file_name,
                     caption_opt,
+                    &entity_refs,
                     Some(config.duration_seconds),
                     config.pinned,
                     privacy_rules,
@@ -462,6 +484,7 @@ async fn process_account(
                     total_parts,
                     file_name,
                     caption_opt,
+                    &entity_refs,
                     Some(config.duration_seconds),
                     config.pinned,
                     privacy_rules,
@@ -477,6 +500,7 @@ async fn process_account(
                 1080,
                 1920,
                 caption_opt,
+                &entity_refs,
                 Some(config.duration_seconds),
                 config.pinned,
                 privacy_rules,
