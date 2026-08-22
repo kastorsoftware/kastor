@@ -471,7 +471,7 @@ async fn process_account(
                     let resolve_req = tl::build_resolve_username(&story_user);
                     match client.invoke(&resolve_req).await {
                         Ok(data) => {
-                            if let Ok((owner_id, owner_hash)) = tl::parse_resolved_peer(&data) {
+                            if tl::parse_resolved_peer(&data).is_ok() {
                                 for _ in 0..effective_limit {
                                     if !token.load(Ordering::Relaxed) { break; }
                                     let i = username_idx.fetch_add(1, Ordering::Relaxed);
@@ -481,11 +481,12 @@ async fn process_account(
                                         if let Ok((uid, hash)) = tl::parse_resolved_peer(&data2) {
                                             let peer = tl_gen::serialize_input_peer_user(uid, hash);
                                             let random_id: i64 = rand::random();
-                                            let from_peer = tl_gen::serialize_input_peer_user(owner_id, owner_hash);
-                                            let req = tl_gen::build_messages_forwardMessages(
-                                                config.silent, false, false, false, false, false, false,
-                                                &from_peer, &[story_id], &[random_id], &peer,
-                                                None, None, None, None, None, None, None, None, None, None,
+                                            // Story IDs are not message IDs and cannot be passed to
+                                            // messages.forwardMessages. Send the canonical story link.
+                                            let req = tl_gen::build_messages_sendMessage(
+                                                true, config.silent, false, false, false, false, false, false,
+                                                &peer, None, story_link, random_id, None, None,
+                                                None, None, None, None, None, None, None, None,
                                             );
                                             match client.invoke(&req).await {
                                                 Ok(_) => { emit(&t_with("mailing_story_forwarded", &[("username", usernames[i].as_str())])); sent += 1; }
