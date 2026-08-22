@@ -110,12 +110,8 @@ pub fn date_to_ts(year: i64, month: i64, day: i64) -> i64 {
 
 // BIP39 seed phrase detection
 pub fn is_seed_phrase(text: &str) -> bool {
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() < 12 || words.len() > 24 { return false; }
-    if words.len() % 3 != 0 { return false; }
-    words.iter().all(|w| {
-        w.len() >= 3 && w.len() <= 8 && w.chars().all(|c| c.is_ascii_lowercase())
-    })
+    let phrase = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    bip39::Mnemonic::parse_in_normalized(bip39::Language::English, &phrase).is_ok()
 }
 
 pub fn chrono_format_ts(ts: i64) -> String {
