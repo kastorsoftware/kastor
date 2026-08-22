@@ -224,7 +224,7 @@ export function StoriesPage() {
 
           {/* media type */}
           <div>
-            <label className="text-sm font-medium text-foreground">{t("stories.mediaTypeLabel")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("stories.mediaTypeLabel")}</label>
             <select
               value={config.mediaType}
               onChange={(e) => set("mediaType", e.target.value as MediaType)}
