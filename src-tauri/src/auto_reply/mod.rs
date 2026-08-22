@@ -496,6 +496,7 @@ async fn run_account(
                     uploaded_video_file.as_deref(), &video_filename,
                     ban_words, whitelist, db, &mut client, &prefix, app,
                     token, &reply_count, &mut replied_users,
+                    &replied_users_path,
                 ).await?;
                 if config.autostop_enabled {
                     autostop_ban_count += errs.bans;
@@ -520,6 +521,7 @@ async fn run_account(
                     uploaded_video_file.as_deref(), &video_filename,
                     ban_words, whitelist, db, &mut client, &prefix, app,
                     token, &reply_count, &mut replied_users,
+                    &replied_users_path,
                 ).await?;
                 if config.autostop_enabled {
                     autostop_ban_count += errs.bans;
@@ -607,6 +609,7 @@ async fn process_messages(
     token: &Arc<AtomicBool>,
     reply_count: &AtomicU32,
     replied_users: &mut HashSet<i64>,
+    replied_users_path: &std::path::Path,
 ) -> Result<ErrorCounts, String> {
     let emit = |msg: String| { let _ = app.emit("auto-reply-log", format!("{} {}", prefix, msg)); };
 
@@ -788,6 +791,7 @@ async fn process_messages(
                 emit(format!("{} -> user_id={}", label, parsed.from_id));
                 reply_count.fetch_add(1, Ordering::Relaxed);
                 replied_users.insert(parsed.from_id);
+                save_replied_users(replied_users_path, replied_users);
                 // write to SQLite
                 if let Some(db_ref) = db {
                     let conn = db_ref.lock().await;
