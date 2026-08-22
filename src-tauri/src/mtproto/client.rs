@@ -346,10 +346,10 @@ impl MtpClient {
             }
 
             // bad_msg_notification - adjust time if needed
-            if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 16 {
-                let error_code = u32::from_le_bytes(body[12..16].try_into().unwrap());
+            if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 20 {
+                let error_code = u32::from_le_bytes(body[16..20].try_into().unwrap());
                 dbg_log!("MtpClient::invoke BAD_MSG error_code={}", error_code);
-                if error_code == 32 || error_code == 33 {
+                if error_code == 16 || error_code == 17 {
                     let server_time =
                         (u64::from_le_bytes(decrypted[16..24].try_into().unwrap()) >> 32) as i64;
                     let local_time = SystemTime::now()
@@ -607,8 +607,8 @@ impl MtpClient {
             if body.len() >= 4 {
                 let ctor = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
 
-                if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 16 {
-                    let error_code = u32::from_le_bytes(body[12..16].try_into().unwrap());
+                if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 20 {
+                    let error_code = u32::from_le_bytes(body[16..20].try_into().unwrap());
                     return Err(format!("bad_msg_notification error_code={}", error_code));
                 }
 
