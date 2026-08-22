@@ -357,6 +357,9 @@ impl MtpClient {
                         .unwrap()
                         .as_secs() as i64;
                     self.time_offset = (server_time - local_time) as i32;
+                    // The previous ID may be in the future relative to the
+                    // corrected clock, so it must not constrain the retry.
+                    self.last_msg_id = 0;
                     dbg_log!(
                         "MtpClient::invoke adjusted time_offset={}",
                         self.time_offset
