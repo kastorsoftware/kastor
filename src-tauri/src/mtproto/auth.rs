@@ -385,6 +385,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let mut sn2 = [0u8; 16];
     cur2.read_exact(&mut n2).map_err(|e| format!("read DH nonce: {e}"))?;
     cur2.read_exact(&mut sn2).map_err(|e| format!("read DH server_nonce: {e}"))?;
+    if n2 != nonce || sn2 != srv_nonce_buf {
+        return Err("nonce mismatch in server_DH_params_ok".into());
+    }
 
     let encrypted_answer = tl::deserialize_bytes(&mut cur2)?;
 
@@ -394,6 +397,10 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let answer_with_hash = ige_decrypt(&encrypted_answer, &tmp_key, &tmp_iv);
     if answer_with_hash.len() < 20 { return Err("DH answer too short".into()); }
     let answer = &answer_with_hash[20..];
+    let answer_hash = Sha1::digest(answer);
+    if answer_with_hash[..20] != answer_hash[..] {
+        return Err("server_DH_inner_data hash mismatch".into());
+    }
 
     let mut cur3 = Cursor::new(answer);
     let inner_ctor = cur3.read_u32::<LittleEndian>().map_err(|e| format!("read inner ctor: {e}"))?;
@@ -405,6 +412,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let mut sn3 = [0u8; 16];
     cur3.read_exact(&mut n3).map_err(|e| format!("read DH inner nonce: {e}"))?;
     cur3.read_exact(&mut sn3).map_err(|e| format!("read DH inner server_nonce: {e}"))?;
+    if n3 != nonce || sn3 != srv_nonce_buf {
+        return Err("nonce mismatch in server_DH_inner_data".into());
+    }
 
     let g_int = cur3.read_i32::<LittleEndian>().map_err(|e| format!("read g: {e}"))?;
     let dh_prime_bytes = tl::deserialize_bytes(&mut cur3)?;
@@ -483,12 +493,50 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let mut cur4 = Cursor::new(&resp3[..]);
 
     let final_ctor = cur4.read_u32::<LittleEndian>().map_err(|e| format!("read final ctor: {e}"))?;
+    let mut final_nonce = [0u8; 16];
+    let mut final_server_nonce = [0u8; 16];
+    cur4.read_exact(&mut final_nonce).map_err(|e| format!("read final nonce: {e}"))?;
+    cur4.read_exact(&mut final_server_nonce).map_err(|e| format!("read final server_nonce: {e}"))?;
+    if final_nonce != nonce || final_server_nonce != srv_nonce_buf {
+        return Err("nonce mismatch in dh_gen response".into());
+    }
+
+    let mut auth_key_hash = Sha1::new();
+    auth_key_hash.update(&auth_key);
+    let auth_key_aux_hash = auth_key_hash.finalize();
+    let expected_new_nonce_hash = |number: u8| {
+        let mut hash = Sha1::new();
+        hash.update(new_nonce);
+        hash.update([number]);
+        hash.update(&auth_key_aux_hash[..8]);
+        let digest = hash.finalize();
+        let mut result = [0u8; 16];
+        result.copy_from_slice(&digest[4..20]);
+        result
+    };
+
+    let mut received_new_nonce_hash = [0u8; 16];
+    cur4.read_exact(&mut received_new_nonce_hash)
+        .map_err(|e| format!("read new_nonce_hash: {e}"))?;
     match final_ctor {
         DH_GEN_OK => {
+            if received_new_nonce_hash != expected_new_nonce_hash(1) {
+                return Err("new_nonce_hash1 mismatch in dh_gen_ok".into());
+            }
             dbg_log!("auth::perform_dh DH_GEN_OK server_time={}", server_time);
         }
-        DH_GEN_RETRY => return Err("dh_gen_retry — handshake should be retried".into()),
-        DH_GEN_FAIL => return Err("dh_gen_fail".into()),
+        DH_GEN_RETRY => {
+            if received_new_nonce_hash != expected_new_nonce_hash(2) {
+                return Err("new_nonce_hash2 mismatch in dh_gen_retry".into());
+            }
+            return Err("dh_gen_retry — handshake should be retried".into());
+        }
+        DH_GEN_FAIL => {
+            if received_new_nonce_hash != expected_new_nonce_hash(3) {
+                return Err("new_nonce_hash3 mismatch in dh_gen_fail".into());
+            }
+            return Err("dh_gen_fail".into());
+        }
         _ => return Err(format!("unexpected final ctor {:#x}", final_ctor)),
     }
 
