@@ -88,12 +88,23 @@ pub fn import_usernames(conn: &Connection, usernames: &[String]) -> Result<usize
     let tx = conn.unchecked_transaction()
         .map_err(|e| format!("begin tx: {e}"))?;
     {
+        let mut next_temp_id = tx.query_row(
+            "SELECT MIN(user_id) FROM users WHERE user_id < 0",
+            [],
+            |row| row.get::<_, Option<i64>>(0),
+        ).map_err(|e| format!("read temporary id: {e}"))?
+            .map(|id| id.saturating_sub(1))
+            .unwrap_or(-1);
         let mut stmt = tx.prepare(
-            "INSERT OR IGNORE INTO users (user_id, username, status) VALUES (?1, ?2, 'pending')"
+            "INSERT INTO users (user_id, username, status)
+             SELECT ?1, ?2, 'pending'
+             WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = ?2)"
         ).map_err(|e| format!("prepare: {e}"))?;
-        // user_id will be 0 initially until resolved; use negative hash as temp id
-        for (i, uname) in usernames.iter().enumerate() {
-            let temp_id = -(i as i64 + 1); // negative temp id
+        // User IDs are unknown at this point. Allocate from the negative range
+        // without reusing IDs from a previous import.
+        for uname in usernames {
+            let temp_id = next_temp_id;
+            next_temp_id = next_temp_id.saturating_sub(1);
             if stmt.execute(params![temp_id, uname]).is_ok() {
                 inserted += 1;
             }
