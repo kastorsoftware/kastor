@@ -436,7 +436,7 @@ fn resolve_output_path(user_path: &str) -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("kastor")
-        .join("users.db")
+        .join("users.txt")
 }
 
 fn emit(app: &tauri::AppHandle, msg: String) {

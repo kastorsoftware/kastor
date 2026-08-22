@@ -1000,7 +1000,7 @@ export const en = {
     savePersonalChannel: "Channel attached to profile",
     outputTitle: "Output",
     outputFile: "Output file",
-    outputDefault: "users.db (default to app folder)",
+    outputDefault: "users.txt (default to app folder)",
     outputHint: "If not selected, file will be saved as users.db in app folder",
     distributionHint: "Targets are distributed among selected accounts. More accounts = faster.",
     found: "Found:",

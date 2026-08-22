@@ -1000,7 +1000,7 @@ export const ru = {
     savePersonalChannel: "Канал прикреплённый к профилю",
     outputTitle: "Сохранение",
     outputFile: "Файл для результатов",
-    outputDefault: "users.db (по умолчанию в папку приложения)",
+    outputDefault: "users.txt (по умолчанию в папку приложения)",
     outputHint: "если не выбрать, файл будет сохранён как users.db в папку приложения",
     distributionHint: "Цели распределяются между выбранными аккаунтами. Больше аккаунтов = быстрее.",
     found: "Найдено:",
