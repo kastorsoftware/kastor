@@ -1,6 +1,6 @@
 {
   "productName": "Kastor",
-  "version": "1.0.5+1",
+  "version": "1.0.5+2",
   "identifier": "com.kastor.desktop",
   "build": {
     "frontendDist": "../dist",
