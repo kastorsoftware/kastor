@@ -62,8 +62,8 @@ fn analyze_spambot_text_fallback(text: &str) -> String {
 fn find_utc_time(text: &str) -> Option<String> {
     if let Some(utc_pos) = text.find("UTC") {
         let before = &text[..utc_pos];
-        let start = if before.len() > 25 { before.len() - 25 } else { 0 };
-        let snippet = &before[start..];
+        let snippet: String = before.chars().rev().take(25).collect::<Vec<_>>()
+            .into_iter().rev().collect();
         if snippet.contains(':') {
             return Some(format!("{} UTC", snippet.trim()));
         }
@@ -73,10 +73,9 @@ fn find_utc_time(text: &str) -> Option<String> {
 
 pub fn extract_premium_date_from_status(text: &str) -> Option<i64> {
     // telegram returns dates as DD.MM.YYYY in premium promo status
-    for i in 0..text.len().saturating_sub(9) {
+    for (i, _) in text.char_indices() {
         let slice = &text[i..];
-        if slice.len() < 10 { break; }
-        let chunk = &slice[..10];
+        let Some(chunk) = slice.get(..10) else { continue; };
         let parts: Vec<&str> = chunk.split('.').collect();
         if parts.len() == 3 && parts[0].len() == 2 && parts[1].len() == 2 && parts[2].len() == 4 {
             if let (Ok(day), Ok(month), Ok(year)) = (
