@@ -749,6 +749,7 @@ export const en = {
     spintaxHint: "Supports spintax: {option1|option2}",
     description: "Description",
     photo: "Avatar",
+    photoFromFolder: "From folder",
     username: "Username",
     usernameRandom: "Random",
     usernameFromFile: "From file",

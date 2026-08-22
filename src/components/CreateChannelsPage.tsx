@@ -313,7 +313,7 @@ export function CreateChannelsPage() {
           <ToggleSection label={t("createChannels.photo")} checked={config.setPhoto} onChange={(v) => set("setPhoto", v)}>
             <div className="flex items-center gap-2">
               <ModeButton active={config.photoMode === "single"} onClick={() => set("photoMode", "single")}>{t("createChannels.titleSingle")}</ModeButton>
-              <ModeButton active={config.photoMode === "from_folder"} onClick={() => set("photoMode", "from_folder")}>{t("createChannels.titleFromFile")}</ModeButton>
+              <ModeButton active={config.photoMode === "from_folder"} onClick={() => set("photoMode", "from_folder")}>{t("createChannels.photoFromFolder")}</ModeButton>
             </div>
             {config.photoMode === "single" && <FilePickerRow path={config.photoSinglePath} onPick={() => selectPhoto("photoSinglePath")} />}
             {config.photoMode === "from_folder" && <FilePickerRow path={config.photoFolderPath} onPick={() => selectFolder("photoFolderPath")} />}

@@ -749,6 +749,7 @@ export const ru = {
     spintaxHint: "Поддерживается spintax: {вариант1|вариант2}",
     description: "Описание",
     photo: "Аватар",
+    photoFromFolder: "Из папки",
     username: "Юзернейм",
     usernameRandom: "Случайный",
     usernameFromFile: "Из файла",
