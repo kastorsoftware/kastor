@@ -127,7 +127,7 @@ async fn process_account(
 
         // view stories
         let peer = tl_gen::serialize_input_peer_user(*user_id, *access_hash);
-        let stories_req = tl_gen::build_stories_getPinnedStories(&peer, 0, 20);
+        let stories_req = tl_gen::build_stories_getPeerStories(&peer);
         let stories_data = match client.invoke(&stories_req).await {
             Ok(d) => d,
             Err(e) => {
