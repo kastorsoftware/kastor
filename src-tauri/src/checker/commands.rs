@@ -1,6 +1,6 @@
 // tauri command wrappers for checker functionality
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use super::runner::{self, CheckerOptions};
@@ -73,6 +73,7 @@ pub struct CheckerAccountForSort {
 pub async fn checker_sort_results(accounts: Vec<serde_json::Value>, dest_path: String) -> Result<(), String> {
     let dest = Path::new(&dest_path);
     std::fs::create_dir_all(dest).map_err(|e| e.to_string())?;
+    let canonical_dest = std::fs::canonicalize(dest).map_err(|e| e.to_string())?;
 
     let categories: Vec<(&str, Box<dyn Fn(&CheckerAccountForSort) -> bool + Send + Sync>)> = vec![
         ("With_NFT_Tags", Box::new(|a: &CheckerAccountForSort| !a.nft_tags.is_empty())),
@@ -103,6 +104,16 @@ pub async fn checker_sort_results(accounts: Vec<serde_json::Value>, dest_path: S
     let parsed: Vec<CheckerAccountForSort> = accounts.iter().filter_map(|v| {
         serde_json::from_value(v.clone()).ok()
     }).collect();
+
+    for account in &parsed {
+        let source = PathBuf::from(&account.source_path);
+        if source.exists() {
+            let canonical_source = std::fs::canonicalize(&source).map_err(|e| e.to_string())?;
+            if canonical_dest.starts_with(&canonical_source) {
+                return Err("sort destination must not be inside a source account directory".into());
+            }
+        }
+    }
 
     for (folder_name, predicate) in &categories {
         let matching: Vec<&CheckerAccountForSort> = parsed.iter().filter(|a| predicate(a)).collect();
