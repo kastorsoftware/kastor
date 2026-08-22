@@ -14,7 +14,7 @@ fn has_tos_link(msg: &tl::ParsedMessage) -> bool {
 pub fn analyze_spambot_response(messages: &[tl::ParsedMessage]) -> String {
     let msg = match messages.iter().find(|m| !m.text.contains("/start") && m.text.len() > 10) {
         Some(m) => m,
-        None => return crate::i18n::t("status_perm_spam"),
+        None => return crate::i18n::t("status_unknown"),
     };
 
     if msg.reply_markup_rows > 0 {

@@ -647,6 +647,7 @@ lazy_static::lazy_static! {
 
         // Account statuses
         m.insert("status_clean", "Без ограничений");
+        m.insert("status_unknown", "Неизвестно");
         m.insert("status_invalid", "Невалид");
         m.insert("status_frozen", "Заморожен");
         m.insert("status_perm_spam", "Вечный спамблок");
@@ -1678,6 +1679,7 @@ lazy_static::lazy_static! {
         m.insert("browser_proxy_unsupported", "Unsupported proxy type: {scheme}");
         // Account statuses
         m.insert("status_clean", "No restrictions");
+        m.insert("status_unknown", "Unknown");
         m.insert("status_invalid", "Invalid");
         m.insert("status_frozen", "Frozen");
         m.insert("status_perm_spam", "Permanent spamblock");
