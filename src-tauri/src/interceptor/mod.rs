@@ -65,6 +65,13 @@ struct JoinedTarget {
     joined_now: bool,
 }
 
+#[derive(Clone, Copy, Hash, Eq, PartialEq)]
+struct AdminGrant {
+    channel_id: i64,
+    access_hash: i64,
+    user_id: i64,
+}
+
 #[tauri::command]
 pub async fn interceptor_start(
     ids: Vec<String>,
@@ -113,7 +120,7 @@ pub async fn interceptor_start(
         let user_ids = Arc::new(user_ids);
 
         // in channel mode, main account joins destination and promotes workers first
-        let promoted: Vec<i64> = if let Some(ref mid) = main_id {
+        let promoted: Vec<AdminGrant> = if let Some(ref mid) = main_id {
             match setup_main_account(mid, &ids, &user_ids, &config, &app, &token).await {
                 Ok(promoted) => {
                     let _ = app.emit("interceptor-log", t_with("interceptor_main_setup", &[("count", &promoted.len().to_string())]));
@@ -125,20 +132,28 @@ pub async fn interceptor_start(
                 }
             }
         } else { Vec::new() };
-        let admin_promised = !promoted.is_empty();
+        let mut fully_promoted: HashSet<i64> = HashSet::new();
+        if !config.destinations.is_empty() {
+            for grant in &promoted {
+                let count = promoted.iter().filter(|other| other.user_id == grant.user_id).count();
+                if count == config.destinations.len() {
+                    fully_promoted.insert(grant.user_id);
+                }
+            }
+        }
 
         for (i, id) in ids.into_iter().enumerate() {
             if !token.load(Ordering::Relaxed) { break; }
             let is_main = main_id.as_ref() == Some(&id);
 
             if config.mode == "channel" && !is_main {
-                if let Some(ref mid) = main_id {
-                    if !admin_promised {
-                        if let Err(e) = try_promote_single(mid, &id, &user_ids, &config, &app, &token).await {
-                            let _ = app.emit("interceptor-log", t_with("interceptor_admin_skip", &[("idx", &(i+1).to_string()), ("total", &total.to_string()), ("error", &e)]));
-                            continue;
-                        }
-                    }
+                let Some(user_id) = user_ids.get(&id) else {
+                    let _ = app.emit("interceptor-log", t_with("interceptor_admin_skip", &[("idx", &(i + 1).to_string()), ("total", &total.to_string()), ("error", &t("interceptor_no_uid"))]));
+                    continue;
+                };
+                if !fully_promoted.contains(user_id) {
+                    let _ = app.emit("interceptor-log", t_with("interceptor_admin_skip", &[("idx", &(i + 1).to_string()), ("total", &total.to_string()), ("error", &t("interceptor_admin_incomplete"))]));
+                    continue;
                 }
             }
 
@@ -152,7 +167,7 @@ pub async fn interceptor_start(
                 if !token_clone.load(Ordering::Relaxed) { return; }
                 let result = process_account(
                     &id, i + 1, total, &config,
-                    is_main, admin_promised,
+                    is_main,
                     &app_clone, &token_clone,
                 ).await;
                 if let Err(e) = result {
@@ -164,9 +179,9 @@ pub async fn interceptor_start(
         for h in handles { let _ = h.await; }
 
         // channel mode: main account revokes admin from workers after all done
-        if config.mode == "channel" && admin_promised && config.revoke_admin_after {
+        if config.mode == "channel" && !promoted.is_empty() && config.revoke_admin_after {
             if let Some(ref mid) = main_id {
-                let _ = revoke_all_admins(mid, &promoted, &config, &app).await;
+                let _ = revoke_all_admins(mid, &promoted, &app).await;
             }
         }
 
@@ -241,42 +256,6 @@ fn contains_keyword(text: &str, keywords: &[String]) -> bool {
     keywords.iter().any(|kw| lower.contains(&kw.to_lowercase()))
 }
 
-async fn try_promote_single(
-    main_id: &str,
-    worker_id: &str,
-    user_ids: &HashMap<String, i64>,
-    config: &InterceptorConfig,
-    app: &tauri::AppHandle,
-    token: &Arc<AtomicBool>,
-) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
-    let user_id = user_ids.get(worker_id).copied().ok_or(t("interceptor_no_uid"))?;
-    let emit = |msg: String| { let _ = app.emit("interceptor-log", format!("{} {}", t("interceptor_main_prefix"), msg)); };
-
-    let mut client = crate::accounts::connect::connect_account(main_id).await?;
-    client.set_max_flood_wait(config.max_flood_wait);
-
-    let admin_rights = tl_gen::serialize_chatAdminRights(
-        false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
-    );
-
-    for dest_link in &config.destinations {
-        let dest = resolve_channel_link(&mut client, dest_link).await
-            .map_err(|e| format!("dest {}: {e}", dest_link))?;
-        let channel_input = tl_gen::serialize_input_channel(dest.channel_id, dest.access_hash);
-        let user_input = tl_gen::serialize_input_user(user_id, 0);
-        let req = tl_gen::build_channels_editAdmin(&channel_input, &user_input, &admin_rights, None);
-        match client.invoke(&req).await {
-            Ok(_) => emit(t_with("interceptor_admin_granted", &[("uid", &user_id.to_string()), ("dest", dest_link)])),
-            Err(e) => {
-                emit(t_with("interceptor_admin_error", &[("uid", &user_id.to_string()), ("dest", dest_link), ("error", &e)]));
-                return Err(e);
-            }
-        }
-    }
-    Ok(())
-}
-
 async fn setup_main_account(
     main_id: &str,
     worker_ids: &[String],
@@ -284,7 +263,7 @@ async fn setup_main_account(
     config: &InterceptorConfig,
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
-) -> Result<Vec<i64>, String> {
+) -> Result<Vec<AdminGrant>, String> {
     let emit = |msg: String| { let _ = app.emit("interceptor-log", format!("{} {}", t("interceptor_main_prefix"), msg)); };
 
     let mut client = crate::accounts::connect::connect_account(main_id).await?;
@@ -315,7 +294,7 @@ async fn setup_main_account(
     let admin_rights = tl_gen::serialize_chatAdminRights(
         false, true, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false,
     );
-    let mut promoted: Vec<i64> = Vec::new();
+    let mut promoted: Vec<AdminGrant> = Vec::new();
 
     for wid in worker_ids {
         if wid == main_id { continue; }
@@ -327,21 +306,23 @@ async fn setup_main_account(
                 continue;
             }
         };
-        let mut all_ok = true;
         for (ch_id, ch_hash) in &dest_channels {
             let channel_input = tl_gen::serialize_input_channel(*ch_id, *ch_hash);
             let user_input = tl_gen::serialize_input_user(user_id, 0);
             let req = tl_gen::build_channels_editAdmin(&channel_input, &user_input, &admin_rights, None);
             match client.invoke(&req).await {
-                Ok(_) => emit(t_with("interceptor_admin_granted_id", &[("uid", &user_id.to_string()), ("id", &ch_id.to_string())])),
-                Err(e) => {
+            Ok(_) => {
+                promoted.push(AdminGrant {
+                    channel_id: *ch_id,
+                    access_hash: *ch_hash,
+                    user_id,
+                });
+                emit(t_with("interceptor_admin_granted_id", &[("uid", &user_id.to_string()), ("id", &ch_id.to_string())]));
+            }
+            Err(e) => {
                     emit(t_with("interceptor_admin_error_id", &[("uid", &user_id.to_string()), ("id", &ch_id.to_string()), ("error", &e)]));
-                    all_ok = false;
                 }
             }
-        }
-        if all_ok {
-            promoted.push(user_id);
         }
     }
 
@@ -350,8 +331,7 @@ async fn setup_main_account(
 
 async fn revoke_all_admins(
     main_id: &str,
-    promoted: &[i64],
-    config: &InterceptorConfig,
+    promoted: &[AdminGrant],
     app: &tauri::AppHandle,
 ) -> Result<(), String> {
     let emit = |msg: String| { let _ = app.emit("interceptor-log", format!("{} {}", t("interceptor_main_prefix"), msg)); };
@@ -376,21 +356,18 @@ async fn revoke_all_admins(
 
     emit(t("interceptor_revoking"));
 
-    let promoted_set: HashSet<i64> = promoted.iter().copied().collect();
+    let promoted_set: HashSet<AdminGrant> = promoted.iter().copied().collect();
     let mut revoked = 0u32;
 
-    for dest_link in &config.destinations {
-        let Ok(dest) = resolve_channel_link(&mut client, dest_link).await else { continue; };
-        for user_id in &promoted_set {
-            if *user_id == main_user_id { continue; }
-            let channel_input = tl_gen::serialize_input_channel(dest.channel_id, dest.access_hash);
-            let user_input = tl_gen::serialize_input_user(*user_id, 0);
+    for grant in promoted_set {
+            if grant.user_id == main_user_id { continue; }
+            let channel_input = tl_gen::serialize_input_channel(grant.channel_id, grant.access_hash);
+            let user_input = tl_gen::serialize_input_user(grant.user_id, 0);
             let req = tl_gen::build_channels_editAdmin(&channel_input, &user_input, &no_rights, None);
             match client.invoke(&req).await {
                 Ok(_) => revoked += 1,
-                Err(e) => emit(t_with("interceptor_revoke_error", &[("uid", &user_id.to_string()), ("error", &e)])),
+                Err(e) => emit(t_with("interceptor_revoke_error", &[("uid", &grant.user_id.to_string()), ("error", &e)])),
             }
-        }
     }
 
     emit(t_with("interceptor_revoked", &[("count", &revoked.to_string())]));
@@ -433,7 +410,6 @@ async fn process_account(
     total: usize,
     config: &InterceptorConfig,
     is_main: bool,
-    _admin_promised: bool,
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {

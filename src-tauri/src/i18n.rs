@@ -587,6 +587,7 @@ lazy_static::lazy_static! {
         m.insert("interceptor_main_prefix", "[Главный]");
         m.insert("interceptor_admin_granted", "выдана админка user_id={uid} в {dest}");
         m.insert("interceptor_admin_error", "ошибка админки user_id={uid} в {dest}: {error}");
+        m.insert("interceptor_admin_incomplete", "админ-права выданы не во всех каналах назначения");
         m.insert("interceptor_target_channel", "целевой канал: id={id} title=\"{title}\"");
         m.insert("interceptor_joined_channel", "присоединился к каналу");
         m.insert("interceptor_assign_error", "ошибка назначения {dest}: {error}");
@@ -1614,6 +1615,7 @@ lazy_static::lazy_static! {
         m.insert("interceptor_main_prefix", "[Main]");
         m.insert("interceptor_admin_granted", "admin granted user_id={uid} in {dest}");
         m.insert("interceptor_admin_error", "admin error user_id={uid} in {dest}: {error}");
+        m.insert("interceptor_admin_incomplete", "admin rights were not granted in every destination channel");
         m.insert("interceptor_target_channel", "target channel: id={id} title=\"{title}\"");
         m.insert("interceptor_joined_channel", "joined channel");
         m.insert("interceptor_assign_error", "assignment error {dest}: {error}");
