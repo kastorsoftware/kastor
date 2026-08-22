@@ -119,7 +119,7 @@ pub async fn create_bots_start(
     let db = init_bots_db(&output_path)?;
     let db = Arc::new(tokio::sync::Mutex::new(db));
 
-    let _ = app.emit("botcreator-log", format!("DB: {}", output_path.display()));
+    let _ = app.emit("create-bots-log", format!("DB: {}", output_path.display()));
 
     tokio::spawn(async move {
         let total = ids.len();
