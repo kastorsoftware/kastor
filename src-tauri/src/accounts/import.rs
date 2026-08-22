@@ -38,37 +38,48 @@ fn persist_common_account(
     store_tdata_source: Option<&Path>,
 ) -> Result<String, String> {
     let id = uuid::Uuid::new_v4().to_string();
-
-    // write telethon session
-    converter::write_account(acc, &storage.session_json_dir(), converter::Format::Telethon)
-        .map_err(|e| format!("session write: {e}"))?;
-    // rename from source_name.session to id.session
     let written = storage.session_json_dir().join(format!("{}.session", acc.source_name));
-    let target = storage.session_path(&id);
-    if written != target {
-        fs::rename(&written, &target).map_err(|e| format!("rename session: {e}"))?;
+    let result = (|| {
+        converter::write_account(acc, &storage.session_json_dir(), converter::Format::Telethon)
+            .map_err(|e| format!("session write: {e}"))?;
+        let target = storage.session_path(&id);
+        if written != target {
+            fs::rename(&written, &target).map_err(|e| format!("rename session: {e}"))?;
+        }
+
+        let mut json = default_json();
+        json.user_id = acc.user_id;
+        json.to_file(&storage.json_path(&id))?;
+
+        // Preserve the original Desktop layout when importing tdata. For other
+        // sources, generate a compatible tdata directory from the parsed session.
+        if let Some(src) = store_tdata_source {
+            copy_dir_recursive(src, &storage.tdata_dir(&id))?;
+        } else {
+            let tdata_acc = crate::converter::tdata::TDataAccount {
+                dc_id: acc.dc_id,
+                user_id: acc.user_id,
+                auth_key: acc.auth_key.clone(),
+            };
+            crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata_acc)?;
+        }
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        cleanup_partial_import(storage, &id, Some(&written));
+        return Err(error);
     }
-
-    // write json with device info
-    let mut json = default_json();
-    json.user_id = acc.user_id;
-    json.to_file(&storage.json_path(&id))?;
-
-    // Preserve the original Desktop layout when importing tdata. For other
-    // sources, generate a compatible tdata directory from the parsed session.
-    if let Some(src) = store_tdata_source {
-        let dest = storage.tdata_dir(&id);
-        copy_dir_recursive(src, &dest)?;
-    } else {
-        let tdata_acc = crate::converter::tdata::TDataAccount {
-            dc_id: acc.dc_id,
-            user_id: acc.user_id,
-            auth_key: acc.auth_key.clone(),
-        };
-        crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata_acc)?;
-    }
-
     Ok(id)
+}
+
+fn cleanup_partial_import(storage: &AccountStorage, id: &str, extra_session: Option<&Path>) {
+    let _ = fs::remove_file(storage.session_path(id));
+    let _ = fs::remove_file(storage.json_path(id));
+    let _ = fs::remove_dir_all(storage.tdata_dir(id));
+    if let Some(path) = extra_session {
+        let _ = fs::remove_file(path);
+    }
 }
 
 // import telethon/pyrogram session+json pair
@@ -114,12 +125,17 @@ pub fn import_session(
         port: 443,
         auth_key: acc.auth_key.clone(),
     };
-    session.to_file(&storage.session_path(&id))?;
+    if let Err(error) = session.to_file(&storage.session_path(&id)) {
+        cleanup_partial_import(storage, &id, None);
+        return Err(error);
+    }
 
     // handle json
     if let Some(jf) = json_file {
-        fs::copy(jf, storage.json_path(&id))
-            .map_err(|e| format!("failed to copy json: {e}"))?;
+        if let Err(error) = fs::copy(jf, storage.json_path(&id)) {
+            cleanup_partial_import(storage, &id, None);
+            return Err(format!("failed to copy json: {error}"));
+        }
         if let Ok(mut json) = AccountJson::from_file(&storage.json_path(&id)) {
             let mut changed = false;
             if json.device.is_empty() || json.sdk.is_empty() || json.app_version.is_empty() {
@@ -136,12 +152,20 @@ pub fn import_session(
             if acc.user_id == 0 && json.user_id != 0 {
                 acc.user_id = json.user_id;
             }
-            if changed { let _ = json.to_file(&storage.json_path(&id)); }
+            if changed {
+                if let Err(error) = json.to_file(&storage.json_path(&id)) {
+                    cleanup_partial_import(storage, &id, None);
+                    return Err(error);
+                }
+            }
         }
     } else {
         let mut json = default_json();
         json.user_id = acc.user_id;
-        json.to_file(&storage.json_path(&id))?;
+        if let Err(error) = json.to_file(&storage.json_path(&id)) {
+            cleanup_partial_import(storage, &id, None);
+            return Err(error);
+        }
     }
 
     // generate tdata for dual storage
