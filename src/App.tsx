@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { WifiOff, X } from "lucide-react";
+import { Download, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dashboard } from "@/components/Dashboard";
 import { ToolsRecommendation } from "@/components/ToolsRecommendation";
@@ -11,15 +11,127 @@ import { ru } from "@/i18n/ru";
 
 const IS_DEV = !("__TAURI_INTERNALS__" in window);
 
+interface UpdateInfo {
+  current_version: string;
+  version: string;
+}
+
+interface StoredSettings {
+  auto_update: boolean;
+}
+
+function UpdateToast({ update, automatic, onInstall, onCancel }: {
+  update: UpdateInfo;
+  automatic: boolean;
+  onInstall: () => void;
+  onCancel: () => void;
+}) {
+  const [seconds, setSeconds] = useState(30);
+  const locale = localStorage.getItem("app_locale") || "en";
+  const ru = locale !== "en";
+
+  useEffect(() => {
+    if (!automatic) return;
+    if (seconds === 0) { onInstall(); return; }
+    const timer = window.setTimeout(() => setSeconds((value) => value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [automatic, onInstall, seconds]);
+
+  return (
+    <div className="update-toast">
+      <div className="update-toast__icon"><Download className="h-4 w-4" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="update-toast__title">{ru ? "Доступно обновление" : "Update available"}</div>
+        <div className="update-toast__text">
+          {update.current_version} → {update.version}
+          {automatic && ` · ${ru ? `через ${seconds} сек.` : `in ${seconds}s`}`}
+        </div>
+      </div>
+      {automatic ? (
+        <button className="update-toast__close" type="button" onClick={onCancel}>
+          {ru ? "Отменить" : "Cancel"}
+        </button>
+      ) : (
+        <button className="update-toast__close" type="button" onClick={onInstall}>
+          {ru ? "Обновить" : "Update"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [showToolsRec, setShowToolsRec] = useState(false);
   const shown = useRef(false);
+  const updateStarted = useRef(false);
+  const updateCancelled = useRef(false);
+
+  const installUpdate = useCallback(async () => {
+    if (updateStarted.current) return;
+    updateStarted.current = true;
+    try {
+      await invoke("download_and_apply_update");
+    } catch (error) {
+      updateStarted.current = false;
+      toast.error(String(error));
+    }
+  }, []);
 
   useEffect(() => {
     if (shown.current || IS_DEV) return;
     shown.current = true;
     requestAnimationFrame(() => invoke("show_window"));
   }, []);
+
+  useEffect(() => {
+    if (IS_DEV) return;
+    let retryTimer: number | undefined;
+    let dismissed = false;
+
+    const showUpdate = (update: UpdateInfo, automatic: boolean) => {
+      const id = toast.custom(
+        () => <UpdateToast
+          update={update}
+          automatic={automatic}
+          onInstall={installUpdate}
+          onCancel={() => { updateCancelled.current = true; toast.dismiss(id); }}
+        />,
+        { duration: Infinity, position: "bottom-right" },
+      );
+    };
+
+    const waitForTasks = async (update: UpdateInfo) => {
+      if (dismissed || updateCancelled.current) return;
+      try {
+        const activeTasks = await invoke<number>("get_active_task_count");
+        if (activeTasks === 0) {
+          showUpdate(update, true);
+          return;
+        }
+      } catch {
+        return;
+      }
+      retryTimer = window.setTimeout(() => { void waitForTasks(update); }, 2000);
+    };
+
+    const check = async () => {
+      try {
+        const settings = await invoke<StoredSettings>("get_settings");
+        const update = await invoke<UpdateInfo | null>("check_for_update");
+        if (!update) return;
+        if (settings.auto_update) await waitForTasks(update);
+        else showUpdate(update, false);
+      } catch {
+        // The update check must never block application startup.
+      }
+    };
+
+    void check();
+    return () => {
+      dismissed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [installUpdate]);
 
   useEffect(() => {
     if (!localStorage.getItem("tools_rec_skipped")) setShowToolsRec(true);

@@ -352,6 +352,17 @@ async fn get_queue_stats(queue: tauri::State<'_, TaskQueue>) -> Result<(u32, u32
 }
 
 #[tauri::command]
+async fn get_active_task_count(
+    queue: tauri::State<'_, TaskQueue>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> u32 {
+    let queued = queue.queue_size().await;
+    let running = queue.running_count().await;
+    let validating = state.lock().unwrap().validating_ids.len() as u32;
+    queued + running + validating
+}
+
+#[tauri::command]
 fn get_validating_ids(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Vec<String> {
     let ids = state.lock().unwrap().validating_ids.clone();
     dbg_log!("get_validating_ids -> {} ids", ids.len());
@@ -400,6 +411,7 @@ fn main() {
             accounts::commands::launch_telegram,
             get_task_queue,
             get_queue_stats,
+            get_active_task_count,
             get_validating_ids,
             app_update::check_for_update,
             app_update::download_and_apply_update,

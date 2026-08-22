@@ -32,6 +32,8 @@ fn default_llm_api_type() -> String {
 pub struct AppSettings {
     #[serde(default)]
     pub allow_no_proxy: bool,
+    #[serde(default)]
+    pub auto_update: bool,
     #[serde(default = "default_account_threads")]
     pub account_threads: u32,
     #[serde(default = "default_proxy_threads")]
@@ -66,6 +68,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             allow_no_proxy: false,
+            auto_update: false,
             account_threads: 5,
             proxy_threads: 10,
             checker_threads: 5,
@@ -141,6 +144,9 @@ pub fn patch_settings(patch: serde_json::Value) -> Result<(), String> {
     let mut current = AppSettings::load();
     if let Some(v) = patch.get("allow_no_proxy").and_then(|v| v.as_bool()) {
         current.allow_no_proxy = v;
+    }
+    if let Some(v) = patch.get("auto_update").and_then(|v| v.as_bool()) {
+        current.auto_update = v;
     }
     patch_u32(&patch, "account_threads", &mut current.account_threads)?;
     patch_u32(&patch, "proxy_threads", &mut current.proxy_threads)?;
