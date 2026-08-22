@@ -132,6 +132,7 @@ pub struct CheckerOptions {
     pub threads: u32,
 }
 
+#[allow(dead_code)] // used by serde when legacy payloads omit `threads`
 fn default_checker_threads() -> u32 {
     5
 }

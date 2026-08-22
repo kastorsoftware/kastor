@@ -2,7 +2,6 @@
 // Features: random count per account, 4 entity types, admin assignment,
 // forward messages, spintax, SQLite output, configurable delays, invite links.
 
-use rusqlite;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;

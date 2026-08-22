@@ -1,6 +1,5 @@
 // boost / engagement: bot start, views, reactions, channel/group subscribe, addlist import
 
-use rusqlite;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;

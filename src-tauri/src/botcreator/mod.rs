@@ -1,6 +1,5 @@
 // botcreator: mass bot creation via @BotFather
 
-use rusqlite;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
