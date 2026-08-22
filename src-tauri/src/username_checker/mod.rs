@@ -50,7 +50,7 @@ pub async fn username_checker_start(
             }
         }
         let queue: tauri::State<'_, TaskQueue> = app.state();
-        queue.finish_task(&task_id, true).await;
+        queue.finish_task(&task_id, result.is_ok()).await;
     });
     Ok(tid)
 }

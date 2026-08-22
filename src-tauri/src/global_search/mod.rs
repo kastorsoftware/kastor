@@ -231,7 +231,7 @@ pub async fn global_search_start(
             }
         }
         let queue: tauri::State<'_, TaskQueue> = app.state();
-        queue.finish_task(&task_id, true).await;
+        queue.finish_task(&task_id, result.is_ok()).await;
     });
     Ok(tid)
 }
