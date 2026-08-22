@@ -62,10 +62,12 @@ interface BoostConfig {
 
   // subscribe to channels
   subChannelJoinLink: string;
+  subChannelJoinLinks: string;
   subChannelArchiveAfter: boolean;
 
   // subscribe to groups
   subGroupJoinLink: string;
+  subGroupJoinLinks: string;
   subGroupArchiveAfter: boolean;
 
   // import folders (addlist)
@@ -111,9 +113,11 @@ const defaultConfig: BoostConfig = {
   reactionsAutoJoin: true,
 
   subChannelJoinLink: "",
+  subChannelJoinLinks: "",
   subChannelArchiveAfter: false,
 
   subGroupJoinLink: "",
+  subGroupJoinLinks: "",
   subGroupArchiveAfter: false,
 
   importLinks: "",
@@ -191,10 +195,10 @@ export function BoostPage() {
         if (config.reactionsEmojiMode === "specific" && !config.reactionsSpecificEmoji.trim()) return t("validation.noEmoji");
         return null;
       case "subscribe-channel":
-        if (!config.subChannelJoinLink.trim()) return t("validation.noChannelLink");
+        if (!config.subChannelJoinLink.trim() && !config.subChannelJoinLinks.trim()) return t("validation.noChannelLink");
         return null;
       case "subscribe-group":
-        if (!config.subGroupJoinLink.trim()) return t("validation.noGroupLink");
+        if (!config.subGroupJoinLink.trim() && !config.subGroupJoinLinks.trim()) return t("validation.noGroupLink");
         return null;
       case "import-folder":
         if (!config.importLinks.trim()) return t("validation.noFolderLinks");
@@ -509,12 +513,14 @@ export function BoostPage() {
           {config.mode === "subscribe-channel" && (
             <>
               <Field label={t("boost.subChannelLabel")}>
-                <input
-                  value={config.subChannelJoinLink}
-                  onChange={(e) => set("subChannelJoinLink", e.target.value)}
-                  placeholder="@channel / https://t.me/channel / t.me/+invite"
-                  className="mt-1.5 w-full max-w-md rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
+                <textarea
+                  value={config.subChannelJoinLinks}
+                  onChange={(e) => set("subChannelJoinLinks", e.target.value)}
+                  placeholder={"@channel1\nhttps://t.me/channel2\nhttps://t.me/+invite"}
+                  rows={4}
+                  className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 resize-y"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">{t("boost.subLinksHint")}</p>
               </Field>
               <CheckRow label={t("boost.subArchiveLabel")} checked={config.subChannelArchiveAfter} onChange={(v) => set("subChannelArchiveAfter", v)} />
             </>
@@ -523,12 +529,14 @@ export function BoostPage() {
           {config.mode === "subscribe-group" && (
             <>
               <Field label={t("boost.subGroupLabel")}>
-                <input
-                  value={config.subGroupJoinLink}
-                  onChange={(e) => set("subGroupJoinLink", e.target.value)}
-                  placeholder="@group / https://t.me/group / t.me/+invite"
-                  className="mt-1.5 w-full max-w-md rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
+                <textarea
+                  value={config.subGroupJoinLinks}
+                  onChange={(e) => set("subGroupJoinLinks", e.target.value)}
+                  placeholder={"@group1\nhttps://t.me/group2\nhttps://t.me/+invite"}
+                  rows={4}
+                  className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 resize-y"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">{t("boost.subLinksHint")}</p>
               </Field>
               <CheckRow label={t("boost.subArchiveLabel")} checked={config.subGroupArchiveAfter} onChange={(v) => set("subGroupArchiveAfter", v)} />
             </>
@@ -671,12 +679,14 @@ function serializeConfig(c: BoostConfig) {
       return {
         ...base,
         join_link: c.subChannelJoinLink.trim(),
+        join_links: c.subChannelJoinLinks.split(/\r?\n/).map((link) => link.trim()).filter(Boolean),
         archive_after: c.subChannelArchiveAfter,
       };
     case "subscribe-group":
       return {
         ...base,
         join_link: c.subGroupJoinLink.trim(),
+        join_links: c.subGroupJoinLinks.split(/\r?\n/).map((link) => link.trim()).filter(Boolean),
         archive_after: c.subGroupArchiveAfter,
       };
     case "import-folder":

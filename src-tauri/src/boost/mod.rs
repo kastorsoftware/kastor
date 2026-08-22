@@ -81,11 +81,15 @@ pub enum BoostConfig {
     #[serde(rename = "subscribe-channel")]
     SubscribeChannel {
         join_link: String,
+        #[serde(default)]
+        join_links: Vec<String>,
         archive_after: bool,
     },
     #[serde(rename = "subscribe-group")]
     SubscribeGroup {
         join_link: String,
+        #[serde(default)]
+        join_links: Vec<String>,
         archive_after: bool,
     },
     #[serde(rename = "import-folder")]
@@ -439,12 +443,14 @@ async fn process_account(
         }
         BoostConfig::SubscribeChannel {
             join_link,
+            join_links,
             archive_after,
         } => {
-            run_subscribe(
+            run_subscribe_list(
                 &mut client,
                 &prefix,
                 join_link,
+                join_links,
                 *archive_after,
                 app,
                 token,
@@ -454,12 +460,14 @@ async fn process_account(
         }
         BoostConfig::SubscribeGroup {
             join_link,
+            join_links,
             archive_after,
         } => {
-            run_subscribe(
+            run_subscribe_list(
                 &mut client,
                 &prefix,
                 join_link,
+                join_links,
                 *archive_after,
                 app,
                 token,
@@ -1178,6 +1186,58 @@ fn pick_emoji(mode: &str, specific: &str) -> String {
 }
 
 // === channel/group subscribe ===
+async fn run_subscribe_list(
+    client: &mut MtpClient,
+    prefix: &str,
+    join_link: &str,
+    join_links: &[String],
+    archive_after: bool,
+    app: &tauri::AppHandle,
+    token: &Arc<AtomicBool>,
+    is_group: bool,
+) -> Result<(), String> {
+    let links: Vec<&str> = if join_links.is_empty() {
+        vec![join_link]
+    } else {
+        join_links.iter().map(String::as_str).collect()
+    };
+    if links.is_empty() || links.iter().all(|link| link.trim().is_empty()) {
+        return Err(t("boost_empty_channel_link"));
+    }
+
+    let mut subscribed = 0usize;
+    let mut failed = 0usize;
+    for link in links {
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
+        match run_subscribe(client, prefix, link, archive_after, app, token, is_group).await {
+            Ok(()) => subscribed += 1,
+            Err(error) => {
+                if crate::mtproto::is_fatal_session_error(&error) {
+                    return Err(error);
+                }
+                failed += 1;
+                emit(
+                    app,
+                    t_with(
+                        "boost_join_failed_label",
+                        &[("prefix", prefix), ("label", link), ("error", &error)],
+                    ),
+                );
+            }
+        }
+        if subscribed + failed < links.len() {
+            rate_limit().await;
+        }
+    }
+
+    if subscribed == 0 && failed > 0 {
+        return Err(t("boost_no_subscriptions"));
+    }
+    Ok(())
+}
+
 async fn run_subscribe(
     client: &mut MtpClient,
     prefix: &str,

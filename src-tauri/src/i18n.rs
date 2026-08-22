@@ -144,6 +144,7 @@ lazy_static::lazy_static! {
         m.insert("boost_no_reactions_sent", "ни одна реакция не отправлена");
         m.insert("boost_invalid_post_link", "невалидная ссылка на пост");
         m.insert("boost_empty_channel_link", "пустая ссылка на канал");
+        m.insert("boost_no_subscriptions", "не удалось оформить ни одной подписки");
         m.insert("boost_join_link_done", "{prefix} вступление по ссылке {link} выполнено");
         m.insert("boost_archive_error", "{prefix} ошибка архивации: {error}");
         m.insert("boost_archived", "{prefix} перемещено в архив");
@@ -1180,6 +1181,7 @@ lazy_static::lazy_static! {
         m.insert("boost_no_reactions_sent", "no reactions were sent");
         m.insert("boost_invalid_post_link", "invalid post link");
         m.insert("boost_empty_channel_link", "empty channel link");
+        m.insert("boost_no_subscriptions", "could not complete any subscriptions");
         m.insert("boost_join_link_done", "{prefix} join via link {link} done");
         m.insert("boost_archive_error", "{prefix} archive error: {error}");
         m.insert("boost_archived", "{prefix} moved to archive");
