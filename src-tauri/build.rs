@@ -345,6 +345,15 @@ pub fn skip_tl(cursor: &mut Cursor<&[u8]>) -> Result<(), String> {{
     skip_tl_by_id(cursor, ctor)
 }}
 
+const MAX_TL_VECTOR_ITEMS: u32 = 1_000_000;
+
+fn check_vector_count(count: u32) -> Result<(), String> {{
+    if count > MAX_TL_VECTOR_ITEMS {{
+        return Err(format!("TL vector has too many items: {{count}}"));
+    }}
+    Ok(())
+}}
+
 pub fn skip_tl_by_id(cursor: &mut Cursor<&[u8]>, ctor: u32) -> Result<(), String> {{
     let (offset, count) = match lookup_ctor(ctor) {{
         Some(v) => v,
@@ -376,23 +385,31 @@ pub fn skip_tl_by_id(cursor: &mut Cursor<&[u8]>, ctor: u32) -> Result<(), String
             }}
             7 => {{ cursor.read_u32::<LittleEndian>().map_err(|_| "skip Bool")?; }} // boxed Bool
             8 => {{ // Vector<int>
-                cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
                 let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+                check_vector_count(cnt)?;
                 for _ in 0..cnt {{ cursor.read_i32::<LittleEndian>().map_err(|_| "vec int")?; }}
             }}
             9 => {{ // Vector<long>
-                cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
                 let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+                check_vector_count(cnt)?;
                 for _ in 0..cnt {{ cursor.read_i64::<LittleEndian>().map_err(|_| "vec long")?; }}
             }}
             10 | 11 => {{ // Vector<string> / Vector<bytes>
-                cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
                 let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+                check_vector_count(cnt)?;
                 for _ in 0..cnt {{ deserialize_bytes(cursor).map_err(|_| "vec str".to_string())?; }}
             }}
             12 => {{ // Vector<Object>
-                cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
+                if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
                 let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+                check_vector_count(cnt)?;
                 for _ in 0..cnt {{ skip_tl(cursor)?; }}
             }}
             13 => {{ // int128
@@ -619,6 +636,7 @@ pub fn skip_vector(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {{
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "skip_vector: ctor")?;
     if vc != 0x1cb5c415 {{ return Err(format!("skip_vector: expected vector, got {{:#x}}", vc)); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "skip_vector: count")?;
+    check_vector_count(cnt)?;
     for _ in 0..cnt {{ skip_tl(cursor)?; }}
     Ok(cnt)
 }}
@@ -628,6 +646,7 @@ pub fn skip_vector_int(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {{
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     for _ in 0..cnt {{ cursor.read_i32::<LittleEndian>().map_err(|_| "vec int")?; }}
     Ok(cnt)
 }}
@@ -637,6 +656,7 @@ pub fn skip_vector_long(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {{
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     for _ in 0..cnt {{ cursor.read_i64::<LittleEndian>().map_err(|_| "vec long")?; }}
     Ok(cnt)
 }}
@@ -646,6 +666,7 @@ pub fn skip_vector_string(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {{
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     for _ in 0..cnt {{ deserialize_bytes(cursor).map_err(|_| "vec str".to_string())?; }}
     Ok(cnt)
 }}
@@ -655,6 +676,7 @@ pub fn read_vector_long(cursor: &mut Cursor<&[u8]>) -> Result<Vec<i64>, String> 
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     let mut v = Vec::with_capacity(cnt as usize);
     for _ in 0..cnt {{ v.push(cursor.read_i64::<LittleEndian>().map_err(|_| "vec long")?); }}
     Ok(v)
@@ -665,6 +687,7 @@ pub fn read_vector_int(cursor: &mut Cursor<&[u8]>) -> Result<Vec<i32>, String> {
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     let mut v = Vec::with_capacity(cnt as usize);
     for _ in 0..cnt {{ v.push(cursor.read_i32::<LittleEndian>().map_err(|_| "vec int")?); }}
     Ok(v)
@@ -675,6 +698,7 @@ pub fn read_vector_string(cursor: &mut Cursor<&[u8]>) -> Result<Vec<String>, Str
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err("not a vector".into()); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     let mut v = Vec::with_capacity(cnt as usize);
     for _ in 0..cnt {{ v.push(deserialize_string(cursor)?); }}
     Ok(v)
@@ -1060,6 +1084,7 @@ pub fn parse_vector_response<T: TlDeserialize>(data: &[u8]) -> Result<Vec<T>, St
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "vec ctor")?;
     if vc != 0x1cb5c415 {{ return Err(format!("expected vector, got {{:#x}}", vc)); }}
     let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| "vec count")?;
+    check_vector_count(cnt)?;
     let mut v = Vec::with_capacity(cnt as usize);
     for _ in 0..cnt {{
         v.push(T::tl_deserialize(&mut cursor)?);
