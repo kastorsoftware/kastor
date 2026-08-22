@@ -33,7 +33,12 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
-    pub fn none() -> Self { Self { kind: MediaKind::None, size_bytes: 0 } }
+    pub fn none() -> Self {
+        Self {
+            kind: MediaKind::None,
+            size_bytes: 0,
+        }
+    }
 }
 
 // fully parses a single message blob (raw bytes returned by getHistory for one

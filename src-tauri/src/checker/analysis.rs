@@ -12,7 +12,10 @@ fn has_tos_link(msg: &tl::ParsedMessage) -> bool {
 
 // exact replica of python spambot analysis logic
 pub fn analyze_spambot_response(messages: &[tl::ParsedMessage]) -> String {
-    let msg = match messages.iter().find(|m| !m.text.contains("/start") && m.text.len() > 10) {
+    let msg = match messages
+        .iter()
+        .find(|m| !m.text.contains("/start") && m.text.len() > 10)
+    {
         Some(m) => m,
         None => return crate::i18n::t("status_unknown"),
     };
@@ -62,8 +65,14 @@ fn analyze_spambot_text_fallback(text: &str) -> String {
 fn find_utc_time(text: &str) -> Option<String> {
     if let Some(utc_pos) = text.find("UTC") {
         let before = &text[..utc_pos];
-        let snippet: String = before.chars().rev().take(25).collect::<Vec<_>>()
-            .into_iter().rev().collect();
+        let snippet: String = before
+            .chars()
+            .rev()
+            .take(25)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
         if snippet.contains(':') {
             return Some(format!("{} UTC", snippet.trim()));
         }
@@ -75,7 +84,9 @@ pub fn extract_premium_date_from_status(text: &str) -> Option<i64> {
     // telegram returns dates as DD.MM.YYYY in premium promo status
     for (i, _) in text.char_indices() {
         let slice = &text[i..];
-        let Some(chunk) = slice.get(..10) else { continue; };
+        let Some(chunk) = slice.get(..10) else {
+            continue;
+        };
         let parts: Vec<&str> = chunk.split('.').collect();
         if parts.len() == 3 && parts[0].len() == 2 && parts[1].len() == 2 && parts[2].len() == 4 {
             if let (Ok(day), Ok(month), Ok(year)) = (
@@ -83,7 +94,13 @@ pub fn extract_premium_date_from_status(text: &str) -> Option<i64> {
                 parts[1].parse::<i64>(),
                 parts[2].parse::<i64>(),
             ) {
-                if year >= 2020 && year <= 2035 && month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+                if year >= 2020
+                    && year <= 2035
+                    && month >= 1
+                    && month <= 12
+                    && day >= 1
+                    && day <= 31
+                {
                     return Some(date_to_ts(year, month, day));
                 }
             }
@@ -96,7 +113,11 @@ pub fn date_to_ts(year: i64, month: i64, day: i64) -> i64 {
     let month_days: [i64; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut days: i64 = 0;
     for y in 1970..year {
-        days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) { 366 } else { 365 };
+        days += if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+            366
+        } else {
+            365
+        };
     }
     for m in 1..month {
         days += month_days[(m - 1) as usize];
@@ -119,16 +140,38 @@ pub fn chrono_format_ts(ts: i64) -> String {
     let mut days = ts / secs_per_day;
     let mut year = 1970i64;
     loop {
-        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) { 366 } else { 365 };
-        if days < days_in_year { break; }
+        let days_in_year = if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
+            366
+        } else {
+            365
+        };
+        if days < days_in_year {
+            break;
+        }
         days -= days_in_year;
         year += 1;
     }
     let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
-    let month_days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let month_days = [
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ];
     let mut month = 0;
     for (i, &md) in month_days.iter().enumerate() {
-        if days < md as i64 { month = i + 1; break; }
+        if days < md as i64 {
+            month = i + 1;
+            break;
+        }
         days -= md as i64;
     }
     let day = days + 1;

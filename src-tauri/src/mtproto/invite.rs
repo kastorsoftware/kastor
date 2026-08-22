@@ -4,8 +4,8 @@
 // rejecting request-only channels up front so callers can fail fast.
 
 use crate::mtproto::client::MtpClient;
-use crate::mtproto::tl;
 use crate::mtproto::text_parse;
+use crate::mtproto::tl;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedChannel {
@@ -55,10 +55,12 @@ pub async fn resolve_channel_link(
     }
 
     let req = tl::build_resolve_username(username);
-    let resp = client.invoke(&req).await
+    let resp = client
+        .invoke(&req)
+        .await
         .map_err(|e| format!("resolve {username}: {e}"))?;
-    let (channel_id, access_hash) = tl::parse_resolved_peer(&resp)
-        .map_err(|e| format!("parse peer: {e}"))?;
+    let (channel_id, access_hash) =
+        tl::parse_resolved_peer(&resp).map_err(|e| format!("parse peer: {e}"))?;
     let is_broadcast = tl::scan_channel_is_broadcast(&resp, channel_id);
 
     Ok(ResolvedChannel {
@@ -76,7 +78,9 @@ pub async fn resolve_channel_link(
 // importChatInvite stage where it surfaces as USER_ALREADY_PARTICIPANT).
 async fn join_private(client: &mut MtpClient, hash: &str) -> Result<ResolvedChannel, String> {
     let check_req = tl::build_check_chat_invite(hash);
-    let check_resp = client.invoke(&check_req).await
+    let check_resp = client
+        .invoke(&check_req)
+        .await
         .map_err(|e| format!("checkChatInvite: {e}"))?;
     let summary = tl::parse_chat_invite_summary(&check_resp)
         .map_err(|e| format!("parse checkChatInvite: {e}"))?;
@@ -100,8 +104,15 @@ async fn join_private(client: &mut MtpClient, hash: &str) -> Result<ResolvedChan
     }
 
     if summary.request_needed {
-        let label = if summary.title.is_empty() { hash.to_string() } else { summary.title };
-        return Err(crate::i18n::t_with("invite_request_needed", &[("label", &label)]));
+        let label = if summary.title.is_empty() {
+            hash.to_string()
+        } else {
+            summary.title
+        };
+        return Err(crate::i18n::t_with(
+            "invite_request_needed",
+            &[("label", &label)],
+        ));
     }
 
     let import_req = tl::build_import_chat_invite(hash);
@@ -131,7 +142,9 @@ async fn join_private(client: &mut MtpClient, hash: &str) -> Result<ResolvedChan
             }
             if e.contains("USER_ALREADY_PARTICIPANT") {
                 // race: we joined between check and import, or another session did. recheck to recover handles.
-                let recheck = client.invoke(&check_req).await
+                let recheck = client
+                    .invoke(&check_req)
+                    .await
                     .map_err(|e2| format!("recheckChatInvite: {e2}"))?;
                 if let Ok(s) = tl::parse_chat_invite_summary(&recheck) {
                     if let (Some(id), Some(ah)) = (s.channel_id, s.access_hash) {

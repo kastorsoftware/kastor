@@ -1,19 +1,19 @@
 // botcreator: mass bot creation via @BotFather
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use rusqlite;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+use crate::accounts::commands::get_storage_pub;
+use crate::accounts::connect::connect_account;
+use crate::accounts::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
-use crate::accounts::commands::get_storage_pub;
-use crate::accounts::session::AccountJson;
-use crate::accounts::connect::connect_account;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 #[derive(Deserialize, Clone)]
 pub struct CreateBotsConfig {
@@ -64,11 +64,13 @@ pub async fn create_bots_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "create_bots".to_string(),
-        t_with("botcreator_task_name", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "create_bots".to_string(),
+            t_with("botcreator_task_name", &[("count", &ids.len().to_string())]),
+        )
+        .await;
 
     let names = load_lines(&config.name_file_path);
     let usernames = load_lines(&config.username_file_path);
@@ -84,22 +86,39 @@ pub async fn create_bots_start(
     if config.name_mode == "from_file" && (names.len() as u32) < max_total {
         return Err(t_with(
             "botcreator_not_enough_names",
-            &[("available", &names.len().to_string()), ("needed", &max_total.to_string()), ("accounts", &num_accounts.to_string()), ("max", &config.bots_max.to_string())],
+            &[
+                ("available", &names.len().to_string()),
+                ("needed", &max_total.to_string()),
+                ("accounts", &num_accounts.to_string()),
+                ("max", &config.bots_max.to_string()),
+            ],
         ));
     }
     if config.username_mode == "from_file" && (usernames.len() as u32) < max_total {
         return Err(t_with(
             "botcreator_not_enough_usernames",
-            &[("available", &usernames.len().to_string()), ("needed", &max_total.to_string()), ("accounts", &num_accounts.to_string()), ("max", &config.bots_max.to_string())],
+            &[
+                ("available", &usernames.len().to_string()),
+                ("needed", &max_total.to_string()),
+                ("accounts", &num_accounts.to_string()),
+                ("max", &config.bots_max.to_string()),
+            ],
         ));
     }
 
     // warning if min creates too many (emit as log, not a hard error)
     if min_total > 50 {
-        let _ = app.emit("create-bots-log", t_with(
-            "botcreator_too_many_warning",
-            &[("min", &config.bots_min.to_string()), ("accounts", &num_accounts.to_string()), ("total", &min_total.to_string())],
-        ));
+        let _ = app.emit(
+            "create-bots-log",
+            t_with(
+                "botcreator_too_many_warning",
+                &[
+                    ("min", &config.bots_min.to_string()),
+                    ("accounts", &num_accounts.to_string()),
+                    ("total", &min_total.to_string()),
+                ],
+            ),
+        );
     }
 
     let config = Arc::new(config);
@@ -114,7 +133,9 @@ pub async fn create_bots_start(
     // init SQLite output
     let output_path = resolve_bot_output_path(&config.output_path);
     if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent).ok(); }
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
     let db = init_bots_db(&output_path)?;
     let db = Arc::new(tokio::sync::Mutex::new(db));
@@ -126,7 +147,9 @@ pub async fn create_bots_start(
         let mut handles = Vec::new();
 
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
 
             let config = config.clone();
             let names = names.clone();
@@ -141,17 +164,34 @@ pub async fn create_bots_start(
             let token_clone = token.clone();
 
             handles.push(tokio::spawn(async move {
-                if !token_clone.load(Ordering::Relaxed) { return; }
+                if !token_clone.load(Ordering::Relaxed) {
+                    return;
+                }
 
                 let result = process_create_bots(
-                    &id, i + 1, total, &config,
-                    &names, &usernames, &descriptions, &abouts, &photos,
-                    &name_idx, &username_idx, &db_clone, &app_clone, &token_clone,
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    &names,
+                    &usernames,
+                    &descriptions,
+                    &abouts,
+                    &photos,
+                    &name_idx,
+                    &username_idx,
+                    &db_clone,
+                    &app_clone,
+                    &token_clone,
                     max_flood_wait,
-                ).await;
+                )
+                .await;
                 if let Err(e) = result {
                     crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                    let _ = app_clone.emit("create-bots-log", format!("[{}/{}] {}: {}", i + 1, total, t("error"), e));
+                    let _ = app_clone.emit(
+                        "create-bots-log",
+                        format!("[{}/{}] {}: {}", i + 1, total, t("error"), e),
+                    );
                 }
             }));
         }
@@ -193,7 +233,9 @@ async fn process_create_bots(
     token: &Arc<AtomicBool>,
     max_flood_wait: u64,
 ) -> Result<(), String> {
-    let emit = |msg: String| { let _ = app.emit("create-bots-log", msg); };
+    let emit = |msg: String| {
+        let _ = app.emit("create-bots-log", msg);
+    };
 
     let mut client = connect_account(id).await?;
     client.set_log_target("create-bots-log", app.clone());
@@ -208,7 +250,12 @@ async fn process_create_bots(
     };
 
     let phone = json.phone.clone();
-    let prefix = format!("[{}/{}] +{}", idx, total, if phone.is_empty() { "?" } else { &phone });
+    let prefix = format!(
+        "[{}/{}] +{}",
+        idx,
+        total,
+        if phone.is_empty() { "?" } else { &phone }
+    );
     client.set_log_prefix(&prefix);
 
     // resolve @BotFather (loop on FLOOD_WAIT with max_flood_wait limit)
@@ -216,25 +263,48 @@ async fn process_create_bots(
     let mut resolve_data: Option<Vec<u8>> = None;
     for _attempt in 0..5 {
         match client.invoke(&resolve_req).await {
-            Ok(data) => { resolve_data = Some(data); break; }
+            Ok(data) => {
+                resolve_data = Some(data);
+                break;
+            }
             Err(e) if e.contains("FLOOD_WAIT") => {
-                let wait_secs = e.split('_').last().and_then(|s| s.parse::<u64>().ok()).unwrap_or(30);
+                let wait_secs = e
+                    .split('_')
+                    .last()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(30);
                 if max_flood_wait > 0 && wait_secs > max_flood_wait {
-                    emit(t_with("botcreator_resolve_flood_skip", &[("prefix", &prefix), ("seconds", &wait_secs.to_string()), ("limit", &max_flood_wait.to_string())]));
+                    emit(t_with(
+                        "botcreator_resolve_flood_skip",
+                        &[
+                            ("prefix", &prefix),
+                            ("seconds", &wait_secs.to_string()),
+                            ("limit", &max_flood_wait.to_string()),
+                        ],
+                    ));
                     return Ok(());
                 }
-                emit(t_with("botcreator_resolve_flood", &[("prefix", &prefix), ("seconds", &wait_secs.to_string())]));
-                if !interruptible_sleep_secs(wait_secs + 1, token).await { return Ok(()); }
+                emit(t_with(
+                    "botcreator_resolve_flood",
+                    &[("prefix", &prefix), ("seconds", &wait_secs.to_string())],
+                ));
+                if !interruptible_sleep_secs(wait_secs + 1, token).await {
+                    return Ok(());
+                }
                 continue;
             }
             Err(e) => return Err(format!("resolve BotFather: {e}")),
         }
     }
     let resolve_data = resolve_data.ok_or_else(|| "resolve BotFather: max attempts".to_string())?;
-    let (bf_id, bf_access_hash) = tl::parse_resolved_peer(&resolve_data)
-        .map_err(|e| format!("parse BotFather: {e}"))?;
+    let (bf_id, bf_access_hash) =
+        tl::parse_resolved_peer(&resolve_data).map_err(|e| format!("parse BotFather: {e}"))?;
 
-    dbg_log!("botcreator: BotFather resolved id={} access_hash={:#018x}", bf_id, bf_access_hash);
+    dbg_log!(
+        "botcreator: BotFather resolved id={} access_hash={:#018x}",
+        bf_id,
+        bf_access_hash
+    );
 
     // unblock BotFather (in case it was blocked by previous run)
     let unblock_req = tl::build_unblock_peer(bf_id, bf_access_hash);
@@ -265,14 +335,19 @@ async fn process_create_bots(
             dbg_log!("botcreator: /start sent OK, response {} bytes", resp.len());
         }
         Err(e) => {
-            emit(t_with("botcreator_start_error", &[("prefix", &prefix), ("error", &e.to_string())]));
+            emit(t_with(
+                "botcreator_start_error",
+                &[("prefix", &prefix), ("error", &e.to_string())],
+            ));
             return Err(format!("send /start to BotFather: {e}"));
         }
     }
     tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
 
     for bot_idx in 0..bots_count {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
 
         // pick name (with spintax support)
         let bot_name = match config.name_mode.as_str() {
@@ -293,7 +368,10 @@ async fn process_create_bots(
             "from_file" => {
                 let i = username_idx.fetch_add(1, Ordering::Relaxed);
                 if i >= usernames_list.len() {
-                    emit(t_with("botcreator_usernames_exhausted", &[("prefix", &prefix)]));
+                    emit(t_with(
+                        "botcreator_usernames_exhausted",
+                        &[("prefix", &prefix)],
+                    ));
                     break;
                 }
                 ensure_bot_suffix(&usernames_list[i])
@@ -301,7 +379,16 @@ async fn process_create_bots(
             _ => generate_random_bot_username(8),
         };
 
-        emit(t_with("botcreator_creating", &[("prefix", &prefix), ("idx", &(bot_idx + 1).to_string()), ("total", &bots_count.to_string()), ("name", &bot_name), ("username", &bot_username)]));
+        emit(t_with(
+            "botcreator_creating",
+            &[
+                ("prefix", &prefix),
+                ("idx", &(bot_idx + 1).to_string()),
+                ("total", &bots_count.to_string()),
+                ("name", &bot_name),
+                ("username", &bot_username),
+            ],
+        ));
 
         // track message count before sending to detect new replies
         let initial_count = get_history_count(&mut client, bf_id, bf_access_hash).await;
@@ -309,23 +396,35 @@ async fn process_create_bots(
         // send /newbot with retry limit
         let mut newbot_ok = false;
         for newbot_attempt in 0..3 {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
             let rid: i64 = rand::random();
             let req = tl::build_send_message(bf_id, bf_access_hash, "/newbot", rid);
             match client.invoke(&req).await {
                 Ok(resp) => {
-                    dbg_log!("botcreator: /newbot sent OK (attempt {}), response {} bytes", newbot_attempt + 1, resp.len());
+                    dbg_log!(
+                        "botcreator: /newbot sent OK (attempt {}), response {} bytes",
+                        newbot_attempt + 1,
+                        resp.len()
+                    );
                 }
                 Err(e) => {
-                    emit(t_with("botcreator_newbot_error", &[("prefix", &prefix), ("error", &e.to_string())]));
+                    emit(t_with(
+                        "botcreator_newbot_error",
+                        &[("prefix", &prefix), ("error", &e.to_string())],
+                    ));
                     return Err(format!("send /newbot: {e}"));
                 }
             }
 
-            wait_for_new_message(&mut client, bf_id, bf_access_hash, initial_count + 1, token).await;
+            wait_for_new_message(&mut client, bf_id, bf_access_hash, initial_count + 1, token)
+                .await;
 
             let history_req = tl::build_get_history(bf_id, bf_access_hash, 3);
-            let history_data = client.invoke(&history_req).await
+            let history_data = client
+                .invoke(&history_req)
+                .await
                 .map_err(|e| format!("get_history: {e}"))?;
             let mut rate_limited = false;
             let mut skip_account = false;
@@ -341,11 +440,23 @@ async fn process_create_bots(
                         skip_account = true;
                     } else if let Some(wait_secs) = extract_wait_seconds(last) {
                         if wait_secs > 900 {
-                            emit(t_with("botcreator_rate_limit_skip", &[("prefix", &prefix), ("seconds", &wait_secs.to_string())]));
+                            emit(t_with(
+                                "botcreator_rate_limit_skip",
+                                &[("prefix", &prefix), ("seconds", &wait_secs.to_string())],
+                            ));
                             skip_account = true;
                         } else {
-                            emit(t_with("botcreator_rate_limit_wait", &[("prefix", &prefix), ("seconds", &wait_secs.to_string()), ("attempt", &(newbot_attempt + 1).to_string())]));
-                            if !interruptible_sleep_secs(wait_secs + 1, token).await { break; }
+                            emit(t_with(
+                                "botcreator_rate_limit_wait",
+                                &[
+                                    ("prefix", &prefix),
+                                    ("seconds", &wait_secs.to_string()),
+                                    ("attempt", &(newbot_attempt + 1).to_string()),
+                                ],
+                            ));
+                            if !interruptible_sleep_secs(wait_secs + 1, token).await {
+                                break;
+                            }
                             rate_limited = true;
                         }
                     }
@@ -354,7 +465,10 @@ async fn process_create_bots(
                 dbg_log!("botcreator: parse_messages_history FAILED after /newbot");
             }
             if skip_account {
-                emit(t_with("botcreator_rate_limit_error", &[("prefix", &prefix)]));
+                emit(t_with(
+                    "botcreator_rate_limit_error",
+                    &[("prefix", &prefix)],
+                ));
                 let del_req = tl::build_delete_history(bf_id, bf_access_hash);
                 if let Err(e) = client.invoke(&del_req).await {
                     dbg_log!("удаление истории с @BotFather (rate limit cleanup) не удалось: {e}");
@@ -367,7 +481,10 @@ async fn process_create_bots(
             }
             // rate limited — retry unless this was the last attempt
             if newbot_attempt == 2 {
-                emit(t_with("botcreator_rate_limit_exhausted", &[("prefix", &prefix)]));
+                emit(t_with(
+                    "botcreator_rate_limit_exhausted",
+                    &[("prefix", &prefix)],
+                ));
                 return Err(t("botcreator_newbot_exhausted"));
             }
         }
@@ -379,7 +496,10 @@ async fn process_create_bots(
         let before_name = get_history_count(&mut client, bf_id, bf_access_hash).await;
         let rid3: i64 = rand::random();
         let name_req = tl::build_send_message(bf_id, bf_access_hash, &bot_name, rid3);
-        client.invoke(&name_req).await.map_err(|e| format!("send name: {e}"))?;
+        client
+            .invoke(&name_req)
+            .await
+            .map_err(|e| format!("send name: {e}"))?;
 
         // poll for reply
         wait_for_new_message(&mut client, bf_id, bf_access_hash, before_name + 1, token).await;
@@ -394,7 +514,10 @@ async fn process_create_bots(
             let before_uname = get_history_count(&mut client, bf_id, bf_access_hash).await;
             let rid4: i64 = rand::random();
             let uname_req = tl::build_send_message(bf_id, bf_access_hash, &current_username, rid4);
-            client.invoke(&uname_req).await.map_err(|e| format!("send username: {e}"))?;
+            client
+                .invoke(&uname_req)
+                .await
+                .map_err(|e| format!("send username: {e}"))?;
 
             wait_for_new_message(&mut client, bf_id, bf_access_hash, before_uname + 1, token).await;
 
@@ -408,20 +531,29 @@ async fn process_create_bots(
                     // Save last BotFather response as error reason (skip our own sent messages)
                     for msg in &msgs {
                         // Our own messages are typically short usernames or commands
-                        let is_own = msg.ends_with("bot") || msg.ends_with("_bot") || msg.starts_with("/");
+                        let is_own =
+                            msg.ends_with("bot") || msg.ends_with("_bot") || msg.starts_with("/");
                         if !is_own && !msg.is_empty() {
                             last_bf_response = msg.chars().take(200).collect();
                             break;
                         }
                     }
                     // check if BotFather says username is taken
-                    let is_taken = msgs.first().map(|m| {
-                        let lower = m.to_lowercase();
-                        lower.contains("already taken") || lower.contains("is already") || lower.contains("занят")
-                    }).unwrap_or(false);
+                    let is_taken = msgs
+                        .first()
+                        .map(|m| {
+                            let lower = m.to_lowercase();
+                            lower.contains("already taken")
+                                || lower.contains("is already")
+                                || lower.contains("занят")
+                        })
+                        .unwrap_or(false);
                     if is_taken && username_attempts < 3 {
                         current_username = generate_random_bot_username(8);
-                        emit(t_with("botcreator_username_taken", &[("prefix", &prefix), ("username", &current_username)]));
+                        emit(t_with(
+                            "botcreator_username_taken",
+                            &[("prefix", &prefix), ("username", &current_username)],
+                        ));
                         continue;
                     }
                 }
@@ -430,7 +562,14 @@ async fn process_create_bots(
         }
 
         if let Some(ref tok) = bot_token {
-            emit(t_with("botcreator_created", &[("prefix", &prefix), ("token_start", &tok[..10.min(tok.len())]), ("token_end", &tok[tok.len().saturating_sub(6)..])]));
+            emit(t_with(
+                "botcreator_created",
+                &[
+                    ("prefix", &prefix),
+                    ("token_start", &tok[..10.min(tok.len())]),
+                    ("token_end", &tok[tok.len().saturating_sub(6)..]),
+                ],
+            ));
 
             // save to SQLite
             {
@@ -452,11 +591,28 @@ async fn process_create_bots(
 
             // set description if enabled
             if config.set_description {
-                let desc = spin_text(&pick_text(&config.description_mode, &config.description_single, descriptions));
+                let desc = spin_text(&pick_text(
+                    &config.description_mode,
+                    &config.description_single,
+                    descriptions,
+                ));
                 if !desc.is_empty() {
-                    let _ = botfather_set_field(&mut client, bf_id, bf_access_hash, "/setdescription", &current_username, &desc, token).await;
+                    let _ = botfather_set_field(
+                        &mut client,
+                        bf_id,
+                        bf_access_hash,
+                        "/setdescription",
+                        &current_username,
+                        &desc,
+                        token,
+                    )
+                    .await;
                     let db = db.lock().await;
-                    db.execute("UPDATE bots SET description = ?1 WHERE token = ?2", rusqlite::params![desc, tok]).ok();
+                    db.execute(
+                        "UPDATE bots SET description = ?1 WHERE token = ?2",
+                        rusqlite::params![desc, tok],
+                    )
+                    .ok();
                 }
             }
 
@@ -464,10 +620,27 @@ async fn process_create_bots(
             if config.set_about {
                 let about = spin_text(&pick_text(&config.about_mode, &config.about_single, abouts));
                 if !about.is_empty() {
-                    let about_trimmed = if about.len() > 120 { &about[..120] } else { &about };
-                    let _ = botfather_set_field(&mut client, bf_id, bf_access_hash, "/setabouttext", &current_username, about_trimmed, token).await;
+                    let about_trimmed = if about.len() > 120 {
+                        &about[..120]
+                    } else {
+                        &about
+                    };
+                    let _ = botfather_set_field(
+                        &mut client,
+                        bf_id,
+                        bf_access_hash,
+                        "/setabouttext",
+                        &current_username,
+                        about_trimmed,
+                        token,
+                    )
+                    .await;
                     let db = db.lock().await;
-                    db.execute("UPDATE bots SET bio = ?1 WHERE token = ?2", rusqlite::params![about_trimmed, tok]).ok();
+                    db.execute(
+                        "UPDATE bots SET bio = ?1 WHERE token = ?2",
+                        rusqlite::params![about_trimmed, tok],
+                    )
+                    .ok();
                 }
             }
 
@@ -478,36 +651,72 @@ async fn process_create_bots(
                     _ => {
                         if !photos.is_empty() {
                             Some(photos[rand::random::<usize>() % photos.len()].clone())
-                        } else { None }
+                        } else {
+                            None
+                        }
                     }
                 };
                 if let Some(ref pp) = photo_path {
-                    let _ = botfather_set_photo(&mut client, bf_id, bf_access_hash, &current_username, pp, token).await;
+                    let _ = botfather_set_photo(
+                        &mut client,
+                        bf_id,
+                        bf_access_hash,
+                        &current_username,
+                        pp,
+                        token,
+                    )
+                    .await;
                     let db = db.lock().await;
-                    db.execute("UPDATE bots SET photo = ?1 WHERE token = ?2", rusqlite::params![pp, tok]).ok();
+                    db.execute(
+                        "UPDATE bots SET photo = ?1 WHERE token = ?2",
+                        rusqlite::params![pp, tok],
+                    )
+                    .ok();
                 }
             }
 
             // set privacy if enabled
             if config.set_privacy {
-                let _ = botfather_set_privacy(&mut client, bf_id, bf_access_hash, &current_username, token).await;
+                let _ = botfather_set_privacy(
+                    &mut client,
+                    bf_id,
+                    bf_access_hash,
+                    &current_username,
+                    token,
+                )
+                .await;
             }
         } else {
-            emit(t_with("botcreator_token_error", &[("prefix", &prefix), ("idx", &(bot_idx + 1).to_string()), ("total", &bots_count.to_string()), ("reason", &last_bf_response)]));
+            emit(t_with(
+                "botcreator_token_error",
+                &[
+                    ("prefix", &prefix),
+                    ("idx", &(bot_idx + 1).to_string()),
+                    ("total", &bots_count.to_string()),
+                    ("reason", &last_bf_response),
+                ],
+            ));
             let db = db.lock().await;
             db.execute(
                 "INSERT INTO bots (account, username, name, status) VALUES (?1,?2,?3,'error')",
                 rusqlite::params![phone, current_username, bot_name],
-            ).ok();
+            )
+            .ok();
         }
 
         // configurable delay between bots
         if bot_idx + 1 < bots_count && (config.delay_min > 0 || config.delay_max > 0) {
             let lo = config.delay_min.min(config.delay_max);
             let hi = config.delay_min.max(config.delay_max);
-            let delay_ms = if lo == hi { lo } else { lo + (rand::random::<u32>() % (hi - lo + 1)) };
+            let delay_ms = if lo == hi {
+                lo
+            } else {
+                lo + (rand::random::<u32>() % (hi - lo + 1))
+            };
             if delay_ms > 0 {
-                if !interruptible_sleep_secs((delay_ms as u64 + 999) / 1000, token).await { break; }
+                if !interruptible_sleep_secs((delay_ms as u64 + 999) / 1000, token).await {
+                    break;
+                }
             }
         }
     }
@@ -534,7 +743,9 @@ async fn interruptible_sleep_secs(seconds: u64, token: &Arc<AtomicBool>) -> bool
     let total_ms = seconds * 1000;
     let mut elapsed = 0u64;
     while elapsed < total_ms {
-        if !token.load(Ordering::Relaxed) { return false; }
+        if !token.load(Ordering::Relaxed) {
+            return false;
+        }
         let chunk = 500u64.min(total_ms - elapsed);
         tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
         elapsed += chunk;
@@ -557,17 +768,22 @@ async fn botfather_set_field(
     text: &str,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let rid: i64 = rand::random();
     let req = tl::build_send_message(bf_id, bf_access_hash, command, rid);
     client.invoke(&req).await?;
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let history_req = tl::build_get_history(bf_id, bf_access_hash, 3);
     let history_data = client.invoke(&history_req).await?;
 
-    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username) {
+    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username)
+    {
         let cb_req = tl::build_bot_callback_answer(bf_id, bf_access_hash, msg_id, &callback_data);
         if let Err(e) = client.invoke(&cb_req).await {
             dbg_log!("нажатие кнопки выбора бота (setField) не удалось: {e}");
@@ -580,7 +796,9 @@ async fn botfather_set_field(
     }
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let rid3: i64 = rand::random();
     let text_req = tl::build_send_message(bf_id, bf_access_hash, text, rid3);
     client.invoke(&text_req).await?;
@@ -597,17 +815,22 @@ async fn botfather_set_photo(
     photo_path: &str,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let rid: i64 = rand::random();
     let req = tl::build_send_message(bf_id, bf_access_hash, "/setuserpic", rid);
     client.invoke(&req).await?;
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let history_req = tl::build_get_history(bf_id, bf_access_hash, 3);
     let history_data = client.invoke(&history_req).await?;
 
-    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username) {
+    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username)
+    {
         let cb_req = tl::build_bot_callback_answer(bf_id, bf_access_hash, msg_id, &callback_data);
         if let Err(e) = client.invoke(&cb_req).await {
             dbg_log!("нажатие кнопки выбора бота (setPhoto) не удалось: {e}");
@@ -620,14 +843,20 @@ async fn botfather_set_photo(
     }
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
-    let data = tokio::fs::read(photo_path).await.map_err(|e| format!("read photo: {e}"))?;
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let data = tokio::fs::read(photo_path)
+        .await
+        .map_err(|e| format!("read photo: {e}"))?;
     let file_id = rand::random::<i64>();
     let part_size = 512 * 1024;
     let total_parts = ((data.len() + part_size - 1) / part_size) as i32;
 
     for i in 0..total_parts {
-        if !token.load(Ordering::Relaxed) { return Ok(()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let start = i as usize * part_size;
         let end = ((i as usize + 1) * part_size).min(data.len());
         let chunk = &data[start..end];
@@ -666,11 +895,17 @@ fn extract_bot_token(text: &str) -> Option<String> {
     // token format: digits:alphanumeric+dash+underscore (e.g. 8827304866:AAGkOQFx_Q4ojEIh0yoWEf7eFmA7S9iP5lw)
     let re_pattern = |s: &str| -> Option<String> {
         for word in s.split_whitespace() {
-            let word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '-' && c != '_');
+            let word = word
+                .trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '-' && c != '_');
             if word.contains(':') {
                 let parts: Vec<&str> = word.splitn(2, ':').collect();
-                if parts.len() == 2 && parts[0].chars().all(|c| c.is_ascii_digit()) && parts[0].len() >= 5
-                    && parts[1].len() >= 20 && parts[1].chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                if parts.len() == 2
+                    && parts[0].chars().all(|c| c.is_ascii_digit())
+                    && parts[0].len() >= 5
+                    && parts[1].len() >= 20
+                    && parts[1]
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                 {
                     return Some(word.to_string());
                 }
@@ -689,9 +924,13 @@ fn extract_wait_seconds(text: &str) -> Option<u64> {
     // recognize rate limit messages from BotFather (e.g. "Please try again in N seconds")
     // the text usually contains markers: "too many attempts", "try again in", "seconds"
     let lower = text.to_lowercase();
-    let is_rate_limit = lower.contains("too many") || lower.contains("try again")
-        || lower.contains("flood") || lower.contains("wait");
-    if !is_rate_limit { return None; }
+    let is_rate_limit = lower.contains("too many")
+        || lower.contains("try again")
+        || lower.contains("flood")
+        || lower.contains("wait");
+    if !is_rate_limit {
+        return None;
+    }
 
     // find the first number in the text - it represents the wait period in seconds
     let mut found_num: Option<u64> = None;
@@ -704,15 +943,23 @@ fn extract_wait_seconds(text: &str) -> Option<u64> {
             }
         }
     }
-    if text.len() < 300 { found_num } else { None }
+    if text.len() < 300 {
+        found_num
+    } else {
+        None
+    }
 }
 
 fn generate_random_name(len: usize) -> String {
-    (0..len).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect()
+    (0..len)
+        .map(|_| (b'a' + rand::random::<u8>() % 26) as char)
+        .collect()
 }
 
 fn generate_random_bot_username(len: usize) -> String {
-    let base: String = (0..len).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect();
+    let base: String = (0..len)
+        .map(|_| (b'a' + rand::random::<u8>() % 26) as char)
+        .collect();
     let suffixes = ["bot", "robot", "_bot"];
     let suffix = suffixes[rand::random::<usize>() % suffixes.len()];
     format!("{}{}", base, suffix)
@@ -722,11 +969,17 @@ fn ensure_bot_suffix(username: &str) -> String {
     let lower = username.to_lowercase();
     if lower.ends_with("bot") || lower.ends_with("robot") || lower.ends_with("_bot") {
         // clean: only allow [a-z0-9_]
-        username.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect()
+        username
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect()
     } else {
         let suffixes = ["bot", "robot", "_bot"];
         let suffix = suffixes[rand::random::<usize>() % suffixes.len()];
-        let clean: String = username.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+        let clean: String = username
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect();
         format!("{}{}", clean, suffix)
     }
 }
@@ -735,7 +988,9 @@ fn pick_text(mode: &str, single: &str, from_file: &[String]) -> String {
     match mode {
         "single" => single.to_string(),
         "from_file" => {
-            if from_file.is_empty() { return String::new(); }
+            if from_file.is_empty() {
+                return String::new();
+            }
             from_file[rand::random::<usize>() % from_file.len()].clone()
         }
         _ => String::new(),
@@ -743,7 +998,9 @@ fn pick_text(mode: &str, single: &str, from_file: &[String]) -> String {
 }
 
 fn load_lines(path: &str) -> Vec<String> {
-    if path.is_empty() { return Vec::new(); }
+    if path.is_empty() {
+        return Vec::new();
+    }
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
@@ -753,17 +1010,21 @@ fn load_lines(path: &str) -> Vec<String> {
 }
 
 fn load_photo_paths(folder: &str) -> Vec<String> {
-    if folder.is_empty() { return Vec::new(); }
+    if folder.is_empty() {
+        return Vec::new();
+    }
     std::fs::read_dir(folder)
         .ok()
         .map(|entries| {
-            entries.flatten()
+            entries
+                .flatten()
                 .filter(|e| {
                     let p = e.path();
-                    p.is_file() && matches!(
-                        p.extension().and_then(|x| x.to_str()).unwrap_or(""),
-                        "jpg" | "jpeg" | "png" | "webp"
-                    )
+                    p.is_file()
+                        && matches!(
+                            p.extension().and_then(|x| x.to_str()).unwrap_or(""),
+                            "jpg" | "jpeg" | "png" | "webp"
+                        )
                 })
                 .map(|e| e.path().to_string_lossy().to_string())
                 .collect()
@@ -772,20 +1033,54 @@ fn load_photo_paths(folder: &str) -> Vec<String> {
 }
 
 // messages.sendMedia with inputMediaUploadedPhoto for sending photo to BotFather
-fn build_send_photo_message(peer_id: i64, access_hash: i64, file_id: i64, parts: i32, filename: &str) -> Vec<u8> {
+fn build_send_photo_message(
+    peer_id: i64,
+    access_hash: i64,
+    file_id: i64,
+    parts: i32,
+    filename: &str,
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     let file = tl_gen::serialize_inputFile(file_id, parts, filename, "");
     let media = tl_gen::serialize_inputMediaUploadedPhoto(false, false, &file, None, None, None);
     tl_gen::build_messages_sendMedia(
-        false, false, false, false, false, false, false,
-        &peer, None, &media, "", rand::random(), None, None, None, None, None, None, None, None, None,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        &peer,
+        None,
+        &media,
+        "",
+        rand::random(),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 }
 
 // poll for new message: check history count every 300ms until it increases, up to 5s
-async fn wait_for_new_message(client: &mut MtpClient, peer_id: i64, access_hash: i64, expected_min: usize, token: &Arc<AtomicBool>) {
-    for _ in 0..10 { // 10 * 500ms = 5s
-        if !token.load(Ordering::Relaxed) { return; }
+async fn wait_for_new_message(
+    client: &mut MtpClient,
+    peer_id: i64,
+    access_hash: i64,
+    expected_min: usize,
+    token: &Arc<AtomicBool>,
+) {
+    for _ in 0..10 {
+        // 10 * 500ms = 5s
+        if !token.load(Ordering::Relaxed) {
+            return;
+        }
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let req = tl::build_get_history(peer_id, access_hash, 5);
         if let Ok(data) = client.invoke(&req).await {
@@ -812,8 +1107,10 @@ async fn get_history_count(client: &mut MtpClient, peer_id: i64, access_hash: i6
 // ─── New helpers ───────────────────────────────────────────────────────────
 
 fn init_bots_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, String> {
-    let conn = rusqlite::Connection::open(path).map_err(|e| t_with("botcreator_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    let conn = rusqlite::Connection::open(path)
+        .map_err(|e| t_with("botcreator_db_open_error", &[("error", &e.to_string())]))?;
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -832,7 +1129,9 @@ fn init_bots_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, Strin
         );
 
         CREATE INDEX IF NOT EXISTS idx_bots_status ON bots(status);
-    ").map_err(|e| t_with("botcreator_db_tables_error", &[("error", &e.to_string())]))?;
+    ",
+    )
+    .map_err(|e| t_with("botcreator_db_tables_error", &[("error", &e.to_string())]))?;
     Ok(conn)
 }
 
@@ -840,13 +1139,20 @@ fn resolve_bot_output_path(user_path: &str) -> std::path::PathBuf {
     let trimmed = user_path.trim();
     if !trimmed.is_empty() {
         let p = std::path::PathBuf::from(trimmed);
-        return if p.extension().map(|e| e == "db").unwrap_or(false) { p } else { p.with_extension("db") };
+        return if p.extension().map(|e| e == "db").unwrap_or(false) {
+            p
+        } else {
+            p.with_extension("db")
+        };
     }
     let base = dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
         .join("kastor")
         .join("create_bots");
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     base.join(format!("bots_{now}.db"))
 }
 
@@ -882,28 +1188,36 @@ async fn botfather_set_privacy(
     bot_username: &str,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let rid: i64 = rand::random();
     let req = tl::build_send_message(bf_id, bf_access_hash, "/setprivacy", rid);
     client.invoke(&req).await?;
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     // select the bot
     let history_req = tl::build_get_history(bf_id, bf_access_hash, 3);
     let history_data = client.invoke(&history_req).await?;
 
-    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username) {
+    if let Some((msg_id, callback_data)) = find_bot_button_in_keyboard(&history_data, bot_username)
+    {
         let cb_req = tl::build_bot_callback_answer(bf_id, bf_access_hash, msg_id, &callback_data);
         let _ = client.invoke(&cb_req).await;
     } else {
         let rid2: i64 = rand::random();
-        let req2 = tl::build_send_message(bf_id, bf_access_hash, &format!("@{}", bot_username), rid2);
+        let req2 =
+            tl::build_send_message(bf_id, bf_access_hash, &format!("@{}", bot_username), rid2);
         client.invoke(&req2).await?;
     }
     rate_limit().await;
 
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     // now BotFather shows "Enable" / "Disable" buttons. We want "Disable" (restricts group access)
     let history_req2 = tl::build_get_history(bf_id, bf_access_hash, 3);
     let history_data2 = client.invoke(&history_req2).await?;

@@ -28,8 +28,8 @@ use crate::i18n::{t, t_with};
 use crate::mtproto::auth::perform_dh;
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl::UserInfo;
-use crate::mtproto::transport::MtpTransport;
 use crate::mtproto::tl_gen;
+use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 
 pub struct BrowserInstance {
@@ -104,16 +104,15 @@ impl BrowserInstance {
         };
 
         let proxy_config = parse_proxy_string(proxy_url.as_deref())?;
-        let dc_auths =
-            collect_web_dc_auths(
-                &mut mtp_client,
-                &session,
-                server_salt,
-                proxy_config.as_ref(),
-                app_id,
-                &init_device,
-            )
-            .await?;
+        let dc_auths = collect_web_dc_auths(
+            &mut mtp_client,
+            &session,
+            server_salt,
+            proxy_config.as_ref(),
+            app_id,
+            &init_device,
+        )
+        .await?;
         let data = build_telegram_web_data(&session, &json, user_id, &dc_auths, &user_info)?;
         let script = build_inject_script(&data);
 
@@ -443,7 +442,10 @@ fn build_telegram_web_data(
     account.insert("isPremium".to_string(), json!(is_premium));
     account.insert("emojiStatusId".to_string(), json!(json.premium_expiry));
     account.insert("avatarUri".to_string(), json!(""));
-    map.insert("account1".to_string(), json!(Value::Object(account).to_string()));
+    map.insert(
+        "account1".to_string(),
+        json!(Value::Object(account).to_string()),
+    );
 
     Ok(map)
 }
@@ -456,7 +458,11 @@ async fn collect_web_dc_auths(
     app_id: i32,
     init_device: &devices::DeviceInfo,
 ) -> Result<Vec<WebDcAuth>, String> {
-    let mut dc_ids: Vec<i32> = crate::get_app_config().dc_addresses.keys().copied().collect();
+    let mut dc_ids: Vec<i32> = crate::get_app_config()
+        .dc_addresses
+        .keys()
+        .copied()
+        .collect();
     dc_ids.push(session.dc_id);
     dc_ids.sort_unstable();
     dc_ids.dedup();
@@ -482,12 +488,7 @@ async fn collect_web_dc_auths(
     }
 
     let import_tasks = exported.into_iter().map(|exported| {
-        import_exported_dc_auth(
-            exported,
-            proxy.cloned(),
-            app_id,
-            init_device.clone(),
-        )
+        import_exported_dc_auth(exported, proxy.cloned(), app_id, init_device.clone())
     });
     for result in join_all(import_tasks).await {
         match result {
@@ -502,10 +503,7 @@ async fn collect_web_dc_auths(
     Ok(auths)
 }
 
-async fn export_dc_auth(
-    main_client: &mut MtpClient,
-    dc_id: i32,
-) -> Result<ExportedDcAuth, String> {
+async fn export_dc_auth(main_client: &mut MtpClient, dc_id: i32) -> Result<ExportedDcAuth, String> {
     let export_req = tl_gen::build_auth_exportAuthorization(dc_id);
     let export_resp = main_client.invoke(&export_req).await?;
     let exported = tl_gen::parse_auth_exportAuthorization(&export_resp)?;
@@ -533,7 +531,8 @@ async fn import_exported_dc_auth(
 
     let mut transport = MtpTransport::connect(&addr, proxy.as_ref()).await?;
     let dh = perform_dh(&mut transport).await?;
-    let mut target_client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, &addr);
+    let mut target_client =
+        MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, &addr);
     target_client.set_proxy(proxy);
 
     let import_inner = tl_gen::build_auth_importAuthorization(exported.id, &exported.bytes);
@@ -558,7 +557,10 @@ async fn import_exported_dc_auth(
 
 fn auth_key_fingerprint(auth_key_hex: &str) -> Result<String, String> {
     if auth_key_hex.len() < 8 {
-        return Err(format!("invalid auth_key hex length: {}", auth_key_hex.len()));
+        return Err(format!(
+            "invalid auth_key hex length: {}",
+            auth_key_hex.len()
+        ));
     }
     Ok(auth_key_hex[..8].to_string())
 }

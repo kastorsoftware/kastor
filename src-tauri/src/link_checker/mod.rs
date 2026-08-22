@@ -4,8 +4,8 @@
 // supports private group verification, outputs results to SQLite .db file.
 
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use rusqlite::params;
@@ -14,12 +14,12 @@ use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::accounts::connect::connect_account;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::text_parse;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 #[derive(Deserialize, Clone, Debug)]
 pub struct LinkCheckerConfig {
@@ -75,13 +75,24 @@ pub async fn link_checker_start(
     let task_id = uuid::Uuid::new_v4().to_string();
     let tid = task_id.clone();
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(task_id.clone(), "link_checker".to_string(), t("link_checker_task_name")).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "link_checker".to_string(),
+            t("link_checker_task_name"),
+        )
+        .await;
     let cfg = Arc::new(config);
     tokio::spawn(async move {
         let result = run(ids, cfg.clone(), &app, token.clone()).await;
         match &result {
-            Ok(_) => { emit(&app, t("done")); }
-            Err(e) => { emit(&app, format!("{}: {e}", t("error"))); emit(&app, t("done")); }
+            Ok(_) => {
+                emit(&app, t("done"));
+            }
+            Err(e) => {
+                emit(&app, format!("{}: {e}", t("error")));
+                emit(&app, t("done"));
+            }
         }
         let queue: tauri::State<'_, TaskQueue> = app.state();
         queue.finish_task(&task_id, true).await;
@@ -100,7 +111,8 @@ pub async fn link_checker_stop(task_id: String, app: tauri::AppHandle) -> Result
 fn init_db(path: &PathBuf) -> Result<rusqlite::Connection, String> {
     let conn = rusqlite::Connection::open(path)
         .map_err(|e| t_with("link_checker_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -125,7 +137,9 @@ fn init_db(path: &PathBuf) -> Result<rusqlite::Connection, String> {
 
         CREATE INDEX IF NOT EXISTS idx_links_status ON links(status);
         CREATE INDEX IF NOT EXISTS idx_links_entity_type ON links(entity_type);
-    ").map_err(|e| t_with("link_checker_db_tables_error", &[("error", &e.to_string())]))?;
+    ",
+    )
+    .map_err(|e| t_with("link_checker_db_tables_error", &[("error", &e.to_string())]))?;
     Ok(conn)
 }
 
@@ -136,26 +150,43 @@ async fn run(
     token: Arc<AtomicBool>,
 ) -> Result<(), String> {
     let input_path = cfg.input_path.trim();
-    if input_path.is_empty() { return Err(t("link_checker_no_input_file")); }
+    if input_path.is_empty() {
+        return Err(t("link_checker_no_input_file"));
+    }
     let lines = std::fs::read_to_string(input_path)
         .map_err(|e| t_with("link_checker_read_error", &[("error", &e.to_string())]))?;
     let mut links: Vec<String> = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for line in lines.lines() {
         let trimmed = line.trim().to_string();
-        if trimmed.is_empty() { continue; }
+        if trimmed.is_empty() {
+            continue;
+        }
         let link = if cfg.standardize_links {
             standardize_link(&trimmed)
         } else {
             trimmed
         };
-        if !seen.insert(link.clone()) { continue; }
+        if !seen.insert(link.clone()) {
+            continue;
+        }
         links.push(link);
     }
-    if links.is_empty() { return Err(t("link_checker_file_empty")); }
+    if links.is_empty() {
+        return Err(t("link_checker_file_empty"));
+    }
 
     let concurrency = account_ids.len();
-    emit(app, t_with("link_checker_loaded", &[("links", &links.len().to_string()), ("accounts", &concurrency.to_string())]));
+    emit(
+        app,
+        t_with(
+            "link_checker_loaded",
+            &[
+                ("links", &links.len().to_string()),
+                ("accounts", &concurrency.to_string()),
+            ],
+        ),
+    );
 
     // resolve output path (ensure .db extension)
     let output_path = resolve_output_path(&cfg.output_path);
@@ -163,7 +194,9 @@ async fn run(
         return Err(t("link_checker_no_output_file"));
     }
     if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent).ok(); }
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
 
     // init SQLite database
@@ -177,7 +210,11 @@ async fn run(
 
     // distribute links
     let mut batches: Vec<Vec<(usize, String)>> = vec![Vec::new(); concurrency];
-    let per_acc = if cfg.links_per_account > 0 { cfg.links_per_account as usize } else { usize::MAX };
+    let per_acc = if cfg.links_per_account > 0 {
+        cfg.links_per_account as usize
+    } else {
+        usize::MAX
+    };
     let mut acc_counts = vec![0usize; concurrency];
     for (i, link) in links.iter().enumerate() {
         let target_acc = i % concurrency;
@@ -191,8 +228,12 @@ async fn run(
     let mut handles = Vec::new();
 
     for (thread_idx, batch) in batches.into_iter().enumerate() {
-        if batch.is_empty() { continue; }
-        if !token.load(Ordering::Relaxed) { break; }
+        if batch.is_empty() {
+            continue;
+        }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let account_id = account_ids[thread_idx].clone();
         let sem = sem.clone();
         let token_clone = token.clone();
@@ -298,12 +339,25 @@ async fn run(
             }
         }));
     }
-    for h in handles { let _ = h.await; }
+    for h in handles {
+        let _ = h.await;
+    }
 
     let v = valid_count.load(Ordering::Relaxed);
     let inv = invalid_count.load(Ordering::Relaxed);
     let sk = skipped_count.load(Ordering::Relaxed);
-    emit(app, t_with("link_checker_result", &[("valid", &v.to_string()), ("invalid", &inv.to_string()), ("skipped", &sk.to_string()), ("path", &output_path.display().to_string())]));
+    emit(
+        app,
+        t_with(
+            "link_checker_result",
+            &[
+                ("valid", &v.to_string()),
+                ("invalid", &inv.to_string()),
+                ("skipped", &sk.to_string()),
+                ("path", &output_path.display().to_string()),
+            ],
+        ),
+    );
     Ok(())
 }
 
@@ -322,13 +376,19 @@ async fn check_link_full(
         if kind == "private" {
             if !check_private {
                 return match check_invite_valid(client, &body, max_flood_wait, token).await {
-                    Ok(Some(title)) => CheckResult::PrivateGroup { title, link: trimmed.to_string() },
+                    Ok(Some(title)) => CheckResult::PrivateGroup {
+                        title,
+                        link: trimmed.to_string(),
+                    },
                     Ok(None) => CheckResult::Invalid,
                     Err(e) => CheckResult::Skipped(e),
                 };
             }
             return match check_invite_valid(client, &body, max_flood_wait, token).await {
-                Ok(Some(title)) => CheckResult::PrivateGroup { title, link: trimmed.to_string() },
+                Ok(Some(title)) => CheckResult::PrivateGroup {
+                    title,
+                    link: trimmed.to_string(),
+                },
                 Ok(None) => CheckResult::Invalid,
                 Err(e) => CheckResult::Skipped(e),
             };
@@ -357,7 +417,9 @@ async fn check_link_full(
                 }
                 if let Some(wait_secs) = parse_flood_wait(&e) {
                     if wait_secs <= max_flood_wait {
-                        if !token.load(Ordering::Relaxed) { return CheckResult::Invalid; }
+                        if !token.load(Ordering::Relaxed) {
+                            return CheckResult::Invalid;
+                        }
                         if attempt < 3 {
                             interruptible_sleep(wait_secs as u64 * 1000, token).await;
                             continue;
@@ -381,8 +443,8 @@ fn parse_resolved_entity(data: &[u8], username: &str) -> CheckResult {
         Err(_) => return CheckResult::Invalid,
     };
 
-    use std::io::Cursor;
     use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::Cursor;
 
     let mut cursor = Cursor::new(inner.as_slice());
     let _ctor = match cursor.read_u32::<LittleEndian>() {
@@ -406,9 +468,18 @@ fn parse_resolved_entity(data: &[u8], username: &str) -> CheckResult {
             for raw in &resolved.users {
                 if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
                     if let tl_gen::TlUser::User {
-                        id, access_hash, first_name, last_name,
-                        username: u_name, phone, premium, bot, deleted, ..
-                    } = user {
+                        id,
+                        access_hash,
+                        first_name,
+                        last_name,
+                        username: u_name,
+                        phone,
+                        premium,
+                        bot,
+                        deleted,
+                        ..
+                    } = user
+                    {
                         if id == uid {
                             return CheckResult::User {
                                 id,
@@ -431,9 +502,15 @@ fn parse_resolved_entity(data: &[u8], username: &str) -> CheckResult {
             for raw in &resolved.chats {
                 if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
                     if let tl_gen::TlChat::Channel {
-                        id, broadcast, megagroup, title,
-                        username: ch_username, participants_count, ..
-                    } = chat {
+                        id,
+                        broadcast,
+                        megagroup,
+                        title,
+                        username: ch_username,
+                        participants_count,
+                        ..
+                    } = chat
+                    {
                         if id == cid {
                             return CheckResult::Group {
                                 id,
@@ -448,12 +525,10 @@ fn parse_resolved_entity(data: &[u8], username: &str) -> CheckResult {
             }
             CheckResult::Invalid
         }
-        tl_gen::Peer::Chat(_) => {
-            CheckResult::PrivateGroup {
-                title: "basic_chat".to_string(),
-                link: format!("@{}", username),
-            }
-        }
+        tl_gen::Peer::Chat(_) => CheckResult::PrivateGroup {
+            title: "basic_chat".to_string(),
+            link: format!("@{}", username),
+        },
     }
 }
 
@@ -467,26 +542,26 @@ async fn check_invite_valid(
     for attempt in 1..=3 {
         let req = tl::build_check_chat_invite(hash);
         match client.invoke(&req).await {
-            Ok(data) => {
-                match tl::parse_chat_invite_summary(&data) {
-                    Ok(summary) => {
-                        let title = if summary.title.is_empty() {
-                            "private".to_string()
-                        } else {
-                            summary.title
-                        };
-                        return Ok(Some(title));
-                    }
-                    Err(_) => return Ok(Some("private".to_string())),
+            Ok(data) => match tl::parse_chat_invite_summary(&data) {
+                Ok(summary) => {
+                    let title = if summary.title.is_empty() {
+                        "private".to_string()
+                    } else {
+                        summary.title
+                    };
+                    return Ok(Some(title));
                 }
-            }
+                Err(_) => return Ok(Some("private".to_string())),
+            },
             Err(e) => {
                 if e.contains("INVITE_HASH_EXPIRED") || e.contains("INVITE_HASH_INVALID") {
                     return Ok(None);
                 }
                 if let Some(wait_secs) = parse_flood_wait(&e) {
                     if wait_secs <= max_flood_wait {
-                        if !token.load(Ordering::Relaxed) { return Ok(None); }
+                        if !token.load(Ordering::Relaxed) {
+                            return Ok(None);
+                        }
                         if attempt < 3 {
                             interruptible_sleep(wait_secs as u64 * 1000, token).await;
                             continue;
@@ -504,7 +579,9 @@ async fn check_invite_valid(
 async fn interruptible_sleep(ms: u64, token: &AtomicBool) {
     let mut remaining = ms;
     while remaining > 0 {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = remaining.min(200);
         tokio::time::sleep(Duration::from_millis(chunk)).await;
         remaining -= chunk;
@@ -512,8 +589,14 @@ async fn interruptible_sleep(ms: u64, token: &AtomicBool) {
 }
 
 fn parse_flood_wait(err: &str) -> Option<u32> {
-    let message = err.strip_prefix("RPC ").and_then(|s| s.split_once(": ").map(|(_, m)| m)).unwrap_or(err);
-    let rpc_err = tl_gen::RpcError { code: 0, message: message.to_string() };
+    let message = err
+        .strip_prefix("RPC ")
+        .and_then(|s| s.split_once(": ").map(|(_, m)| m))
+        .unwrap_or(err);
+    let rpc_err = tl_gen::RpcError {
+        code: 0,
+        message: message.to_string(),
+    };
     rpc_err.flood_seconds().map(|s| s as u32)
 }
 
@@ -531,7 +614,11 @@ fn extract_public_username(link: &str) -> Option<String> {
         .next()
         .unwrap_or("")
         .trim_end_matches('/');
-    if username.is_empty() { None } else { Some(username.to_string()) }
+    if username.is_empty() {
+        None
+    } else {
+        Some(username.to_string())
+    }
 }
 
 fn standardize_link(link: &str) -> String {
@@ -547,10 +634,14 @@ fn standardize_link(link: &str) -> String {
 }
 
 fn random_delay(min: u32, max: u32) -> u32 {
-    if min == 0 && max == 0 { return 0; }
+    if min == 0 && max == 0 {
+        return 0;
+    }
     let lo = min.min(max);
     let hi = min.max(max);
-    if lo == hi { return lo; }
+    if lo == hi {
+        return lo;
+    }
     lo + (rand::random::<u32>() % (hi - lo + 1))
 }
 

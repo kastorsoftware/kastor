@@ -15,12 +15,21 @@ impl TelethonSession {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         dbg_log!("TelethonSession::from_file {:?}", path);
 
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| crate::i18n::t_with("converter_telethon_open_session_error", &[("error", &e.to_string())]))?;
+        let conn = rusqlite::Connection::open(path).map_err(|e| {
+            crate::i18n::t_with(
+                "converter_telethon_open_session_error",
+                &[("error", &e.to_string())],
+            )
+        })?;
 
         let mut stmt = conn
             .prepare("SELECT dc_id, server_address, port, auth_key FROM sessions LIMIT 1")
-            .map_err(|e| crate::i18n::t_with("converter_telethon_table_error", &[("error", &e.to_string())]))?;
+            .map_err(|e| {
+                crate::i18n::t_with(
+                    "converter_telethon_table_error",
+                    &[("error", &e.to_string())],
+                )
+            })?;
 
         let session = stmt
             .query_row([], |row| {
@@ -31,10 +40,20 @@ impl TelethonSession {
                     auth_key: row.get(3)?,
                 })
             })
-            .map_err(|e| crate::i18n::t_with("converter_telethon_empty_error", &[("error", &e.to_string())]))?;
+            .map_err(|e| {
+                crate::i18n::t_with(
+                    "converter_telethon_empty_error",
+                    &[("error", &e.to_string())],
+                )
+            })?;
 
-        dbg_log!("TelethonSession: dc_id={} addr={}:{} key_len={}",
-            session.dc_id, session.server_address, session.port, session.auth_key.len());
+        dbg_log!(
+            "TelethonSession: dc_id={} addr={}:{} key_len={}",
+            session.dc_id,
+            session.server_address,
+            session.port,
+            session.auth_key.len()
+        );
 
         Ok(session)
     }
@@ -51,9 +70,13 @@ impl TelethonSession {
             }
         }
 
-        if let Ok(mut stmt) = conn.prepare("SELECT id FROM entities WHERE id > 0 AND id < 99999999999 ORDER BY id DESC LIMIT 1") {
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT id FROM entities WHERE id > 0 AND id < 99999999999 ORDER BY id DESC LIMIT 1",
+        ) {
             if let Ok(uid) = stmt.query_row([], |row| row.get::<_, i64>(0)) {
-                if uid > 0 { return uid; }
+                if uid > 0 {
+                    return uid;
+                }
             }
         }
 
@@ -63,8 +86,12 @@ impl TelethonSession {
     pub fn to_file(&self, path: &Path) -> Result<(), String> {
         dbg_log!("TelethonSession::to_file {:?}", path);
 
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| crate::i18n::t_with("converter_telethon_create_error", &[("error", &e.to_string())]))?;
+        let conn = rusqlite::Connection::open(path).map_err(|e| {
+            crate::i18n::t_with(
+                "converter_telethon_create_error",
+                &[("error", &e.to_string())],
+            )
+        })?;
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS version (version integer primary key);
@@ -85,10 +112,21 @@ impl TelethonSession {
                  id integer primary key, pts integer, qts integer,
                  date integer, seq integer
              );",
-        ).map_err(|e| crate::i18n::t_with("converter_telethon_schema_error", &[("error", &e.to_string())]))?;
+        )
+        .map_err(|e| {
+            crate::i18n::t_with(
+                "converter_telethon_schema_error",
+                &[("error", &e.to_string())],
+            )
+        })?;
 
         conn.execute("INSERT OR REPLACE INTO version VALUES (7)", [])
-            .map_err(|e| crate::i18n::t_with("converter_telethon_version_error", &[("error", &e.to_string())]))?;
+            .map_err(|e| {
+                crate::i18n::t_with(
+                    "converter_telethon_version_error",
+                    &[("error", &e.to_string())],
+                )
+            })?;
 
         conn.execute(
             "INSERT OR REPLACE INTO sessions (dc_id, server_address, port, auth_key, takeout_id) VALUES (?1, ?2, ?3, ?4, NULL)",

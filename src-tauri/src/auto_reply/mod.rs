@@ -1,20 +1,20 @@
 // auto_reply: listens for incoming private messages and sends automatic replies
 
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use serde::Deserialize;
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+use crate::accounts::commands::get_storage_pub;
+use crate::accounts::connect::connect_account;
+use crate::accounts::devices;
+use crate::accounts::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
-use crate::accounts::commands::get_storage_pub;
-use crate::accounts::session::AccountJson;
-use crate::accounts::devices;
-use crate::accounts::connect::connect_account;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 const POLL_INTERVAL_MS: u64 = 3000;
 const MEDIA_CHUNK_SIZE: usize = 512 * 1024;
@@ -60,14 +60,14 @@ pub struct AutoReplyConfig {
     pub delay_max: u32,
     pub delay_unit: DelayUnit,
 
-    pub message_type: String,     // "text" | "forward" | "voice"
+    pub message_type: String, // "text" | "forward" | "voice"
     pub reply_text: String,
     #[serde(default)]
     pub image_path: String,
     #[serde(default)]
     pub video_path: String,
     #[serde(default)]
-    pub text_modify: String,      // "none" | "llm_rewrite" | "randomize"
+    pub text_modify: String, // "none" | "llm_rewrite" | "randomize"
     pub use_voice: bool,
     pub voice_path: String,
     #[serde(default)]
@@ -103,16 +103,21 @@ pub struct AutoReplyConfig {
     pub output_path: String,
 }
 
-fn default_true() -> bool { true }
+fn default_true() -> bool {
+    true
+}
 
 fn init_output_db(path: &str) -> Result<rusqlite::Connection, String> {
     let p = std::path::Path::new(path);
     if let Some(parent) = p.parent() {
-        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent).ok(); }
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
     let conn = rusqlite::Connection::open(p)
         .map_err(|e| t_with("auto_reply_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -130,7 +135,9 @@ fn init_output_db(path: &str) -> Result<rusqlite::Connection, String> {
 
         CREATE INDEX IF NOT EXISTS idx_replies_user_id ON replies(user_id);
         CREATE INDEX IF NOT EXISTS idx_replies_status ON replies(status);
-    ").map_err(|e| t_with("auto_reply_db_tables_error", &[("error", &e.to_string())]))?;
+    ",
+    )
+    .map_err(|e| t_with("auto_reply_db_tables_error", &[("error", &e.to_string())]))?;
     Ok(conn)
 }
 
@@ -150,90 +157,119 @@ pub async fn auto_reply_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "auto_reply".to_string(),
-        t_with("auto_reply_task_name", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "auto_reply".to_string(),
+            t_with("auto_reply_task_name", &[("count", &ids.len().to_string())]),
+        )
+        .await;
 
-    let voice_bytes: Option<Arc<Vec<u8>>> = if (config.message_type == "voice" || config.use_voice) && !config.voice_path.is_empty() {
-        let path_lower = config.voice_path.to_lowercase();
-        let needs_conversion = path_lower.ends_with(".mp3")
-            || path_lower.ends_with(".wav")
-            || path_lower.ends_with(".m4a")
-            || path_lower.ends_with(".mp4");
-        if needs_conversion {
-            match crate::audio::convert_to_ogg_opus(&config.voice_path) {
+    let voice_bytes: Option<Arc<Vec<u8>>> =
+        if (config.message_type == "voice" || config.use_voice) && !config.voice_path.is_empty() {
+            let path_lower = config.voice_path.to_lowercase();
+            let needs_conversion = path_lower.ends_with(".mp3")
+                || path_lower.ends_with(".wav")
+                || path_lower.ends_with(".m4a")
+                || path_lower.ends_with(".mp4");
+            if needs_conversion {
+                match crate::audio::convert_to_ogg_opus(&config.voice_path) {
+                    Ok(data) => Some(Arc::new(data)),
+                    Err(e) => {
+                        let _ = app.emit(
+                            "auto-reply-log",
+                            t_with("auto_reply_audio_convert_error", &[("error", &e)]),
+                        );
+                        None
+                    }
+                }
+            } else {
+                match std::fs::read(&config.voice_path) {
+                    Ok(data) => Some(Arc::new(data)),
+                    Err(e) => {
+                        let _ = app.emit(
+                            "auto-reply-log",
+                            t_with("auto_reply_voice_read_error", &[("error", &e.to_string())]),
+                        );
+                        None
+                    }
+                }
+            }
+        } else {
+            None
+        };
+
+    let image_bytes: Option<Arc<Vec<u8>>> =
+        if config.message_type == "text" && !config.image_path.is_empty() {
+            match std::fs::read(&config.image_path) {
                 Ok(data) => Some(Arc::new(data)),
                 Err(e) => {
-                    let _ = app.emit("auto-reply-log", t_with("auto_reply_audio_convert_error", &[("error", &e)]));
+                    let _ = app.emit(
+                        "auto-reply-log",
+                        t_with("auto_reply_image_read_error", &[("error", &e.to_string())]),
+                    );
                     None
                 }
             }
         } else {
-            match std::fs::read(&config.voice_path) {
+            None
+        };
+
+    let video_bytes: Option<Arc<Vec<u8>>> =
+        if config.message_type == "text" && !config.video_path.is_empty() {
+            match std::fs::read(&config.video_path) {
                 Ok(data) => Some(Arc::new(data)),
                 Err(e) => {
-                    let _ = app.emit("auto-reply-log", t_with("auto_reply_voice_read_error", &[("error", &e.to_string())]));
+                    let _ = app.emit(
+                        "auto-reply-log",
+                        t_with("auto_reply_video_read_error", &[("error", &e.to_string())]),
+                    );
                     None
                 }
             }
-        }
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
-    let image_bytes: Option<Arc<Vec<u8>>> = if config.message_type == "text" && !config.image_path.is_empty() {
-        match std::fs::read(&config.image_path) {
-            Ok(data) => Some(Arc::new(data)),
-            Err(e) => {
-                let _ = app.emit("auto-reply-log", t_with("auto_reply_image_read_error", &[("error", &e.to_string())]));
-                None
-            }
-        }
-    } else { None };
-
-    let video_bytes: Option<Arc<Vec<u8>>> = if config.message_type == "text" && !config.video_path.is_empty() {
-        match std::fs::read(&config.video_path) {
-            Ok(data) => Some(Arc::new(data)),
-            Err(e) => {
-                let _ = app.emit("auto-reply-log", t_with("auto_reply_video_read_error", &[("error", &e.to_string())]));
-                None
-            }
-        }
-    } else { None };
-
-    let ban_words: Vec<String> = config.ban_words
+    let ban_words: Vec<String> = config
+        .ban_words
         .lines()
         .map(|l| l.trim().to_lowercase())
         .filter(|l| !l.is_empty())
         .collect();
 
-    let whitelist: HashSet<String> = if matches!(config.reply_mode, ReplyMode::Whitelist) && !config.whitelist_path.is_empty() {
-        std::fs::read_to_string(&config.whitelist_path)
-            .unwrap_or_default()
-            .lines()
-            .map(|l| l.trim().trim_start_matches('@').to_lowercase())
-            .filter(|l| !l.is_empty())
-            .collect()
-    } else {
-        HashSet::new()
-    };
+    let whitelist: HashSet<String> =
+        if matches!(config.reply_mode, ReplyMode::Whitelist) && !config.whitelist_path.is_empty() {
+            std::fs::read_to_string(&config.whitelist_path)
+                .unwrap_or_default()
+                .lines()
+                .map(|l| l.trim().trim_start_matches('@').to_lowercase())
+                .filter(|l| !l.is_empty())
+                .collect()
+        } else {
+            HashSet::new()
+        };
 
     let config = Arc::new(config);
     let ban_words = Arc::new(ban_words);
     let whitelist = Arc::new(whitelist);
 
     // init output SQLite DB if path specified
-    let db: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>> = if !config.output_path.is_empty() {
-        match init_output_db(&config.output_path) {
-            Ok(conn) => Some(Arc::new(tokio::sync::Mutex::new(conn))),
-            Err(e) => {
-                let _ = app.emit("auto-reply-log", t_with("auto_reply_db_create_error", &[("error", &e)]));
-                None
+    let db: Option<Arc<tokio::sync::Mutex<rusqlite::Connection>>> =
+        if !config.output_path.is_empty() {
+            match init_output_db(&config.output_path) {
+                Ok(conn) => Some(Arc::new(tokio::sync::Mutex::new(conn))),
+                Err(e) => {
+                    let _ = app.emit(
+                        "auto-reply-log",
+                        t_with("auto_reply_db_create_error", &[("error", &e)]),
+                    );
+                    None
+                }
             }
-        }
-    } else { None };
+        } else {
+            None
+        };
 
     tokio::spawn(async move {
         let sem = Arc::new(tokio::sync::Semaphore::new(concurrency));
@@ -241,7 +277,9 @@ pub async fn auto_reply_start(
         let mut handles = Vec::new();
 
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
             let sem = sem.clone();
             let config = config.clone();
             let voice_bytes = voice_bytes.clone();
@@ -255,21 +293,38 @@ pub async fn auto_reply_start(
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                if !token_clone.load(Ordering::Relaxed) { return; }
+                if !token_clone.load(Ordering::Relaxed) {
+                    return;
+                }
 
                 let result = run_account(
-                    &id, i + 1, total, &config, voice_bytes.as_deref(),
-                    image_bytes.as_deref(), video_bytes.as_deref(),
-                    &ban_words, &whitelist, db_clone.as_ref(), &app_clone, &token_clone,
-                ).await;
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    voice_bytes.as_deref(),
+                    image_bytes.as_deref(),
+                    video_bytes.as_deref(),
+                    &ban_words,
+                    &whitelist,
+                    db_clone.as_ref(),
+                    &app_clone,
+                    &token_clone,
+                )
+                .await;
                 if let Err(e) = result {
                     crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                    let _ = app_clone.emit("auto-reply-log", format!("[{}/{}] {}: {}", i + 1, total, t("error"), e));
+                    let _ = app_clone.emit(
+                        "auto-reply-log",
+                        format!("[{}/{}] {}: {}", i + 1, total, t("error"), e),
+                    );
                 }
             }));
         }
 
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
         let _ = app.emit("auto-reply-log", t("done"));
 
         let queue: tauri::State<'_, TaskQueue> = app.state();
@@ -301,11 +356,15 @@ async fn run_account(
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let prefix = format!("[{}/{}]", idx, total);
-    let emit = |msg: String| { let _ = app.emit("auto-reply-log", format!("{} {}", prefix, msg)); };
+    let emit = |msg: String| {
+        let _ = app.emit("auto-reply-log", format!("{} {}", prefix, msg));
+    };
 
     let storage = get_storage_pub();
     let json_path = storage.json_path(account_id);
-    let replied_users_path = storage.session_json_dir().join(format!("{}_replied.json", account_id));
+    let replied_users_path = storage
+        .session_json_dir()
+        .join(format!("{}_replied.json", account_id));
 
     let mut client = connect_account(account_id).await?;
     client.set_log_target("auto-reply-log", app.clone());
@@ -317,23 +376,42 @@ async fn run_account(
         AccountJson::default()
     };
     let dev = if !json.device.is_empty() && !json.sdk.is_empty() {
-        devices::DeviceInfo { device: json.device.clone(), sdk: json.sdk.clone(), app_version: json.app_version.clone() }
+        devices::DeviceInfo {
+            device: json.device.clone(),
+            sdk: json.sdk.clone(),
+            app_version: json.app_version.clone(),
+        }
     } else {
         devices::generate_random_device()
     };
-    let app_id = if json.app_id == 0 { crate::get_app_config().app_id } else { json.app_id };
-    let get_me = tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
-    let me_resp = client.invoke(&get_me).await.map_err(|e| format!("get_me: {e}"))?;
+    let app_id = if json.app_id == 0 {
+        crate::get_app_config().app_id
+    } else {
+        json.app_id
+    };
+    let get_me =
+        tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
+    let me_resp = client
+        .invoke(&get_me)
+        .await
+        .map_err(|e| format!("get_me: {e}"))?;
     let my_user_id = tl::parse_users_response(&me_resp)
         .map(|u| u.id)
         .unwrap_or(0);
 
-    emit(t_with("auto_reply_connected", &[("user_id", &my_user_id.to_string())]));
+    emit(t_with(
+        "auto_reply_connected",
+        &[("user_id", &my_user_id.to_string())],
+    ));
 
     // get current state to start polling from now
     let state_req = tl_gen::build_updates_getState();
-    let state_data = client.invoke(&state_req).await.map_err(|e| format!("getState: {e}"))?;
-    let state = tl_gen::parse_updates_getState(&state_data).map_err(|e| format!("parse state: {e}"))?;
+    let state_data = client
+        .invoke(&state_req)
+        .await
+        .map_err(|e| format!("getState: {e}"))?;
+    let state =
+        tl_gen::parse_updates_getState(&state_data).map_err(|e| format!("parse state: {e}"))?;
 
     let mut pts = state.pts;
     let mut date = state.date;
@@ -354,7 +432,10 @@ async fn run_account(
     if let Some(img_data) = image_bytes {
         emit(t("auto_reply_uploading_image"));
         image_filename = std::path::Path::new(&config.image_path)
-            .file_name().and_then(|n| n.to_str()).unwrap_or("photo.jpg").to_string();
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("photo.jpg")
+            .to_string();
         let file_id: i64 = rand::random();
         let total_parts = ((img_data.len() + MEDIA_CHUNK_SIZE - 1) / MEDIA_CHUNK_SIZE) as i32;
         let is_big = img_data.len() >= 10 * 1024 * 1024;
@@ -367,7 +448,10 @@ async fn run_account(
             } else {
                 tl_gen::build_upload_saveFilePart(file_id, part, chunk)
             };
-            client.invoke(&req).await.map_err(|e| format!("upload image part {}: {e}", part))?;
+            client
+                .invoke(&req)
+                .await
+                .map_err(|e| format!("upload image part {}: {e}", part))?;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
         uploaded_image_file = Some(if is_big {
@@ -383,7 +467,10 @@ async fn run_account(
     if let Some(vid_data) = video_bytes {
         emit(t("auto_reply_uploading_video"));
         video_filename = std::path::Path::new(&config.video_path)
-            .file_name().and_then(|n| n.to_str()).unwrap_or("video.mp4").to_string();
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("video.mp4")
+            .to_string();
         let file_id: i64 = rand::random();
         let total_parts = ((vid_data.len() + MEDIA_CHUNK_SIZE - 1) / MEDIA_CHUNK_SIZE) as i32;
         let is_big = vid_data.len() >= 10 * 1024 * 1024;
@@ -396,7 +483,10 @@ async fn run_account(
             } else {
                 tl_gen::build_upload_saveFilePart(file_id, part, chunk)
             };
-            client.invoke(&req).await.map_err(|e| format!("upload video part {}: {e}", part))?;
+            client
+                .invoke(&req)
+                .await
+                .map_err(|e| format!("upload video part {}: {e}", part))?;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
         }
         uploaded_video_file = Some(if is_big {
@@ -424,7 +514,10 @@ async fn run_account(
         // check reply limit
         if matches!(config.reply_mode, ReplyMode::Limit) {
             if reply_count.load(Ordering::Relaxed) >= config.reply_limit {
-                emit(t_with("auto_reply_limit_reached", &[("limit", &config.reply_limit.to_string())]));
+                emit(t_with(
+                    "auto_reply_limit_reached",
+                    &[("limit", &config.reply_limit.to_string())],
+                ));
                 break;
             }
         }
@@ -435,7 +528,9 @@ async fn run_account(
         // keep online: send updateStatus(offline=false) every 25s
         if config.keep_online {
             let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
             if now - last_online_ping >= 25 {
                 let req = tl_gen::build_account_updateStatus(false);
                 let _ = client.invoke(&req).await;
@@ -450,11 +545,15 @@ async fn run_account(
                 if crate::mtproto::is_fatal_session_error(&e) {
                     return Err(e);
                 }
-                if e.contains("PERSISTENT_TIMESTAMP_EMPTY") || e.contains("PERSISTENT_TIMESTAMP_INVALID") {
+                if e.contains("PERSISTENT_TIMESTAMP_EMPTY")
+                    || e.contains("PERSISTENT_TIMESTAMP_INVALID")
+                {
                     pts_empty_retries += 1;
                     if pts_empty_retries <= 3 {
                         // re-fetch state to get valid pts
-                        if let Ok(new_state_data) = client.invoke(&tl_gen::build_updates_getState()).await {
+                        if let Ok(new_state_data) =
+                            client.invoke(&tl_gen::build_updates_getState()).await
+                        {
                             if let Ok(new_state) = tl_gen::parse_updates_getState(&new_state_data) {
                                 pts = new_state.pts;
                                 date = new_state.date;
@@ -482,19 +581,42 @@ async fn run_account(
             tl_gen::TlUpdatesDifference::Empty { date: d, seq: _ } => {
                 date = d;
             }
-            tl_gen::TlUpdatesDifference::Difference { new_messages, users, state, .. } => {
-                dbg_log!("auto_reply: getDifference returned Difference with {} messages", new_messages.len());
-                let next_state = tl_gen::TlUpdatesState::deserialize(
-                    &mut std::io::Cursor::new(state.as_slice()),
-                ).ok();
+            tl_gen::TlUpdatesDifference::Difference {
+                new_messages,
+                users,
+                state,
+                ..
+            } => {
+                dbg_log!(
+                    "auto_reply: getDifference returned Difference with {} messages",
+                    new_messages.len()
+                );
+                let next_state = tl_gen::TlUpdatesState::deserialize(&mut std::io::Cursor::new(
+                    state.as_slice(),
+                ))
+                .ok();
                 let errs = process_messages(
-                    &new_messages, &users, my_user_id, config, voice_bytes,
-                    uploaded_image_file.as_deref(), &image_filename,
-                    uploaded_video_file.as_deref(), &video_filename,
-                    ban_words, whitelist, db, &mut client, &prefix, app,
-                    token, &reply_count, &mut replied_users,
+                    &new_messages,
+                    &users,
+                    my_user_id,
+                    config,
+                    voice_bytes,
+                    uploaded_image_file.as_deref(),
+                    &image_filename,
+                    uploaded_video_file.as_deref(),
+                    &video_filename,
+                    ban_words,
+                    whitelist,
+                    db,
+                    &mut client,
+                    &prefix,
+                    app,
+                    token,
+                    &reply_count,
+                    &mut replied_users,
                     &replied_users_path,
-                ).await?;
+                )
+                .await?;
                 if let Some(state) = next_state {
                     pts = state.pts;
                     date = state.date;
@@ -504,25 +626,53 @@ async fn run_account(
                     autostop_ban_count += errs.bans;
                     autostop_spamblock_count += errs.spamblocks;
                     autostop_flood_count += errs.floods;
-                    if should_autostop(config, autostop_ban_count, autostop_spamblock_count, autostop_flood_count) {
+                    if should_autostop(
+                        config,
+                        autostop_ban_count,
+                        autostop_spamblock_count,
+                        autostop_flood_count,
+                    ) {
                         emit(t("inviter_autostop"));
                         break;
                     }
                 }
             }
-            tl_gen::TlUpdatesDifference::Slice { new_messages, users, intermediate_state, .. } => {
-                dbg_log!("auto_reply: getDifference returned Slice with {} messages", new_messages.len());
-                let next_state = tl_gen::TlUpdatesState::deserialize(
-                    &mut std::io::Cursor::new(intermediate_state.as_slice()),
-                ).ok();
+            tl_gen::TlUpdatesDifference::Slice {
+                new_messages,
+                users,
+                intermediate_state,
+                ..
+            } => {
+                dbg_log!(
+                    "auto_reply: getDifference returned Slice with {} messages",
+                    new_messages.len()
+                );
+                let next_state = tl_gen::TlUpdatesState::deserialize(&mut std::io::Cursor::new(
+                    intermediate_state.as_slice(),
+                ))
+                .ok();
                 let errs = process_messages(
-                    &new_messages, &users, my_user_id, config, voice_bytes,
-                    uploaded_image_file.as_deref(), &image_filename,
-                    uploaded_video_file.as_deref(), &video_filename,
-                    ban_words, whitelist, db, &mut client, &prefix, app,
-                    token, &reply_count, &mut replied_users,
+                    &new_messages,
+                    &users,
+                    my_user_id,
+                    config,
+                    voice_bytes,
+                    uploaded_image_file.as_deref(),
+                    &image_filename,
+                    uploaded_video_file.as_deref(),
+                    &video_filename,
+                    ban_words,
+                    whitelist,
+                    db,
+                    &mut client,
+                    &prefix,
+                    app,
+                    token,
+                    &reply_count,
+                    &mut replied_users,
                     &replied_users_path,
-                ).await?;
+                )
+                .await?;
                 if let Some(state) = next_state {
                     pts = state.pts;
                     date = state.date;
@@ -532,7 +682,12 @@ async fn run_account(
                     autostop_ban_count += errs.bans;
                     autostop_spamblock_count += errs.spamblocks;
                     autostop_flood_count += errs.floods;
-                    if should_autostop(config, autostop_ban_count, autostop_spamblock_count, autostop_flood_count) {
+                    if should_autostop(
+                        config,
+                        autostop_ban_count,
+                        autostop_spamblock_count,
+                        autostop_flood_count,
+                    ) {
                         emit(t("inviter_autostop"));
                         break;
                     }
@@ -557,14 +712,23 @@ struct ErrorCounts {
 }
 
 fn should_autostop(config: &AutoReplyConfig, bans: u32, spamblocks: u32, floods: u32) -> bool {
-    if config.autostop_ban > 0 && bans >= config.autostop_ban { return true; }
-    if config.autostop_spamblock > 0 && spamblocks >= config.autostop_spamblock { return true; }
-    if config.autostop_flood > 0 && floods >= config.autostop_flood { return true; }
+    if config.autostop_ban > 0 && bans >= config.autostop_ban {
+        return true;
+    }
+    if config.autostop_spamblock > 0 && spamblocks >= config.autostop_spamblock {
+        return true;
+    }
+    if config.autostop_flood > 0 && floods >= config.autostop_flood {
+        return true;
+    }
     false
 }
 
 fn classify_error(e: &str) -> Option<&'static str> {
-    if e.contains("USER_DEACTIVATED") || e.contains("AUTH_KEY_UNREGISTERED") || e.contains("SESSION_REVOKED") {
+    if e.contains("USER_DEACTIVATED")
+        || e.contains("AUTH_KEY_UNREGISTERED")
+        || e.contains("SESSION_REVOKED")
+    {
         Some("ban")
     } else if e.contains("PEER_FLOOD") || e.contains("PeerFlood") {
         Some("spamblock")
@@ -581,7 +745,13 @@ fn apply_placeholders(text: &str, username: &str, first_name: &str, last_name: &
         .replace("%LAST_NAME%", last_name)
 }
 
-fn prepare_reply_text(base: &str, text_modify: &str, username: &str, first_name: &str, last_name: &str) -> String {
+fn prepare_reply_text(
+    base: &str,
+    text_modify: &str,
+    username: &str,
+    first_name: &str,
+    last_name: &str,
+) -> String {
     let spun = crate::randomizer::spin_text(base);
     let with_placeholders = apply_placeholders(&spun, username, first_name, last_name);
     match text_modify {
@@ -617,9 +787,15 @@ async fn process_messages(
     replied_users: &mut HashSet<i64>,
     replied_users_path: &std::path::Path,
 ) -> Result<ErrorCounts, String> {
-    let emit = |msg: String| { let _ = app.emit("auto-reply-log", format!("{} {}", prefix, msg)); };
+    let emit = |msg: String| {
+        let _ = app.emit("auto-reply-log", format!("{} {}", prefix, msg));
+    };
 
-    let mut errs = ErrorCounts { bans: 0, spamblocks: 0, floods: 0 };
+    let mut errs = ErrorCounts {
+        bans: 0,
+        spamblocks: 0,
+        floods: 0,
+    };
 
     // build user_id -> access_hash map from users vector
     let user_map = build_user_access_hash_map(users);
@@ -627,9 +803,13 @@ async fn process_messages(
     dbg_log!("auto_reply: user_map has {} entries", user_map.len());
 
     for msg_raw in messages {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
 
-        if matches!(config.reply_mode, ReplyMode::Limit) && reply_count.load(Ordering::Relaxed) >= config.reply_limit {
+        if matches!(config.reply_mode, ReplyMode::Limit)
+            && reply_count.load(Ordering::Relaxed) >= config.reply_limit
+        {
             break;
         }
 
@@ -637,25 +817,43 @@ async fn process_messages(
         let mut parsed = match parse_incoming_pm(msg_raw, my_user_id) {
             Some(m) => m,
             None => {
-                dbg_log!("auto_reply: parse_incoming_pm returned None (msg {} bytes, ctor={:#010x})",
+                dbg_log!(
+                    "auto_reply: parse_incoming_pm returned None (msg {} bytes, ctor={:#010x})",
                     msg_raw.len(),
-                    if msg_raw.len() >= 4 { u32::from_le_bytes([msg_raw[0], msg_raw[1], msg_raw[2], msg_raw[3]]) } else { 0 });
+                    if msg_raw.len() >= 4 {
+                        u32::from_le_bytes([msg_raw[0], msg_raw[1], msg_raw[2], msg_raw[3]])
+                    } else {
+                        0
+                    }
+                );
                 continue;
             }
         };
 
-        dbg_log!("auto_reply: parsed PM from_id={} access_hash={} text='{}'", parsed.from_id, parsed.access_hash, &parsed.text[..parsed.text.len().min(50)]);
+        dbg_log!(
+            "auto_reply: parsed PM from_id={} access_hash={} text='{}'",
+            parsed.from_id,
+            parsed.access_hash,
+            &parsed.text[..parsed.text.len().min(50)]
+        );
 
         // resolve access_hash from users vector
         if parsed.access_hash == 0 {
             if let Some(&hash) = user_map.get(&parsed.from_id) {
                 parsed.access_hash = hash;
-                dbg_log!("auto_reply: resolved access_hash={:#018x} for user_id={}", hash, parsed.from_id);
+                dbg_log!(
+                    "auto_reply: resolved access_hash={:#018x} for user_id={}",
+                    hash,
+                    parsed.from_id
+                );
             }
         }
 
         if parsed.access_hash == 0 {
-            emit(t_with("auto_reply_no_access_hash", &[("user_id", &parsed.from_id.to_string())]));
+            emit(t_with(
+                "auto_reply_no_access_hash",
+                &[("user_id", &parsed.from_id.to_string())],
+            ));
             continue;
         }
 
@@ -686,7 +884,10 @@ async fn process_messages(
             let user_id_str = parsed.from_id.to_string();
             let username_lower = parsed.username.to_lowercase();
             if !whitelist.contains(&user_id_str) && !whitelist.contains(&username_lower) {
-                emit(t_with("auto_reply_not_in_list", &[("user_id", &parsed.from_id.to_string())]));
+                emit(t_with(
+                    "auto_reply_not_in_list",
+                    &[("user_id", &parsed.from_id.to_string())],
+                ));
                 continue;
             }
         }
@@ -695,7 +896,10 @@ async fn process_messages(
         let msg_lower = parsed.text.to_lowercase();
         let has_ban_word = ban_words.iter().any(|w| msg_lower.contains(w));
         if has_ban_word {
-            emit(t_with("auto_reply_ban_word_skip", &[("user_id", &parsed.from_id.to_string())]));
+            emit(t_with(
+                "auto_reply_ban_word_skip",
+                &[("user_id", &parsed.from_id.to_string())],
+            ));
             continue;
         }
 
@@ -712,13 +916,16 @@ async fn process_messages(
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
 
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
 
         // send reply based on message_type
         let send_result = match config.message_type.as_str() {
             "voice" => {
                 if let Some(voice) = voice_bytes {
-                    tl::send_voice_message(client, parsed.from_id, parsed.access_hash, voice).await
+                    tl::send_voice_message(client, parsed.from_id, parsed.access_hash, voice)
+                        .await
                         .map(|_| ())
                 } else {
                     Err(t("auto_reply_voice_not_loaded"))
@@ -729,12 +936,32 @@ async fn process_messages(
                 if msg_id == 0 {
                     Err(t("auto_reply_invalid_forward_id"))
                 } else {
-                    let peer = tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
+                    let peer =
+                        tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
                     let from_peer = tl_gen::serialize_input_peer_self();
                     let random_id: i64 = rand::random();
                     let req = tl_gen::build_messages_forwardMessages(
-                        config.silent, false, false, true, false, false, false,
-                        &from_peer, &[msg_id], &[random_id], &peer, None, None, None, None, None, None, None, None, None, None,
+                        config.silent,
+                        false,
+                        false,
+                        true,
+                        false,
+                        false,
+                        false,
+                        &from_peer,
+                        &[msg_id],
+                        &[random_id],
+                        &peer,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     );
                     client.invoke(&req).await.map(|_| ())
                 }
@@ -742,43 +969,120 @@ async fn process_messages(
             _ => {
                 // text mode (possibly with image/video)
                 let text = prepare_reply_text(
-                    &config.reply_text, &config.text_modify,
-                    &parsed.username, &parsed.first_name, &parsed.last_name,
+                    &config.reply_text,
+                    &config.text_modify,
+                    &parsed.username,
+                    &parsed.first_name,
+                    &parsed.last_name,
                 );
 
                 if let Some(img_file) = uploaded_image_file {
                     // send photo with caption
-                    let peer = tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
+                    let peer =
+                        tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
                     let random_id: i64 = rand::random();
-                    let media = tl_gen::serialize_inputMediaUploadedPhoto(false, false, img_file, None, None, None);
+                    let media = tl_gen::serialize_inputMediaUploadedPhoto(
+                        false, false, img_file, None, None, None,
+                    );
                     let req = tl_gen::build_messages_sendMedia(
-                        false, config.silent, false, false, false, false, false,
-                        &peer, None, &media, &text, random_id, None, None, None, None, None, None, None, None, None,
+                        false,
+                        config.silent,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        &peer,
+                        None,
+                        &media,
+                        &text,
+                        random_id,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     );
                     client.invoke(&req).await.map(|_| ())
                 } else if let Some(vid_file) = uploaded_video_file {
                     // send video with caption
-                    let peer = tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
+                    let peer =
+                        tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
                     let random_id: i64 = rand::random();
-                    let video_attr = tl_gen::serialize_documentAttributeVideo(false, true, false, 0.0, 0, 0, None, None, None);
+                    let video_attr = tl_gen::serialize_documentAttributeVideo(
+                        false, true, false, 0.0, 0, 0, None, None, None,
+                    );
                     let filename_attr = tl_gen::serialize_documentAttributeFilename(video_filename);
                     let attrs: &[&[u8]] = &[&video_attr, &filename_attr];
                     let media = tl_gen::serialize_inputMediaUploadedDocument(
-                        false, false, false,
-                        vid_file, None, "video/mp4", attrs, None, None, None, None,
+                        false,
+                        false,
+                        false,
+                        vid_file,
+                        None,
+                        "video/mp4",
+                        attrs,
+                        None,
+                        None,
+                        None,
+                        None,
                     );
                     let req = tl_gen::build_messages_sendMedia(
-                        false, config.silent, false, false, false, false, false,
-                        &peer, None, &media, &text, random_id, None, None, None, None, None, None, None, None, None,
+                        false,
+                        config.silent,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        &peer,
+                        None,
+                        &media,
+                        &text,
+                        random_id,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     );
                     client.invoke(&req).await.map(|_| ())
                 } else if !text.is_empty() {
                     // plain text
-                    let peer = tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
+                    let peer =
+                        tl_gen::serialize_input_peer_user(parsed.from_id, parsed.access_hash);
                     let random_id: i64 = rand::random();
                     let req = tl_gen::build_messages_sendMessage(
-                        config.no_webpage, config.silent, false, false, false, false, false, false,
-                        &peer, None, &text, random_id, None, None, None, None, None, None, None, None, None, None,
+                        config.no_webpage,
+                        config.silent,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        false,
+                        &peer,
+                        None,
+                        &text,
+                        random_id,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
                     );
                     client.invoke(&req).await.map(|_| ())
                 } else {
@@ -816,7 +1120,9 @@ async fn process_messages(
                 }
             }
             Err(e) => {
-                if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
+                if crate::mtproto::is_fatal_session_error(&e) {
+                    return Err(e);
+                }
                 // classify error for autostop
                 match classify_error(&e) {
                     Some("ban") => errs.bans += 1,
@@ -824,7 +1130,10 @@ async fn process_messages(
                     Some("flood") => errs.floods += 1,
                     _ => {}
                 }
-                emit(t_with("auto_reply_send_error", &[("user_id", &parsed.from_id.to_string()), ("error", &e)]));
+                emit(t_with(
+                    "auto_reply_send_error",
+                    &[("user_id", &parsed.from_id.to_string()), ("error", &e)],
+                ));
                 // write error to SQLite
                 if let Some(db_ref) = db {
                     let conn = db_ref.lock().await;
@@ -860,8 +1169,8 @@ struct IncomingPm {
 
 // parse a raw TL message object looking for incoming private messages
 fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
-    use std::io::Cursor;
     use byteorder::{LittleEndian, ReadBytesExt};
+    use std::io::Cursor;
 
     let mut cursor = Cursor::new(data);
     let msg = match tl_gen::TlMessage::deserialize(&mut cursor) {
@@ -873,7 +1182,14 @@ fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
     };
 
     match msg {
-        tl_gen::TlMessage::Message { out, from_id, peer_id, message, id, .. } => {
+        tl_gen::TlMessage::Message {
+            out,
+            from_id,
+            peer_id,
+            message,
+            id,
+            ..
+        } => {
             if out {
                 dbg_log!("auto_reply: skipping outgoing message");
                 return None;
@@ -882,7 +1198,10 @@ fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
             let mut pc = Cursor::new(peer_id.as_slice());
             let peer_ctor2 = pc.read_u32::<LittleEndian>().ok()?;
             if peer_ctor2 != tl_gen::PEER_USER {
-                dbg_log!("auto_reply: peer_id is not peerUser (ctor={:#x})", peer_ctor2);
+                dbg_log!(
+                    "auto_reply: peer_id is not peerUser (ctor={:#x})",
+                    peer_ctor2
+                );
                 return None;
             }
             let peer_user_id = pc.read_i64::<LittleEndian>().ok()?;
@@ -892,7 +1211,10 @@ fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
                 let mut fc = Cursor::new(from_id_raw.as_slice());
                 let peer_ctor = fc.read_u32::<LittleEndian>().ok()?;
                 if peer_ctor != tl_gen::PEER_USER {
-                    dbg_log!("auto_reply: from_id is not peerUser (ctor={:#x})", peer_ctor);
+                    dbg_log!(
+                        "auto_reply: from_id is not peerUser (ctor={:#x})",
+                        peer_ctor
+                    );
                     return None;
                 }
                 fc.read_i64::<LittleEndian>().ok()?
@@ -909,11 +1231,19 @@ fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
             // in PM: if from_id is absent, peer_id is the sender (not us)
             // if from_id is present and peer_id != my_user_id, it's not addressed to us
             if from_id.is_some() && peer_user_id != my_user_id {
-                dbg_log!("auto_reply: peer_id={} != my_user_id={}", peer_user_id, my_user_id);
+                dbg_log!(
+                    "auto_reply: peer_id={} != my_user_id={}",
+                    peer_user_id,
+                    my_user_id
+                );
                 return None;
             }
 
-            dbg_log!("auto_reply: valid PM from user_id={} text='{}'", from_user_id, &message[..message.len().min(40)]);
+            dbg_log!(
+                "auto_reply: valid PM from user_id={} text='{}'",
+                from_user_id,
+                &message[..message.len().min(40)]
+            );
             Some(IncomingPm {
                 from_id: from_user_id,
                 access_hash: 0,
@@ -939,8 +1269,11 @@ fn parse_incoming_pm(data: &[u8], my_user_id: i64) -> Option<IncomingPm> {
 fn build_user_access_hash_map(users: &[Vec<u8>]) -> std::collections::HashMap<i64, i64> {
     let mut map = std::collections::HashMap::new();
     for user_raw in users {
-        if let Ok(tl_gen::TlUser::User { id, access_hash: Some(hash), .. }) =
-            tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_raw)
+        if let Ok(tl_gen::TlUser::User {
+            id,
+            access_hash: Some(hash),
+            ..
+        }) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_raw)
         {
             map.insert(id, hash);
         }
@@ -958,15 +1291,24 @@ struct UserInfo {
 fn build_user_info_map(users: &[Vec<u8>]) -> std::collections::HashMap<i64, UserInfo> {
     let mut map = std::collections::HashMap::new();
     for user_raw in users {
-        if let Ok(tl_gen::TlUser::User { id, username, first_name, last_name, bot, .. }) =
-            tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_raw)
+        if let Ok(tl_gen::TlUser::User {
+            id,
+            username,
+            first_name,
+            last_name,
+            bot,
+            ..
+        }) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_raw)
         {
-            map.insert(id, UserInfo {
-                username: username.unwrap_or_default(),
-                first_name: first_name.unwrap_or_default(),
-                last_name: last_name.unwrap_or_default(),
-                is_bot: bot,
-            });
+            map.insert(
+                id,
+                UserInfo {
+                    username: username.unwrap_or_default(),
+                    first_name: first_name.unwrap_or_default(),
+                    last_name: last_name.unwrap_or_default(),
+                    is_bot: bot,
+                },
+            );
         }
     }
     map
@@ -978,7 +1320,11 @@ fn compute_delay(config: &AutoReplyConfig) -> u64 {
     }
     let min = config.delay_min as u64;
     let max = config.delay_max.max(config.delay_min) as u64;
-    let value = if min == max { min } else { min + (rand::random::<u64>() % (max - min + 1)) };
+    let value = if min == max {
+        min
+    } else {
+        min + (rand::random::<u64>() % (max - min + 1))
+    };
     match config.delay_unit {
         DelayUnit::Minutes => value * 60 * 1000,
         DelayUnit::Seconds => value * 1000,

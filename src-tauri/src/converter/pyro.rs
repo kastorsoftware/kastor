@@ -51,8 +51,9 @@ pub struct PyroSession {
 impl PyroSession {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         dbg_log!("PyroSession::from_file {:?}", path);
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| crate::i18n::t_with("converter_pyro_open_error", &[("error", &e.to_string())]))?;
+        let conn = rusqlite::Connection::open(path).map_err(|e| {
+            crate::i18n::t_with("converter_pyro_open_error", &[("error", &e.to_string())])
+        })?;
 
         let mut stmt = conn
             .prepare("SELECT dc_id, COALESCE(api_id, 0), COALESCE(test_mode, 0), auth_key, COALESCE(user_id, 0), COALESCE(is_bot, 0) FROM sessions LIMIT 1")
@@ -76,10 +77,15 @@ impl PyroSession {
                     is_bot: row.get::<_, i32>(5)? != 0,
                 })
             })
-            .map_err(|e| crate::i18n::t_with("converter_pyro_empty_table", &[("error", &e.to_string())]))?;
+            .map_err(|e| {
+                crate::i18n::t_with("converter_pyro_empty_table", &[("error", &e.to_string())])
+            })?;
 
         if session.auth_key.len() != 256 {
-            return Err(crate::i18n::t_with("converter_pyro_authkey_size", &[("bytes", &session.auth_key.len().to_string())]));
+            return Err(crate::i18n::t_with(
+                "converter_pyro_authkey_size",
+                &[("bytes", &session.auth_key.len().to_string())],
+            ));
         }
 
         Ok(session)
@@ -87,16 +93,22 @@ impl PyroSession {
 
     pub fn to_file(&self, path: &Path) -> Result<(), String> {
         dbg_log!("PyroSession::to_file {:?}", path);
-        if path.exists() { std::fs::remove_file(path).ok(); }
+        if path.exists() {
+            std::fs::remove_file(path).ok();
+        }
 
-        let conn = rusqlite::Connection::open(path)
-            .map_err(|e| crate::i18n::t_with("converter_pyro_create_error", &[("error", &e.to_string())]))?;
+        let conn = rusqlite::Connection::open(path).map_err(|e| {
+            crate::i18n::t_with("converter_pyro_create_error", &[("error", &e.to_string())])
+        })?;
 
-        conn.execute_batch(SCHEMA)
-            .map_err(|e| crate::i18n::t_with("converter_pyro_schema_error", &[("error", &e.to_string())]))?;
+        conn.execute_batch(SCHEMA).map_err(|e| {
+            crate::i18n::t_with("converter_pyro_schema_error", &[("error", &e.to_string())])
+        })?;
 
-        let date = SystemTime::now().duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64).unwrap_or(0);
+        let date = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
 
         conn.execute(
             "INSERT INTO sessions (dc_id, api_id, test_mode, auth_key, date, user_id, is_bot) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -109,7 +121,9 @@ impl PyroSession {
         ).map_err(|e| crate::i18n::t_with("converter_pyro_write_error", &[("error", &e.to_string())]))?;
 
         conn.execute("INSERT INTO version (number) VALUES (3)", [])
-            .map_err(|e| crate::i18n::t_with("converter_pyro_version_error", &[("error", &e.to_string())]))?;
+            .map_err(|e| {
+                crate::i18n::t_with("converter_pyro_version_error", &[("error", &e.to_string())])
+            })?;
 
         Ok(())
     }
@@ -117,9 +131,11 @@ impl PyroSession {
 
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
     let hex = hex.trim();
-    if hex.len() % 2 != 0 { return None; }
+    if hex.len() % 2 != 0 {
+        return None;
+    }
     (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i+2], 16).ok())
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
         .collect()
 }

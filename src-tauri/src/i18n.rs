@@ -1,6 +1,6 @@
-use std::sync::OnceLock;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 static LOCALE: OnceLock<Mutex<String>> = OnceLock::new();
 
@@ -30,11 +30,13 @@ pub fn set_locale(locale: String) {
 pub fn t(key: &str) -> String {
     let locale = get_locale();
     let dict = if locale == "en" { &*EN } else { &*RU };
-    dict.get(key).map(|s| s.to_string()).unwrap_or_else(|| key.to_string())
+    dict.get(key)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| key.to_string())
 }
 
 /// Translate with a single parameter substitution.
-/// `t_with("invited_user", &[("username", "@john")])` 
+/// `t_with("invited_user", &[("username", "@john")])`
 pub fn t_with(key: &str, params: &[(&str, &str)]) -> String {
     let mut result = t(key);
     for (k, v) in params {
@@ -52,7 +54,7 @@ lazy_static::lazy_static! {
         m.insert("stopped_by_user", "Остановлено пользователем");
         m.insert("db_open_error", "открыть БД: {error}");
         m.insert("db_create_tables_error", "создать таблицы: {error}");
-        
+
         // Parser
         m.insert("parser_collected", "собрано: {count}");
         m.insert("parser_group_done", "группа обработана: {name}");
@@ -103,14 +105,14 @@ lazy_static::lazy_static! {
         m.insert("parser_posts_progress", "Постов: {scanned}, с комментами: {with_comments}, собрано: {collected}");
         m.insert("parser_days_limit_short", "Достигнут лимит {days} дней");
         m.insert("parser_posts_total", "Итого постов: {scanned}, с комментариями: {with_comments}, собрано: {collected}");
-        
+
         // Inviter
         m.insert("inviter_invited", "приглашён: {username}");
         m.insert("inviter_added", "добавлен: {username}");
         m.insert("inviter_peer_flood", "PEER_FLOOD: аккаунт остановлен");
         m.insert("inviter_flood_wait", "FLOOD_WAIT {seconds} сек");
         m.insert("inviter_autostop", "автостоп: достигнут лимит ошибок");
-        
+
         // Boost
         m.insert("boost_done", "выполнено: {detail}");
         m.insert("boost_bot_started", "бот запущен: {name}");
@@ -159,12 +161,12 @@ lazy_static::lazy_static! {
         m.insert("boost_left_channel", "{prefix} вышли из канала");
         m.insert("boost_leave_error", "{prefix} ошибка выхода: {error}");
         m.insert("boost_reactions_db_open_error", "открыть БД реакций: {error}");
-        
+
         // Cloner
         m.insert("cloner_copied", "скопировано: пост #{id}");
         m.insert("cloner_skipped", "пропущено: пост #{id}");
         m.insert("cloner_channel_created", "канал создан: {name}");
-        
+
         // Auto-Reply
         m.insert("auto_reply_sent", "ответ отправлен: {username}");
         m.insert("auto_reply_skipped", "пропущено: {reason}");
@@ -199,12 +201,12 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_forward_label", "переслано");
         m.insert("auto_reply_reply_label", "ответ отправлен");
         m.insert("auto_reply_send_error", "ошибка отправки user_id={user_id}: {error}");
-        
+
         // First Comment
         m.insert("first_comment_sent", "комментарий отправлен: {channel}");
         m.insert("first_comment_monitoring", "мониторинг каналов...");
         m.insert("first_comment_new_post", "новый пост в {channel}");
-        
+
         // Reporter
         m.insert("reporter_sent", "репорт отправлен: {target}");
         m.insert("reporter_db_path", "БД: {path}");
@@ -235,12 +237,12 @@ lazy_static::lazy_static! {
         m.insert("reporter_photo_report_error", "ошибка фото-репорт: {error}");
         m.insert("reporter_db_open_error", "открыть БД репортера: {error}");
         m.insert("reporter_db_tables_error", "создать таблицы: {error}");
-        
+
         // Masslooking
         m.insert("masslooking_viewed", "просмотрено: {username}");
         m.insert("masslooking_reacted", "реакция: {username}");
         m.insert("masslooking_replied", "ответ отправлен: {username}");
-        
+
         // Mailing
         m.insert("mailing_sent", "отправлено: {target}");
         m.insert("mailing_ban", "бан на аккаунте");
@@ -273,10 +275,10 @@ lazy_static::lazy_static! {
         m.insert("mailing_total_sent", "итого отправлено: {count}");
         m.insert("mailing_sent_user", "отправлено user_id={user_id}");
         m.insert("mailing_error_user", "ошибка user_id={user_id}: {error}");
-        
+
         // Stories
         m.insert("stories_published", "опубликовано");
-        
+
         // Warmer
         m.insert("warmer_action_done", "действие выполнено: {action}");
         m.insert("warmer_no_accounts", "не выбраны аккаунты");
@@ -353,22 +355,22 @@ lazy_static::lazy_static! {
         m.insert("warmer_cleanup_tag_error", "ошибка удаления временного тега: {error}");
         m.insert("warmer_cleanup_tag_done", "временный тег удалён");
         m.insert("warmer_session_done", "сессия завершена ({count} действий)");
-        
+
         // Channel Creator
         m.insert("channel_created", "создан: {name}");
-        
+
         // Bot Creator
         m.insert("bot_created", "бот создан: {username}");
         m.insert("bot_token", "токен: {token}");
-        
+
         // Global Search
         m.insert("search_found", "новых: {count}");
-        
+
         // Username Checker
         m.insert("username_free", "свободен: {username}");
         m.insert("username_taken", "занят: {username}");
         m.insert("username_fragment", "fragment: {username}");
-        
+
         // Converter
         m.insert("converter_ok", "конвертировано: {path}");
         m.insert("converter_err", "ошибка: {path}");
@@ -1079,7 +1081,7 @@ lazy_static::lazy_static! {
 
         m
     };
-    
+
     static ref EN: HashMap<&'static str, &'static str> = {
         let mut m = HashMap::new();
         // Common
@@ -1088,7 +1090,7 @@ lazy_static::lazy_static! {
         m.insert("stopped_by_user", "Stopped by user");
         m.insert("db_open_error", "open DB: {error}");
         m.insert("db_create_tables_error", "create tables: {error}");
-        
+
         // Parser
         m.insert("parser_collected", "collected: {count}");
         m.insert("parser_group_done", "group processed: {name}");
@@ -1139,14 +1141,14 @@ lazy_static::lazy_static! {
         m.insert("parser_posts_progress", "Posts: {scanned}, with comments: {with_comments}, collected: {collected}");
         m.insert("parser_days_limit_short", "Reached {days} day limit");
         m.insert("parser_posts_total", "Total posts: {scanned}, with comments: {with_comments}, collected: {collected}");
-        
+
         // Inviter
         m.insert("inviter_invited", "invited: {username}");
         m.insert("inviter_added", "added: {username}");
         m.insert("inviter_peer_flood", "PEER_FLOOD: account stopped");
         m.insert("inviter_flood_wait", "FLOOD_WAIT {seconds} sec");
         m.insert("inviter_autostop", "autostop: error limit reached");
-        
+
         // Boost
         m.insert("boost_done", "done: {detail}");
         m.insert("boost_bot_started", "bot started: {name}");
@@ -1195,12 +1197,12 @@ lazy_static::lazy_static! {
         m.insert("boost_left_channel", "{prefix} left channel");
         m.insert("boost_leave_error", "{prefix} leave error: {error}");
         m.insert("boost_reactions_db_open_error", "open reactions DB: {error}");
-        
+
         // Cloner
         m.insert("cloner_copied", "copied: post #{id}");
         m.insert("cloner_skipped", "skipped: post #{id}");
         m.insert("cloner_channel_created", "channel created: {name}");
-        
+
         // Auto-Reply
         m.insert("auto_reply_sent", "reply sent: {username}");
         m.insert("auto_reply_skipped", "skipped: {reason}");
@@ -1235,12 +1237,12 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_forward_label", "forwarded");
         m.insert("auto_reply_reply_label", "reply sent");
         m.insert("auto_reply_send_error", "send error user_id={user_id}: {error}");
-        
+
         // First Comment
         m.insert("first_comment_sent", "comment sent: {channel}");
         m.insert("first_comment_monitoring", "monitoring channels...");
         m.insert("first_comment_new_post", "new post in {channel}");
-        
+
         // Reporter
         m.insert("reporter_sent", "report sent: {target}");
         m.insert("reporter_db_path", "DB: {path}");
@@ -1271,12 +1273,12 @@ lazy_static::lazy_static! {
         m.insert("reporter_photo_report_error", "photo-report error: {error}");
         m.insert("reporter_db_open_error", "open reporter DB: {error}");
         m.insert("reporter_db_tables_error", "create tables: {error}");
-        
+
         // Masslooking
         m.insert("masslooking_viewed", "viewed: {username}");
         m.insert("masslooking_reacted", "reacted: {username}");
         m.insert("masslooking_replied", "replied: {username}");
-        
+
         // Mailing
         m.insert("mailing_sent", "sent: {target}");
         m.insert("mailing_ban", "account banned");
@@ -1309,10 +1311,10 @@ lazy_static::lazy_static! {
         m.insert("mailing_total_sent", "total sent: {count}");
         m.insert("mailing_sent_user", "sent user_id={user_id}");
         m.insert("mailing_error_user", "error user_id={user_id}: {error}");
-        
+
         // Stories
         m.insert("stories_published", "published");
-        
+
         // Warmer
         m.insert("warmer_action_done", "action done: {action}");
         m.insert("warmer_no_accounts", "no accounts selected");
@@ -1389,22 +1391,22 @@ lazy_static::lazy_static! {
         m.insert("warmer_cleanup_tag_error", "temp tag removal error: {error}");
         m.insert("warmer_cleanup_tag_done", "temp tag removed");
         m.insert("warmer_session_done", "session complete ({count} actions)");
-        
+
         // Channel Creator
         m.insert("channel_created", "created: {name}");
-        
+
         // Bot Creator
         m.insert("bot_created", "bot created: {username}");
         m.insert("bot_token", "token: {token}");
-        
+
         // Global Search
         m.insert("search_found", "new: {count}");
-        
+
         // Username Checker
         m.insert("username_free", "free: {username}");
         m.insert("username_taken", "taken: {username}");
         m.insert("username_fragment", "fragment: {username}");
-        
+
         // Converter
         m.insert("converter_ok", "converted: {path}");
         m.insert("converter_err", "error: {path}");

@@ -2,20 +2,20 @@
 // Features: random count per account, 4 entity types, admin assignment,
 // forward messages, spintax, SQLite output, configurable delays, invite links.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use rusqlite;
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+use crate::accounts::commands::get_storage_pub;
+use crate::accounts::connect::connect_account;
+use crate::accounts::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
-use crate::accounts::commands::get_storage_pub;
-use crate::accounts::session::AccountJson;
-use crate::accounts::connect::connect_account;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 #[derive(Deserialize, Clone)]
 pub struct CreateChannelsConfig {
@@ -27,7 +27,7 @@ pub struct CreateChannelsConfig {
 
     pub output_path: String,
 
-    pub title_mode: String,       // "single" | "from_file"
+    pub title_mode: String, // "single" | "from_file"
     pub title_single: String,
     pub title_file_path: String,
 
@@ -37,12 +37,12 @@ pub struct CreateChannelsConfig {
     pub description_file_path: String,
 
     pub set_photo: bool,
-    pub photo_mode: String,       // "single" | "from_folder"
+    pub photo_mode: String, // "single" | "from_folder"
     pub photo_single_path: String,
     pub photo_folder_path: String,
 
     pub set_username: bool,
-    pub username_mode: String,    // "random" | "from_file"
+    pub username_mode: String, // "random" | "from_file"
     pub username_file_path: String,
 
     pub set_profile_channel: bool,
@@ -84,11 +84,16 @@ pub async fn create_channels_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "create_channels".to_string(),
-        t_with("channelcreator_task_name", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "create_channels".to_string(),
+            t_with(
+                "channelcreator_task_name",
+                &[("count", &ids.len().to_string())],
+            ),
+        )
+        .await;
 
     let titles = load_lines(&config.title_file_path);
     let descriptions = load_lines(&config.description_file_path);
@@ -99,21 +104,41 @@ pub async fn create_channels_start(
     let num_accounts = ids.len() as u32;
     let max_total = num_accounts * config.channels_max;
     if config.title_mode == "from_file" && (titles.len() as u32) < max_total {
-        return Err(t_with("channelcreator_not_enough_titles", &[("available", &titles.len().to_string()), ("needed", &max_total.to_string())]));
+        return Err(t_with(
+            "channelcreator_not_enough_titles",
+            &[
+                ("available", &titles.len().to_string()),
+                ("needed", &max_total.to_string()),
+            ],
+        ));
     }
-    if config.set_username && config.username_mode == "from_file" && (usernames.len() as u32) < max_total {
-        return Err(t_with("channelcreator_not_enough_usernames", &[("available", &usernames.len().to_string()), ("needed", &max_total.to_string())]));
+    if config.set_username
+        && config.username_mode == "from_file"
+        && (usernames.len() as u32) < max_total
+    {
+        return Err(t_with(
+            "channelcreator_not_enough_usernames",
+            &[
+                ("available", &usernames.len().to_string()),
+                ("needed", &max_total.to_string()),
+            ],
+        ));
     }
 
     // init SQLite
     let output_path = resolve_output_path(&config.output_path);
     if let Some(parent) = output_path.parent() {
-        if !parent.as_os_str().is_empty() { std::fs::create_dir_all(parent).ok(); }
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).ok();
+        }
     }
     let db = init_db(&output_path)?;
     let db = Arc::new(tokio::sync::Mutex::new(db));
 
-    let _ = app.emit("create-channels-log", format!("DB: {}", output_path.display()));
+    let _ = app.emit(
+        "create-channels-log",
+        format!("DB: {}", output_path.display()),
+    );
 
     let config = Arc::new(config);
     let titles = Arc::new(titles);
@@ -128,7 +153,9 @@ pub async fn create_channels_start(
         let mut handles = Vec::new();
 
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
 
             let config = config.clone();
             let titles = titles.clone();
@@ -142,21 +169,39 @@ pub async fn create_channels_start(
             let token_clone = token.clone();
 
             handles.push(tokio::spawn(async move {
-                if !token_clone.load(Ordering::Relaxed) { return; }
+                if !token_clone.load(Ordering::Relaxed) {
+                    return;
+                }
                 let result = process_create_channels(
-                    &id, i + 1, total, &config,
-                    &titles, &descriptions, &usernames, &photos,
-                    &title_idx, &username_idx, &db_clone, &app_clone, &token_clone,
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    &titles,
+                    &descriptions,
+                    &usernames,
+                    &photos,
+                    &title_idx,
+                    &username_idx,
+                    &db_clone,
+                    &app_clone,
+                    &token_clone,
                     max_flood_wait,
-                ).await;
+                )
+                .await;
                 if let Err(e) = result {
                     crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                    let _ = app_clone.emit("create-channels-log", format!("[{}/{}] {}: {}", i + 1, total, t("error"), e));
+                    let _ = app_clone.emit(
+                        "create-channels-log",
+                        format!("[{}/{}] {}: {}", i + 1, total, t("error"), e),
+                    );
                 }
             }));
         }
 
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
         let _ = app.emit("create-channels-log", t("done"));
         let queue: tauri::State<'_, TaskQueue> = app.state();
         queue.finish_task(&task_id, true).await;
@@ -173,8 +218,10 @@ pub async fn create_channels_stop(task_id: String, app: tauri::AppHandle) -> Res
 }
 
 fn init_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, String> {
-    let conn = rusqlite::Connection::open(path).map_err(|e| t_with("channelcreator_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    let conn = rusqlite::Connection::open(path)
+        .map_err(|e| t_with("channelcreator_db_open_error", &[("error", &e.to_string())]))?;
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         CREATE TABLE IF NOT EXISTS channels (
@@ -189,7 +236,14 @@ fn init_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, String> {
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
         CREATE INDEX IF NOT EXISTS idx_channels_status ON channels(status);
-    ").map_err(|e| t_with("channelcreator_db_tables_error", &[("error", &e.to_string())]))?;
+    ",
+    )
+    .map_err(|e| {
+        t_with(
+            "channelcreator_db_tables_error",
+            &[("error", &e.to_string())],
+        )
+    })?;
     Ok(conn)
 }
 
@@ -209,7 +263,9 @@ async fn process_create_channels(
     token: &Arc<AtomicBool>,
     max_flood_wait: u64,
 ) -> Result<(), String> {
-    let emit = |msg: String| { let _ = app.emit("create-channels-log", msg); };
+    let emit = |msg: String| {
+        let _ = app.emit("create-channels-log", msg);
+    };
 
     let mut client = connect_account(id).await?;
     client.set_log_target("create-channels-log", app.clone());
@@ -217,15 +273,25 @@ async fn process_create_channels(
 
     let storage = get_storage_pub();
     let json_path = storage.json_path(id);
-    let json = if json_path.exists() { AccountJson::from_file(&json_path).unwrap_or_default() } else { AccountJson::default() };
+    let json = if json_path.exists() {
+        AccountJson::from_file(&json_path).unwrap_or_default()
+    } else {
+        AccountJson::default()
+    };
     let phone = json.phone.clone();
-    let prefix = format!("[{}/{}] +{}", idx, total, if phone.is_empty() { "?" } else { &phone });
+    let prefix = format!(
+        "[{}/{}] +{}",
+        idx,
+        total,
+        if phone.is_empty() { "?" } else { &phone }
+    );
 
     // determine channel count for this account
     let channels_count = if config.channels_min == config.channels_max {
         config.channels_min
     } else {
-        config.channels_min + (rand::random::<u32>() % (config.channels_max - config.channels_min + 1))
+        config.channels_min
+            + (rand::random::<u32>() % (config.channels_max - config.channels_min + 1))
     };
 
     // determine entity type flags
@@ -233,11 +299,25 @@ async fn process_create_channels(
     let is_megagroup = config.channel_type.contains("group");
     let is_public = config.channel_type.contains("public");
 
-    let entity_type = if is_broadcast { t("channelcreator_entity_channels") } else { t("channelcreator_entity_groups") };
-    emit(t_with("channelcreator_creating", &[("prefix", &prefix), ("count", &channels_count.to_string()), ("entity_type", &entity_type), ("channel_type", &config.channel_type)]));
+    let entity_type = if is_broadcast {
+        t("channelcreator_entity_channels")
+    } else {
+        t("channelcreator_entity_groups")
+    };
+    emit(t_with(
+        "channelcreator_creating",
+        &[
+            ("prefix", &prefix),
+            ("count", &channels_count.to_string()),
+            ("entity_type", &entity_type),
+            ("channel_type", &config.channel_type),
+        ],
+    ));
 
     for ch_idx in 0..channels_count {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
 
         // configurable delay between channels
         if ch_idx > 0 && (config.delay_min > 0 || config.delay_max > 0) {
@@ -251,46 +331,78 @@ async fn process_create_channels(
         let title = spin_text(&match config.title_mode.as_str() {
             "from_file" => {
                 let i = title_idx.fetch_add(1, Ordering::Relaxed);
-                if i >= titles.len() { emit(t_with("channelcreator_titles_exhausted", &[("prefix", &prefix)])); break; }
+                if i >= titles.len() {
+                    emit(t_with(
+                        "channelcreator_titles_exhausted",
+                        &[("prefix", &prefix)],
+                    ));
+                    break;
+                }
                 titles[i].clone()
             }
             _ => config.title_single.clone(),
         });
 
-        emit(t_with("channelcreator_creating_title", &[("prefix", &prefix), ("idx", &(ch_idx + 1).to_string()), ("total", &channels_count.to_string()), ("title", &title)]));
+        emit(t_with(
+            "channelcreator_creating_title",
+            &[
+                ("prefix", &prefix),
+                ("idx", &(ch_idx + 1).to_string()),
+                ("total", &channels_count.to_string()),
+                ("title", &title),
+            ],
+        ));
 
         // description (with spintax)
         let about_arg = if config.set_description {
             spin_text(&match config.description_mode.as_str() {
                 "from_file" => {
-                    if descriptions.is_empty() { String::new() }
-                    else { descriptions[rand::random::<usize>() % descriptions.len()].clone() }
+                    if descriptions.is_empty() {
+                        String::new()
+                    } else {
+                        descriptions[rand::random::<usize>() % descriptions.len()].clone()
+                    }
                 }
                 _ => config.description_single.clone(),
             })
-        } else { String::new() };
+        } else {
+            String::new()
+        };
 
         // create channel/group
         let create_req = tl::build_create_channel(&title, &about_arg, is_broadcast, is_megagroup);
-        let create_resp = client.invoke(&create_req).await
+        let create_resp = client
+            .invoke(&create_req)
+            .await
             .map_err(|e| format!("create_channel: {e}"))?;
-        let (channel_id, access_hash) = tl::parse_created_channel(&create_resp)
-            .map_err(|e| format!("parse_channel: {e}"))?;
+        let (channel_id, access_hash) =
+            tl::parse_created_channel(&create_resp).map_err(|e| format!("parse_channel: {e}"))?;
 
-        emit(t_with("channelcreator_created_id", &[("prefix", &prefix), ("id", &channel_id.to_string())]));
+        emit(t_with(
+            "channelcreator_created_id",
+            &[("prefix", &prefix), ("id", &channel_id.to_string())],
+        ));
 
         // set photo
         if config.set_photo {
             let photo_path = match config.photo_mode.as_str() {
                 "single" => Some(config.photo_single_path.clone()),
                 _ => {
-                    if photos.is_empty() { None }
-                    else { Some(photos[rand::random::<usize>() % photos.len()].clone()) }
+                    if photos.is_empty() {
+                        None
+                    } else {
+                        Some(photos[rand::random::<usize>() % photos.len()].clone())
+                    }
                 }
             };
             if let Some(pp) = photo_path {
-                if let Err(e) = upload_and_set_photo(&mut client, channel_id, access_hash, &pp, token).await {
-                    emit(t_with("channelcreator_photo_error", &[("prefix", &prefix), ("error", &e)]));
+                if let Err(e) =
+                    upload_and_set_photo(&mut client, channel_id, access_hash, &pp, token).await
+                {
+                    emit(t_with(
+                        "channelcreator_photo_error",
+                        &[("prefix", &prefix), ("error", &e)],
+                    ));
                 }
             }
         }
@@ -298,12 +410,28 @@ async fn process_create_channels(
         // set username (makes public) or get invite link (private)
         let mut channel_link = String::new();
         if is_public && config.set_username {
-            match try_set_channel_username(&mut client, channel_id, access_hash, config, usernames_list, username_idx, token).await {
+            match try_set_channel_username(
+                &mut client,
+                channel_id,
+                access_hash,
+                config,
+                usernames_list,
+                username_idx,
+                token,
+            )
+            .await
+            {
                 Ok(uname) => {
-                    emit(t_with("channelcreator_username_set", &[("prefix", &prefix), ("username", &uname)]));
+                    emit(t_with(
+                        "channelcreator_username_set",
+                        &[("prefix", &prefix), ("username", &uname)],
+                    ));
                     channel_link = format!("https://t.me/{}", uname);
                 }
-                Err(e) => emit(t_with("channelcreator_username_error", &[("prefix", &prefix), ("error", &e)])),
+                Err(e) => emit(t_with(
+                    "channelcreator_username_error",
+                    &[("prefix", &prefix), ("error", &e)],
+                )),
             }
         }
 
@@ -316,7 +444,10 @@ async fn process_create_channels(
                         channel_link = link;
                     }
                 }
-                Err(e) => emit(t_with("channelcreator_invite_error", &[("prefix", &prefix), ("error", &e.to_string())])),
+                Err(e) => emit(t_with(
+                    "channelcreator_invite_error",
+                    &[("prefix", &prefix), ("error", &e.to_string())],
+                )),
             }
         }
 
@@ -324,7 +455,10 @@ async fn process_create_channels(
         if config.set_profile_channel && ch_idx == 0 && is_public {
             let req = tl::build_update_personal_channel(channel_id, access_hash);
             if let Err(e) = client.invoke(&req).await {
-                emit(t_with("channelcreator_profile_error", &[("prefix", &prefix), ("error", &e.to_string())]));
+                emit(t_with(
+                    "channelcreator_profile_error",
+                    &[("prefix", &prefix), ("error", &e.to_string())],
+                ));
             }
         }
 
@@ -333,11 +467,17 @@ async fn process_create_channels(
             let admin_usernames = parse_admin_usernames(&config.admin_ids);
             for username in &admin_usernames {
                 match resolve_and_add_admin(&mut client, channel_id, access_hash, username).await {
-                    Ok(()) => {},
+                    Ok(()) => {}
                     Err(e) => {
-                        emit(t_with("channelcreator_admin_error", &[("prefix", &prefix), ("username", username), ("error", &e)]));
+                        emit(t_with(
+                            "channelcreator_admin_error",
+                            &[("prefix", &prefix), ("username", username), ("error", &e)],
+                        ));
                         // Stop trying admins on this account if restricted
-                        if e.contains("USER_PRIVACY_RESTRICTED") || e.contains("USER_RESTRICTED") || e.contains("CHAT_ADMIN_REQUIRED") {
+                        if e.contains("USER_PRIVACY_RESTRICTED")
+                            || e.contains("USER_RESTRICTED")
+                            || e.contains("CHAT_ADMIN_REQUIRED")
+                        {
                             break;
                         }
                     }
@@ -353,17 +493,42 @@ async fn process_create_channels(
                 "forward" => {
                     // forward from another channel
                     if !config.post_forward_link.is_empty() {
-                        match forward_post(&mut client, channel_id, access_hash, &config.post_forward_link).await {
-                            Ok(_) => { message_sent = format!("fwd:{}", config.post_forward_link); }
-                            Err(e) => emit(t_with("channelcreator_forward_error", &[("prefix", &prefix), ("error", &e)])),
+                        match forward_post(
+                            &mut client,
+                            channel_id,
+                            access_hash,
+                            &config.post_forward_link,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                message_sent = format!("fwd:{}", config.post_forward_link);
+                            }
+                            Err(e) => emit(t_with(
+                                "channelcreator_forward_error",
+                                &[("prefix", &prefix), ("error", &e)],
+                            )),
                         }
                     }
                 }
                 "image" => {
                     // send image with optional caption
                     let caption = spin_text(&config.post_text);
-                    if let Err(e) = publish_post(&mut client, channel_id, access_hash, &caption, &config.post_image_path, &config.post_video_path, token).await {
-                        emit(t_with("channelcreator_post_error", &[("prefix", &prefix), ("error", &e)]));
+                    if let Err(e) = publish_post(
+                        &mut client,
+                        channel_id,
+                        access_hash,
+                        &caption,
+                        &config.post_image_path,
+                        &config.post_video_path,
+                        token,
+                    )
+                    .await
+                    {
+                        emit(t_with(
+                            "channelcreator_post_error",
+                            &[("prefix", &prefix), ("error", &e)],
+                        ));
                     } else {
                         message_sent = caption;
                     }
@@ -381,8 +546,21 @@ async fn process_create_channels(
                         spin_text(&config.post_text)
                     };
                     if !post_text.is_empty() {
-                        if let Err(e) = publish_post(&mut client, channel_id, access_hash, &post_text, "", "", token).await {
-                            emit(t_with("channelcreator_post_error", &[("prefix", &prefix), ("error", &e)]));
+                        if let Err(e) = publish_post(
+                            &mut client,
+                            channel_id,
+                            access_hash,
+                            &post_text,
+                            "",
+                            "",
+                            token,
+                        )
+                        .await
+                        {
+                            emit(t_with(
+                                "channelcreator_post_error",
+                                &[("prefix", &prefix), ("error", &e)],
+                            ));
                         } else {
                             message_sent = post_text;
                         }
@@ -419,21 +597,36 @@ async fn forward_post(
 ) -> Result<(), String> {
     // parse t.me/channel/123 format
     let (source_username, msg_id) = crate::mtproto::text_parse::parse_post_link(forward_link)
-        .ok_or_else(|| t_with("channelcreator_forward_link_error", &[("link", forward_link)]))?;
+        .ok_or_else(|| {
+            t_with(
+                "channelcreator_forward_link_error",
+                &[("link", forward_link)],
+            )
+        })?;
 
     // resolve source channel
     let resolve_req = tl::build_resolve_username(&source_username);
-    let resolve_data = client.invoke(&resolve_req).await
+    let resolve_data = client
+        .invoke(&resolve_req)
+        .await
         .map_err(|e| format!("resolve source: {e}"))?;
-    let (from_id, from_hash) = tl::parse_resolved_peer(&resolve_data)
-        .map_err(|e| format!("parse source peer: {e}"))?;
+    let (from_id, from_hash) =
+        tl::parse_resolved_peer(&resolve_data).map_err(|e| format!("parse source peer: {e}"))?;
 
     let fwd_req = tl::build_forward_messages(
-        from_id, from_hash,
-        to_channel_id, to_access_hash,
-        &[msg_id], false, false, false,
+        from_id,
+        from_hash,
+        to_channel_id,
+        to_access_hash,
+        &[msg_id],
+        false,
+        false,
+        false,
     );
-    client.invoke(&fwd_req).await.map_err(|e| format!("forward: {e}"))?;
+    client
+        .invoke(&fwd_req)
+        .await
+        .map_err(|e| format!("forward: {e}"))?;
     Ok(())
 }
 
@@ -446,7 +639,9 @@ async fn resolve_and_add_admin(
     username: &str,
 ) -> Result<(), String> {
     let resolve_req = tl::build_resolve_username(username);
-    let resolve_data = client.invoke(&resolve_req).await
+    let resolve_data = client
+        .invoke(&resolve_req)
+        .await
         .map_err(|e| format!("resolve @{}: {e}", username))?;
     let (user_id, user_hash) = tl::parse_resolved_peer(&resolve_data)
         .map_err(|e| format!("parse resolve @{}: {e}", username))?;
@@ -454,15 +649,20 @@ async fn resolve_and_add_admin(
     let channel = tl_gen::serialize_input_channel(channel_id, channel_access_hash);
     let user = tl_gen::serialize_input_user(user_id, user_hash);
     let rights = tl_gen::serialize_chatAdminRights(
-        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false, false, false,
+        true, true, true, true, true, true, true, true, true, true, true, true, true, true, true,
+        false, false, false,
     );
     let req = tl_gen::build_channels_editAdmin(&channel, &user, &rights, None);
-    client.invoke(&req).await.map_err(|e| format!("editAdmin @{}: {e}", username))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("editAdmin @{}: {e}", username))?;
     Ok(())
 }
 
 fn parse_admin_usernames(input: &str) -> Vec<String> {
-    input.split(',')
+    input
+        .split(',')
         .map(|s| s.trim().trim_start_matches('@').to_string())
         .filter(|s| !s.is_empty())
         .collect()
@@ -476,53 +676,99 @@ async fn rate_limit() {
 }
 
 async fn upload_and_set_photo(
-    client: &mut MtpClient, channel_id: i64, access_hash: i64, photo_path: &str, token: &Arc<AtomicBool>,
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+    photo_path: &str,
+    token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    let data = tokio::fs::read(photo_path).await.map_err(|e| format!("read photo: {e}"))?;
+    let data = tokio::fs::read(photo_path)
+        .await
+        .map_err(|e| format!("read photo: {e}"))?;
     let file_id = rand::random::<i64>();
     let part_size = 512 * 1024;
     let total_parts = ((data.len() + part_size - 1) / part_size) as i32;
     for i in 0..total_parts {
-        if !token.load(Ordering::Relaxed) { return Ok(()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let start = i as usize * part_size;
         let end = ((i as usize + 1) * part_size).min(data.len());
         let req = tl::build_upload_save_file_part(file_id, i, &data[start..end]);
-        client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", i))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload part {}: {e}", i))?;
         rate_limit().await;
     }
-    let filename = std::path::Path::new(photo_path).file_name().and_then(|n| n.to_str()).unwrap_or("photo.jpg");
-    let edit_req = tl::build_channel_edit_photo_uploaded(channel_id, access_hash, file_id, total_parts, filename);
-    client.invoke(&edit_req).await.map_err(|e| format!("editPhoto: {e}"))?;
+    let filename = std::path::Path::new(photo_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("photo.jpg");
+    let edit_req = tl::build_channel_edit_photo_uploaded(
+        channel_id,
+        access_hash,
+        file_id,
+        total_parts,
+        filename,
+    );
+    client
+        .invoke(&edit_req)
+        .await
+        .map_err(|e| format!("editPhoto: {e}"))?;
     Ok(())
 }
 
 async fn try_set_channel_username(
-    client: &mut MtpClient, channel_id: i64, access_hash: i64,
-    config: &CreateChannelsConfig, usernames_list: &[String],
-    username_idx: &AtomicUsize, token: &Arc<AtomicBool>,
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+    config: &CreateChannelsConfig,
+    usernames_list: &[String],
+    username_idx: &AtomicUsize,
+    token: &Arc<AtomicBool>,
 ) -> Result<String, String> {
     for _ in 0..5 {
-        if !token.load(Ordering::Relaxed) { return Ok(String::new()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(String::new());
+        }
         let candidate = match config.username_mode.as_str() {
             "from_file" => {
                 let i = username_idx.fetch_add(1, Ordering::Relaxed);
-                if i >= usernames_list.len() { return Err(t("channelcreator_usernames_exhausted")); }
+                if i >= usernames_list.len() {
+                    return Err(t("channelcreator_usernames_exhausted"));
+                }
                 sanitize_username(&usernames_list[i])
             }
             _ => generate_random_channel_username(),
         };
-        if candidate.len() < 5 { continue; }
+        if candidate.len() < 5 {
+            continue;
+        }
 
         let check_req = tl::build_channel_check_username(channel_id, access_hash, &candidate);
-        let resp = client.invoke(&check_req).await.map_err(|e| format!("checkUsername: {e}"))?;
+        let resp = client
+            .invoke(&check_req)
+            .await
+            .map_err(|e| format!("checkUsername: {e}"))?;
         rate_limit().await;
-        if resp.len() < 4 { continue; }
-        if u32::from_le_bytes([resp[0], resp[1], resp[2], resp[3]]) != tl_gen::BOOL_TRUE { continue; }
+        if resp.len() < 4 {
+            continue;
+        }
+        if u32::from_le_bytes([resp[0], resp[1], resp[2], resp[3]]) != tl_gen::BOOL_TRUE {
+            continue;
+        }
 
         let upd_req = tl::build_channel_update_username(channel_id, access_hash, &candidate);
-        let upd_resp = client.invoke(&upd_req).await.map_err(|e| format!("updateUsername: {e}"))?;
+        let upd_resp = client
+            .invoke(&upd_req)
+            .await
+            .map_err(|e| format!("updateUsername: {e}"))?;
         rate_limit().await;
-        if upd_resp.len() >= 4 && u32::from_le_bytes([upd_resp[0], upd_resp[1], upd_resp[2], upd_resp[3]]) == tl_gen::BOOL_TRUE {
+        if upd_resp.len() >= 4
+            && u32::from_le_bytes([upd_resp[0], upd_resp[1], upd_resp[2], upd_resp[3]])
+                == tl_gen::BOOL_TRUE
+        {
             return Ok(candidate);
         }
     }
@@ -530,55 +776,122 @@ async fn try_set_channel_username(
 }
 
 async fn publish_post(
-    client: &mut MtpClient, channel_id: i64, access_hash: i64,
-    markdown_text: &str, image_path: &str, video_path: &str, token: &Arc<AtomicBool>,
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+    markdown_text: &str,
+    image_path: &str,
+    video_path: &str,
+    token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let (text, entities) = tl::parse_markdown_v2(markdown_text);
     let random_id: i64 = rand::random();
 
     let req = if !image_path.is_empty() {
-        let data = tokio::fs::read(image_path).await.map_err(|e| format!("read image: {e}"))?;
+        let data = tokio::fs::read(image_path)
+            .await
+            .map_err(|e| format!("read image: {e}"))?;
         let file_id = rand::random::<i64>();
         let part_size = 512 * 1024;
         let total_parts = ((data.len() + part_size - 1) / part_size) as i32;
         for i in 0..total_parts {
-            if !token.load(Ordering::Relaxed) { return Ok(()); }
+            if !token.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let start = i as usize * part_size;
             let end = ((i as usize + 1) * part_size).min(data.len());
             let req = tl::build_upload_save_file_part(file_id, i, &data[start..end]);
-            client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", i))?;
+            client
+                .invoke(&req)
+                .await
+                .map_err(|e| format!("upload part {}: {e}", i))?;
             rate_limit().await;
         }
-        let filename = std::path::Path::new(image_path).file_name().and_then(|n| n.to_str()).unwrap_or("photo.jpg");
-        tl::build_send_media_uploaded_photo(channel_id, access_hash, file_id, total_parts, filename, &text, &entities, random_id)
+        let filename = std::path::Path::new(image_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("photo.jpg");
+        tl::build_send_media_uploaded_photo(
+            channel_id,
+            access_hash,
+            file_id,
+            total_parts,
+            filename,
+            &text,
+            &entities,
+            random_id,
+        )
     } else if !video_path.is_empty() {
-        let data = tokio::fs::read(video_path).await.map_err(|e| format!("read video: {e}"))?;
+        let data = tokio::fs::read(video_path)
+            .await
+            .map_err(|e| format!("read video: {e}"))?;
         let file_id = rand::random::<i64>();
         let part_size = 512 * 1024;
         let total_parts = ((data.len() + part_size - 1) / part_size) as i32;
         let is_big = data.len() >= 10 * 1024 * 1024;
         for i in 0..total_parts {
-            if !token.load(Ordering::Relaxed) { return Ok(()); }
+            if !token.load(Ordering::Relaxed) {
+                return Ok(());
+            }
             let start = i as usize * part_size;
             let end = ((i as usize + 1) * part_size).min(data.len());
-            let req = if is_big { tl_gen::build_upload_saveBigFilePart(file_id, i, total_parts, &data[start..end]) }
-                      else { tl_gen::build_upload_saveFilePart(file_id, i, &data[start..end]) };
-            client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", i))?;
+            let req = if is_big {
+                tl_gen::build_upload_saveBigFilePart(file_id, i, total_parts, &data[start..end])
+            } else {
+                tl_gen::build_upload_saveFilePart(file_id, i, &data[start..end])
+            };
+            client
+                .invoke(&req)
+                .await
+                .map_err(|e| format!("upload part {}: {e}", i))?;
             rate_limit().await;
         }
-        let filename = std::path::Path::new(video_path).file_name().and_then(|n| n.to_str()).unwrap_or("video.mp4");
-        let input_file = if is_big { tl_gen::serialize_inputFileBig(file_id, total_parts, filename) }
-                         else { tl_gen::serialize_inputFile(file_id, total_parts, filename, "") };
-        let video_attr = tl_gen::serialize_documentAttributeVideo(false, true, false, 0.0, 0, 0, None, None, None);
+        let filename = std::path::Path::new(video_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("video.mp4");
+        let input_file = if is_big {
+            tl_gen::serialize_inputFileBig(file_id, total_parts, filename)
+        } else {
+            tl_gen::serialize_inputFile(file_id, total_parts, filename, "")
+        };
+        let video_attr = tl_gen::serialize_documentAttributeVideo(
+            false, true, false, 0.0, 0, 0, None, None, None,
+        );
         let filename_attr = tl_gen::serialize_documentAttributeFilename(filename);
         let attrs: &[&[u8]] = &[&video_attr, &filename_attr];
-        let media = tl_gen::serialize_inputMediaUploadedDocument(false, false, false, &input_file, None, "video/mp4", attrs, None, None, None, None);
+        let media = tl_gen::serialize_inputMediaUploadedDocument(
+            false,
+            false,
+            false,
+            &input_file,
+            None,
+            "video/mp4",
+            attrs,
+            None,
+            None,
+            None,
+            None,
+        );
         let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
-        tl_gen::build_messages_sendMedia(false, false, false, false, false, false, false, &peer, None, &media, &text, random_id, None, None, None, None, None, None, None, None, None)
+        tl_gen::build_messages_sendMedia(
+            false, false, false, false, false, false, false, &peer, None, &media, &text, random_id,
+            None, None, None, None, None, None, None, None, None,
+        )
     } else {
-        tl::build_send_message_with_entities(channel_id, access_hash, true, &text, &entities, random_id)
+        tl::build_send_message_with_entities(
+            channel_id,
+            access_hash,
+            true,
+            &text,
+            &entities,
+            random_id,
+        )
     };
-    client.invoke(&req).await.map_err(|e| format!("send post: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("send post: {e}"))?;
     Ok(())
 }
 
@@ -591,7 +904,11 @@ fn spin_text(input: &str) -> String {
             if let Some(end) = result[start..].find('}') {
                 let end = start + end;
                 let options: Vec<&str> = result[start + 1..end].split('|').collect();
-                let choice = if options.is_empty() { String::new() } else { options[rand::random::<usize>() % options.len()].to_string() };
+                let choice = if options.is_empty() {
+                    String::new()
+                } else {
+                    options[rand::random::<usize>() % options.len()].to_string()
+                };
                 result = format!("{}{}{}", &result[..start], choice, &result[end + 1..]);
                 continue;
             }
@@ -602,10 +919,14 @@ fn spin_text(input: &str) -> String {
 }
 
 fn random_delay(min: u32, max: u32) -> u32 {
-    if min == 0 && max == 0 { return 0; }
+    if min == 0 && max == 0 {
+        return 0;
+    }
     let lo = min.min(max);
     let hi = min.max(max);
-    if lo == hi { return lo; }
+    if lo == hi {
+        return lo;
+    }
     lo + (rand::random::<u32>() % (hi - lo + 1))
 }
 
@@ -625,9 +946,14 @@ fn generate_random_channel_username() -> String {
 }
 
 fn sanitize_username(input: &str) -> String {
-    let mut out: String = input.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+    let mut out: String = input
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .collect();
     out.make_ascii_lowercase();
-    if out.len() > 32 { out.truncate(32); }
+    if out.len() > 32 {
+        out.truncate(32);
+    }
     out
 }
 
@@ -635,25 +961,54 @@ fn resolve_output_path(user_path: &str) -> std::path::PathBuf {
     let trimmed = user_path.trim();
     if !trimmed.is_empty() {
         let p = std::path::PathBuf::from(trimmed);
-        return if p.extension().map(|e| e == "db").unwrap_or(false) { p } else { p.with_extension("db") };
+        return if p.extension().map(|e| e == "db").unwrap_or(false) {
+            p
+        } else {
+            p.with_extension("db")
+        };
     }
-    let base = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("kastor").join("create_channels");
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let base = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("kastor")
+        .join("create_channels");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     base.join(format!("channels_{now}.db"))
 }
 
 fn load_lines(path: &str) -> Vec<String> {
-    if path.is_empty() { return Vec::new(); }
-    std::fs::read_to_string(path).unwrap_or_default()
-        .lines().map(|l| l.trim().trim_start_matches('@').to_string())
-        .filter(|l| !l.is_empty()).collect()
+    if path.is_empty() {
+        return Vec::new();
+    }
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().trim_start_matches('@').to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 fn load_photo_paths(folder: &str) -> Vec<String> {
-    if folder.is_empty() { return Vec::new(); }
-    std::fs::read_dir(folder).ok()
-        .map(|entries| entries.flatten()
-            .filter(|e| { let p = e.path(); p.is_file() && matches!(p.extension().and_then(|x| x.to_str()).unwrap_or(""), "jpg"|"jpeg"|"png"|"webp") })
-            .map(|e| e.path().to_string_lossy().to_string()).collect())
+    if folder.is_empty() {
+        return Vec::new();
+    }
+    std::fs::read_dir(folder)
+        .ok()
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|e| {
+                    let p = e.path();
+                    p.is_file()
+                        && matches!(
+                            p.extension().and_then(|x| x.to_str()).unwrap_or(""),
+                            "jpg" | "jpeg" | "png" | "webp"
+                        )
+                })
+                .map(|e| e.path().to_string_lossy().to_string())
+                .collect()
+        })
         .unwrap_or_default()
 }

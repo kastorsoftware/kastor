@@ -2,8 +2,8 @@
 // each account runs in its own task with randomized action order and delays.
 
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use rand::Rng;
@@ -12,19 +12,21 @@ use serde::Deserialize;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::accounts::connect::connect_account;
 use crate::accounts::commands::get_storage_pub;
+use crate::accounts::connect::connect_account;
 use crate::accounts::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 async fn interruptible_sleep(ms: u64, token: &Arc<AtomicBool>) {
     let mut remaining = ms;
     while remaining > 0 {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = remaining.min(200);
         tokio::time::sleep(Duration::from_millis(chunk)).await;
         remaining -= chunk;
@@ -34,19 +36,63 @@ async fn interruptible_sleep(ms: u64, token: &Arc<AtomicBool>) {
 mod words;
 
 const REACTION_EMOJIS: &[&str] = &[
-    "\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F525}", "\u{1F44F}",
-    "\u{1F60D}", "\u{1F929}", "\u{1F64F}", "\u{1F4AF}",
+    "\u{1F44D}",
+    "\u{2764}\u{FE0F}",
+    "\u{1F525}",
+    "\u{1F44F}",
+    "\u{1F60D}",
+    "\u{1F929}",
+    "\u{1F64F}",
+    "\u{1F4AF}",
 ];
 
 const MESSAGE_EMOJIS: &[&str] = &[
-    "\u{1F60A}", "\u{1F44D}", "\u{1F600}", "\u{263A}", "\u{1F913}", "\u{1F601}",
-    "\u{1F44C}", "\u{1F9D0}", "\u{1F648}", "\u{1F60C}", "\u{1F609}", "\u{1F447}",
-    "\u{1F449}", "\u{1F603}", "\u{1F604}", "\u{1F605}", "\u{1F643}", "\u{1F642}",
-    "\u{1F60E}", "\u{1F60F}", "\u{1F914}", "\u{1F92D}", "\u{1F450}", "\u{1F91D}",
-    "\u{1F91F}", "\u{270C}\u{FE0F}", "\u{270B}", "\u{1F64F}", "\u{1F430}",
-    "\u{1F439}", "\u{1F42D}", "\u{1F431}", "\u{1F42F}", "\u{1F981}", "\u{1F42E}",
-    "\u{1F437}", "\u{1F649}", "\u{1F435}", "\u{1F64A}", "\u{1F436}", "\u{2600}\u{FE0F}",
-    "\u{1F697}", "\u{1F695}", "\u{1F699}", "\u{2705}", "\u{1F4B2}",
+    "\u{1F60A}",
+    "\u{1F44D}",
+    "\u{1F600}",
+    "\u{263A}",
+    "\u{1F913}",
+    "\u{1F601}",
+    "\u{1F44C}",
+    "\u{1F9D0}",
+    "\u{1F648}",
+    "\u{1F60C}",
+    "\u{1F609}",
+    "\u{1F447}",
+    "\u{1F449}",
+    "\u{1F603}",
+    "\u{1F604}",
+    "\u{1F605}",
+    "\u{1F643}",
+    "\u{1F642}",
+    "\u{1F60E}",
+    "\u{1F60F}",
+    "\u{1F914}",
+    "\u{1F92D}",
+    "\u{1F450}",
+    "\u{1F91D}",
+    "\u{1F91F}",
+    "\u{270C}\u{FE0F}",
+    "\u{270B}",
+    "\u{1F64F}",
+    "\u{1F430}",
+    "\u{1F439}",
+    "\u{1F42D}",
+    "\u{1F431}",
+    "\u{1F42F}",
+    "\u{1F981}",
+    "\u{1F42E}",
+    "\u{1F437}",
+    "\u{1F649}",
+    "\u{1F435}",
+    "\u{1F64A}",
+    "\u{1F436}",
+    "\u{2600}\u{FE0F}",
+    "\u{1F697}",
+    "\u{1F695}",
+    "\u{1F699}",
+    "\u{2705}",
+    "\u{1F4B2}",
 ];
 
 /// Returns a random emoji suffix (sometimes none, sometimes one, sometimes two)
@@ -106,11 +152,15 @@ pub struct WarmerConfig {
     pub max_flood_wait: u64, // 0 = unlimited
 }
 
-fn default_flood_wait() -> u64 { 60 }
+fn default_flood_wait() -> u64 {
+    60
+}
 
 impl WarmerConfig {
     fn is_enabled(&self, action: &str) -> bool {
-        if self.do_all { return true; }
+        if self.do_all {
+            return true;
+        }
         match action {
             "search" => self.search_random_words,
             "read_channels" => self.read_random_channels,
@@ -178,13 +228,18 @@ async fn run(
     token: Arc<AtomicBool>,
 ) {
     let num = ids.len();
-    emit(app, t_with("warmer_starting", &[("count", &num.to_string())]));
+    emit(
+        app,
+        t_with("warmer_starting", &[("count", &num.to_string())]),
+    );
 
     let shared_peers: SharedPeers = Arc::new(TokioMutex::new(Vec::new()));
 
     let mut handles = Vec::new();
     for (i, id) in ids.iter().enumerate() {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let id = id.clone();
         let cfg = cfg.clone();
         let app_clone = app.clone();
@@ -196,15 +251,28 @@ async fn run(
             if stagger_ms > 0 {
                 interruptible_sleep(stagger_ms, &token_clone).await;
             }
-            let result = warm_account(&id, i + 1, num, &cfg, &app_clone, &token_clone, &peers).await;
+            let result =
+                warm_account(&id, i + 1, num, &cfg, &app_clone, &token_clone, &peers).await;
             if let Err(e) = result {
                 crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                let _ = app_clone.emit("warmer-log", t_with("warmer_acc_error", &[("idx", &(i+1).to_string()), ("total", &num.to_string()), ("error", &e)]));
+                let _ = app_clone.emit(
+                    "warmer-log",
+                    t_with(
+                        "warmer_acc_error",
+                        &[
+                            ("idx", &(i + 1).to_string()),
+                            ("total", &num.to_string()),
+                            ("error", &e),
+                        ],
+                    ),
+                );
             }
         }));
     }
 
-    for h in handles { let _ = h.await; }
+    for h in handles {
+        let _ = h.await;
+    }
 }
 
 async fn warm_account(
@@ -247,8 +315,12 @@ async fn warm_session(
     client.set_max_flood_wait(cfg.max_flood_wait);
     let my_user_id = if json.user_id > 0 { json.user_id } else { 0 };
 
-    let emit_log = |msg: String| { let _ = app.emit("warmer-log", format!("{prefix} {msg}")); };
-    let emit_action = |msg: String| { let _ = app.emit("warmer-log", format!("[action] {prefix} {msg}")); };
+    let emit_log = |msg: String| {
+        let _ = app.emit("warmer-log", format!("{prefix} {msg}"));
+    };
+    let emit_action = |msg: String| {
+        let _ = app.emit("warmer-log", format!("[action] {prefix} {msg}"));
+    };
     let sleep_token = token.clone();
     let sleep_jitter = move |base_ms: u64, jitter_ms: u64| {
         let t = sleep_token.clone();
@@ -263,9 +335,13 @@ async fn warm_session(
     }
 
     // check spamblock: first from json, then via checker module
-    let mut has_spamblock = !json.spamblock.is_empty() && json.spamblock != crate::i18n::t("status_clean");
+    let mut has_spamblock =
+        !json.spamblock.is_empty() && json.spamblock != crate::i18n::t("status_clean");
     if has_spamblock {
-        emit_log(t_with("warmer_spamblock_json", &[("status", &json.spamblock)]));
+        emit_log(t_with(
+            "warmer_spamblock_json",
+            &[("status", &json.spamblock)],
+        ));
     } else {
         match crate::checker::checks::check_spambot(client).await {
             Ok(status) => {
@@ -325,14 +401,40 @@ async fn warm_session(
 
     // build weighted action pool
     let mut pool: Vec<&str> = Vec::new();
-    if cfg.is_enabled("search") { for _ in 0..4 { pool.push("search"); } }
-    if cfg.is_enabled("read_channels") { for _ in 0..3 { pool.push("read_channel"); } }
-    if cfg.is_enabled("dialogs") { for _ in 0..2 { pool.push("dialogs"); } }
-    if cfg.is_enabled("saved") { for _ in 0..2 { pool.push("saved"); } }
-    if cfg.is_enabled("stories") { pool.push("stories"); }
-    if cfg.is_enabled("subscribe") { pool.push("subscribe"); }
-    if cfg.is_enabled("group_members") { pool.push("group_members"); }
-    if cfg.is_enabled("fake_chats") && !has_spamblock { for _ in 0..4 { pool.push("fake_chat"); } }
+    if cfg.is_enabled("search") {
+        for _ in 0..4 {
+            pool.push("search");
+        }
+    }
+    if cfg.is_enabled("read_channels") {
+        for _ in 0..3 {
+            pool.push("read_channel");
+        }
+    }
+    if cfg.is_enabled("dialogs") {
+        for _ in 0..2 {
+            pool.push("dialogs");
+        }
+    }
+    if cfg.is_enabled("saved") {
+        for _ in 0..2 {
+            pool.push("saved");
+        }
+    }
+    if cfg.is_enabled("stories") {
+        pool.push("stories");
+    }
+    if cfg.is_enabled("subscribe") {
+        pool.push("subscribe");
+    }
+    if cfg.is_enabled("group_members") {
+        pool.push("group_members");
+    }
+    if cfg.is_enabled("fake_chats") && !has_spamblock {
+        for _ in 0..4 {
+            pool.push("fake_chat");
+        }
+    }
     pool.push("read_telegram");
 
     if pool.is_empty() {
@@ -346,15 +448,22 @@ async fn warm_session(
         None
     };
     emit_log(if cfg.duration_minutes > 0 {
-        t_with("warmer_duration", &[("minutes", &cfg.duration_minutes.to_string())])
+        t_with(
+            "warmer_duration",
+            &[("minutes", &cfg.duration_minutes.to_string())],
+        )
     } else {
         t("warmer_until_stop")
     });
 
     loop {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         if let Some(dl) = deadline {
-            if Instant::now() >= dl { break; }
+            if Instant::now() >= dl {
+                break;
+            }
         }
 
         let action = pool[rng.gen_range(0..pool.len())];
@@ -382,7 +491,10 @@ async fn warm_session(
                             for &mid in &batch {
                                 let del_req = tl::build_delete_messages(&[mid], false);
                                 if let Err(e) = client.invoke(&del_req).await {
-                                    emit_action(t_with("warmer_del_msg_error", &[("id", &mid.to_string()), ("error", &e)]));
+                                    emit_action(t_with(
+                                        "warmer_del_msg_error",
+                                        &[("id", &mid.to_string()), ("error", &e)],
+                                    ));
                                 }
                             }
                         }
@@ -408,7 +520,10 @@ async fn warm_session(
                 let req = tl::build_contacts_search(&word, 20);
                 let channel = match client.invoke(&req).await {
                     Ok(data) => find_channel_in_search_results(&data),
-                    Err(e) => { emit_action(t_with("warmer_contacts_search_error", &[("error", &e)])); None }
+                    Err(e) => {
+                        emit_action(t_with("warmer_contacts_search_error", &[("error", &e)]));
+                        None
+                    }
                 };
                 // fallback: resolve a known public channel
                 let channel = if channel.is_none() {
@@ -417,9 +532,15 @@ async fn warm_session(
                     match client.invoke(&resolve_req).await {
                         Ok(data) => match tl::parse_resolved_peer(&data) {
                             Ok(pair) => Some(pair),
-                            Err(e) => { emit_action(format!("resolve parse: {e}")); None }
+                            Err(e) => {
+                                emit_action(format!("resolve parse: {e}"));
+                                None
+                            }
                         },
-                        Err(e) => { emit_action(format!("resolve @{ch_name}: {e}")); None }
+                        Err(e) => {
+                            emit_action(format!("resolve @{ch_name}: {e}"));
+                            None
+                        }
                     }
                 } else {
                     channel
@@ -428,16 +549,17 @@ async fn warm_session(
                 if let Some((ch_id, ch_hash)) = channel {
                     // get real message ids from channel history
                     let history_req = tl::build_get_history_channel(ch_id, ch_hash, 10);
-                    let real_msg_ids: Vec<i32> = if let Ok(hist_data) = client.invoke(&history_req).await {
-                        tl::parse_messages_structured(&hist_data)
-                            .unwrap_or_default()
-                            .iter()
-                            .map(|m| m.id)
-                            .filter(|id| *id > 0)
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
+                    let real_msg_ids: Vec<i32> =
+                        if let Ok(hist_data) = client.invoke(&history_req).await {
+                            tl::parse_messages_structured(&hist_data)
+                                .unwrap_or_default()
+                                .iter()
+                                .map(|m| m.id)
+                                .filter(|id| *id > 0)
+                                .collect()
+                        } else {
+                            Vec::new()
+                        };
                     sleep_jitter(800, 600).await;
 
                     let read_count = rng.gen_range(2..8);
@@ -451,14 +573,28 @@ async fn warm_session(
                             let emoji = REACTION_EMOJIS[rng.gen_range(0..REACTION_EMOJIS.len())];
                             let msg_id = real_msg_ids[rng.gen_range(0..real_msg_ids.len())];
                             let req = tl::build_send_reaction(
-                                tl::INPUT_PEER_CHANNEL, ch_id, ch_hash, msg_id, emoji
+                                tl::INPUT_PEER_CHANNEL,
+                                ch_id,
+                                ch_hash,
+                                msg_id,
+                                emoji,
                             );
                             match client.invoke(&req).await {
-                                Ok(_) => { emit_action(t_with("warmer_reaction", &[("emoji", emoji), ("id", &msg_id.to_string())])); }
+                                Ok(_) => {
+                                    emit_action(t_with(
+                                        "warmer_reaction",
+                                        &[("emoji", emoji), ("id", &msg_id.to_string())],
+                                    ));
+                                }
                                 Err(e) => {
-                                    if e.contains("CHAT_WRITE_FORBIDDEN") || e.contains("REACTION_EMPTY") {
+                                    if e.contains("CHAT_WRITE_FORBIDDEN")
+                                        || e.contains("REACTION_EMPTY")
+                                    {
                                         reactions_blocked_channels.insert(ch_id);
-                                        emit_action(t_with("warmer_reactions_disabled", &[("id", &ch_id.to_string())]));
+                                        emit_action(t_with(
+                                            "warmer_reactions_disabled",
+                                            &[("id", &ch_id.to_string())],
+                                        ));
                                     }
                                 }
                             }
@@ -487,11 +623,24 @@ async fn warm_session(
                             let story_ids = extract_story_ids_from_peer_stories(&stories_data);
                             let view_count = story_ids.len().min(5);
                             if view_count > 0 {
-                                let read_req = build_read_stories_channel(ch_id, ch_hash, story_ids[view_count - 1]);
+                                let read_req = build_read_stories_channel(
+                                    ch_id,
+                                    ch_hash,
+                                    story_ids[view_count - 1],
+                                );
                                 if let Err(e) = client.invoke(&read_req).await {
-                                    emit_action(t_with("warmer_stories_read_error", &[("error", &e)]));
+                                    emit_action(t_with(
+                                        "warmer_stories_read_error",
+                                        &[("error", &e)],
+                                    ));
                                 } else {
-                                    emit_action(t_with("warmer_stories_viewed", &[("count", &view_count.to_string()), ("id", &ch_id.to_string())]));
+                                    emit_action(t_with(
+                                        "warmer_stories_viewed",
+                                        &[
+                                            ("count", &view_count.to_string()),
+                                            ("id", &ch_id.to_string()),
+                                        ],
+                                    ));
                                 }
                             }
                         }
@@ -505,7 +654,10 @@ async fn warm_session(
                 let req = tl::build_contacts_search(&word, 20);
                 let channel = match client.invoke(&req).await {
                     Ok(data) => {
-                        emit_action(t_with("warmer_search_result", &[("word", &word), ("len", &data.len().to_string())]));
+                        emit_action(t_with(
+                            "warmer_search_result",
+                            &[("word", &word), ("len", &data.len().to_string())],
+                        ));
                         find_channel_in_search_results(&data)
                     }
                     Err(e) => {
@@ -521,9 +673,18 @@ async fn warm_session(
                     match client.invoke(&resolve_req).await {
                         Ok(data) => match tl::parse_resolved_peer(&data) {
                             Ok(pair) => Some(pair),
-                            Err(e) => { emit_action(t_with("warmer_parse_resolve_error", &[("error", &e)])); None }
+                            Err(e) => {
+                                emit_action(t_with("warmer_parse_resolve_error", &[("error", &e)]));
+                                None
+                            }
                         },
-                        Err(e) => { emit_action(t_with("warmer_resolve_error", &[("name", ch_name), ("error", &e)])); None }
+                        Err(e) => {
+                            emit_action(t_with(
+                                "warmer_resolve_error",
+                                &[("name", ch_name), ("error", &e)],
+                            ));
+                            None
+                        }
                     }
                 } else {
                     channel
@@ -537,7 +698,10 @@ async fn warm_session(
                                 let (old_id, old_hash) = subscribed_channels.remove(0);
                                 let leave_req = tl::build_leave_channel(old_id, old_hash);
                                 if let Err(e) = client.invoke(&leave_req).await {
-                                    emit_action(t_with("warmer_unsubscribe_error", &[("id", &old_id.to_string()), ("error", &e)]));
+                                    emit_action(t_with(
+                                        "warmer_unsubscribe_error",
+                                        &[("id", &old_id.to_string()), ("error", &e)],
+                                    ));
                                 }
                                 sleep_jitter(300, 200).await;
                             }
@@ -545,7 +709,10 @@ async fn warm_session(
                             emit_action(t_with("warmer_subscribed", &[("id", &ch_id.to_string())]));
                         }
                         Err(e) => {
-                            emit_action(t_with("warmer_join_error", &[("id", &ch_id.to_string()), ("error", &e)]));
+                            emit_action(t_with(
+                                "warmer_join_error",
+                                &[("id", &ch_id.to_string()), ("error", &e)],
+                            ));
                         }
                     }
                 } else {
@@ -559,49 +726,92 @@ async fn warm_session(
                 let req = tl::build_contacts_search(&word, 20);
                 if let Ok(data) = client.invoke(&req).await {
                     // try to find a megagroup (not broadcast channel)
-                    if let Some((ch_id, ch_hash, is_megagroup)) = find_group_in_search_results(&data) {
+                    if let Some((ch_id, ch_hash, is_megagroup)) =
+                        find_group_in_search_results(&data)
+                    {
                         if is_megagroup {
                             // get participants
                             let part_req = tl::build_channels_get_participants(
-                                ch_id, ch_hash, tl::ParticipantsFilter::Recent, 0, 20
+                                ch_id,
+                                ch_hash,
+                                tl::ParticipantsFilter::Recent,
+                                0,
+                                20,
                             );
                             if let Ok(part_data) = client.invoke(&part_req).await {
                                 if let Ok(batch) = tl::parse_channel_participants(&part_data) {
-                                    emit_action(t_with("warmer_group_members_count", &[("id", &ch_id.to_string()), ("count", &batch.users.len().to_string())]));
+                                    emit_action(t_with(
+                                        "warmer_group_members_count",
+                                        &[
+                                            ("id", &ch_id.to_string()),
+                                            ("count", &batch.users.len().to_string()),
+                                        ],
+                                    ));
 
                                     // optionally browse avatars
                                     if cfg.is_enabled("group_avatars") && !batch.users.is_empty() {
-                                        let avatar_count = rng.gen_range(1..4).min(batch.users.len());
+                                        let avatar_count =
+                                            rng.gen_range(1..4).min(batch.users.len());
                                         for u in batch.users.iter().take(avatar_count) {
                                             if u.access_hash != 0 {
-                                                let photo_req = build_get_user_photos(u.id, u.access_hash, 1);
+                                                let photo_req =
+                                                    build_get_user_photos(u.id, u.access_hash, 1);
                                                 if let Err(e) = client.invoke(&photo_req).await {
-                                                    emit_action(t_with("warmer_photo_error", &[("id", &u.id.to_string()), ("error", &e)]));
+                                                    emit_action(t_with(
+                                                        "warmer_photo_error",
+                                                        &[("id", &u.id.to_string()), ("error", &e)],
+                                                    ));
                                                 }
                                                 sleep_jitter(300, 200).await;
                                             }
                                         }
-                                        emit_action(t_with("warmer_avatars_viewed", &[("count", &avatar_count.to_string())]));
+                                        emit_action(t_with(
+                                            "warmer_avatars_viewed",
+                                            &[("count", &avatar_count.to_string())],
+                                        ));
                                     }
 
                                     // optionally add contacts from group
                                     if cfg.is_enabled("group_contacts") && !batch.users.is_empty() {
                                         let add_count = rng.gen_range(1..3).min(batch.users.len());
                                         for u in batch.users.iter().take(add_count) {
-                                            if u.access_hash != 0 && !u.is_bot && !u.is_deleted && !u.is_self {
+                                            if u.access_hash != 0
+                                                && !u.is_bot
+                                                && !u.is_deleted
+                                                && !u.is_self
+                                            {
                                                 if added_contacts.len() >= 100 {
-                                                    let (old_id, old_hash) = added_contacts.remove(0);
-                                                    let del_req = tl::build_contacts_delete_contacts(&[(old_id, old_hash)]);
+                                                    let (old_id, old_hash) =
+                                                        added_contacts.remove(0);
+                                                    let del_req =
+                                                        tl::build_contacts_delete_contacts(&[(
+                                                            old_id, old_hash,
+                                                        )]);
                                                     if let Err(e) = client.invoke(&del_req).await {
-                                                        emit_action(t_with("warmer_del_contact_error", &[("id", &old_id.to_string()), ("error", &e)]));
+                                                        emit_action(t_with(
+                                                            "warmer_del_contact_error",
+                                                            &[
+                                                                ("id", &old_id.to_string()),
+                                                                ("error", &e),
+                                                            ],
+                                                        ));
                                                     }
                                                     sleep_jitter(300, 200).await;
                                                 }
                                                 let name = words::random_phrase(&mut rng);
-                                                let add_req = tl::build_add_contact(u.id, u.access_hash, &name, "", "");
+                                                let add_req = tl::build_add_contact(
+                                                    u.id,
+                                                    u.access_hash,
+                                                    &name,
+                                                    "",
+                                                    "",
+                                                );
                                                 if client.invoke(&add_req).await.is_ok() {
                                                     added_contacts.push((u.id, u.access_hash));
-                                                    emit_action(t_with("warmer_contact_added_group", &[("id", &u.id.to_string())]));
+                                                    emit_action(t_with(
+                                                        "warmer_contact_added_group",
+                                                        &[("id", &u.id.to_string())],
+                                                    ));
                                                 }
                                                 sleep_jitter(500, 300).await;
                                             }
@@ -619,16 +829,18 @@ async fn warm_session(
                 let target = {
                     let pool = peers.lock().await;
                     // prefer peers without spamblock, but accept any if none available
-                    let mut candidates: Vec<&WarmPeer> = pool.iter()
+                    let mut candidates: Vec<&WarmPeer> = pool
+                        .iter()
                         .filter(|p| p.user_id != my_user_id && !p.has_spamblock)
                         .collect();
                     if candidates.is_empty() {
-                        candidates = pool.iter()
-                            .filter(|p| p.user_id != my_user_id)
-                            .collect();
+                        candidates = pool.iter().filter(|p| p.user_id != my_user_id).collect();
                     }
-                    if candidates.is_empty() { None }
-                    else { Some(candidates[rng.gen_range(0..candidates.len())].clone()) }
+                    if candidates.is_empty() {
+                        None
+                    } else {
+                        Some(candidates[rng.gen_range(0..candidates.len())].clone())
+                    }
                 };
 
                 if let Some(target) = target {
@@ -644,7 +856,10 @@ async fn warm_session(
                         match client.invoke(&req).await {
                             Ok(data) => tl::parse_resolved_peer(&data).ok(),
                             Err(e) => {
-                                emit_action(t_with("warmer_resolve_username_error", &[("username", &target.username), ("error", &e)]));
+                                emit_action(t_with(
+                                    "warmer_resolve_username_error",
+                                    &[("username", &target.username), ("error", &e)],
+                                ));
                                 None
                             }
                         }
@@ -670,7 +885,13 @@ async fn warm_session(
                     };
 
                     if target_hash == 0 {
-                        emit_action(t_with("warmer_skip_fake_chat", &[("id", &target.user_id.to_string()), ("username", &target.username)]));
+                        emit_action(t_with(
+                            "warmer_skip_fake_chat",
+                            &[
+                                ("id", &target.user_id.to_string()),
+                                ("username", &target.username),
+                            ],
+                        ));
                     } else {
                         let text = if cfg.fake_chats_use_llm {
                             match crate::llm::complete(
@@ -691,14 +912,23 @@ async fn warm_session(
                         } else {
                             text
                         };
-                        emit_action(t_with("warmer_fake_chat_msg", &[("id", &target_id.to_string()), ("text", &text)]));
+                        emit_action(t_with(
+                            "warmer_fake_chat_msg",
+                            &[("id", &target_id.to_string()), ("text", &text)],
+                        ));
                         let random_id: i64 = rng.gen();
                         let req = tl::build_send_message(target_id, target_hash, &text, random_id);
                         match client.invoke(&req).await {
                             Ok(_) => {
                                 fake_chat_peers.push((target_id, target_hash));
                                 let contact_name = words::random_phrase(&mut rng);
-                                let add_req = tl::build_add_contact(target_id, target_hash, &contact_name, "", "");
+                                let add_req = tl::build_add_contact(
+                                    target_id,
+                                    target_hash,
+                                    &contact_name,
+                                    "",
+                                    "",
+                                );
                                 if client.invoke(&add_req).await.is_ok() {
                                     added_contacts.push((target_id, target_hash));
                                 }
@@ -706,10 +936,13 @@ async fn warm_session(
                             Err(e) => {
                                 send_errors += 1;
                                 emit_action(t_with("warmer_send_error", &[("error", &e)]));
-                                if e.contains("PEER_FLOOD") || e.contains("USER_PRIVACY_RESTRICTED") {
+                                if e.contains("PEER_FLOOD") || e.contains("USER_PRIVACY_RESTRICTED")
+                                {
                                     has_spamblock = true;
                                     let mut pool = peers.lock().await;
-                                    if let Some(me) = pool.iter_mut().find(|p| p.user_id == my_user_id) {
+                                    if let Some(me) =
+                                        pool.iter_mut().find(|p| p.user_id == my_user_id)
+                                    {
                                         me.has_spamblock = true;
                                     }
                                     emit_log(t_with("warmer_spamblock_on_send", &[("error", &e)]));
@@ -759,17 +992,28 @@ async fn warm_session(
                                 Ok(_) => {
                                     if added_contacts.len() >= 100 {
                                         let (old_id, old_hash) = added_contacts.remove(0);
-                                        let del_req = tl::build_contacts_delete_contacts(&[(old_id, old_hash)]);
+                                        let del_req = tl::build_contacts_delete_contacts(&[(
+                                            old_id, old_hash,
+                                        )]);
                                         if let Err(e) = client.invoke(&del_req).await {
-                                            emit_action(t_with("warmer_del_old_contact_error", &[("id", &old_id.to_string()), ("error", &e)]));
+                                            emit_action(t_with(
+                                                "warmer_del_old_contact_error",
+                                                &[("id", &old_id.to_string()), ("error", &e)],
+                                            ));
                                         }
                                         sleep_jitter(300, 200).await;
                                     }
                                     added_contacts.push((user_id, user_hash));
-                                    emit_action(t_with("warmer_contact_added", &[("id", &user_id.to_string())]));
+                                    emit_action(t_with(
+                                        "warmer_contact_added",
+                                        &[("id", &user_id.to_string())],
+                                    ));
                                 }
                                 Err(e) => {
-                                    emit_action(t_with("warmer_contact_add_error", &[("id", &user_id.to_string()), ("error", &e)]));
+                                    emit_action(t_with(
+                                        "warmer_contact_add_error",
+                                        &[("id", &user_id.to_string()), ("error", &e)],
+                                    ));
                                 }
                             }
                         } else {
@@ -801,15 +1045,31 @@ async fn warm_session(
 
     // cleanup phase
     if cfg.is_enabled("cleanup") {
-        emit_log(t_with("warmer_cleanup_start", &[("channels", &subscribed_channels.len().to_string()), ("msgs", &saved_msg_ids.len().to_string()), ("chats", &fake_chat_peers.len().to_string()), ("contacts", &added_contacts.len().to_string())]));
+        emit_log(t_with(
+            "warmer_cleanup_start",
+            &[
+                ("channels", &subscribed_channels.len().to_string()),
+                ("msgs", &saved_msg_ids.len().to_string()),
+                ("chats", &fake_chat_peers.len().to_string()),
+                ("contacts", &added_contacts.len().to_string()),
+            ],
+        ));
 
         if !subscribed_channels.is_empty() {
-            emit_log(t_with("warmer_cleanup_unsub", &[("count", &subscribed_channels.len().to_string())]));
+            emit_log(t_with(
+                "warmer_cleanup_unsub",
+                &[("count", &subscribed_channels.len().to_string())],
+            ));
             for (ch_id, ch_hash) in &subscribed_channels {
-                if !token.load(Ordering::Relaxed) { break; }
+                if !token.load(Ordering::Relaxed) {
+                    break;
+                }
                 let req = tl::build_leave_channel(*ch_id, *ch_hash);
                 if let Err(e) = client.invoke(&req).await {
-                    emit_log(t_with("warmer_cleanup_unsub_error", &[("id", &ch_id.to_string()), ("error", &e)]));
+                    emit_log(t_with(
+                        "warmer_cleanup_unsub_error",
+                        &[("id", &ch_id.to_string()), ("error", &e)],
+                    ));
                 }
                 sleep_jitter(500, 300).await;
             }
@@ -819,34 +1079,57 @@ async fn warm_session(
         if !saved_msg_ids.is_empty() {
             saved_msg_ids.sort_unstable();
             saved_msg_ids.dedup();
-            emit_log(t_with("warmer_cleanup_saved", &[("count", &saved_msg_ids.len().to_string())]));
+            emit_log(t_with(
+                "warmer_cleanup_saved",
+                &[("count", &saved_msg_ids.len().to_string())],
+            ));
             for &msg_id in &saved_msg_ids {
-                if !token.load(Ordering::Relaxed) { break; }
+                if !token.load(Ordering::Relaxed) {
+                    break;
+                }
                 let del_req = tl::build_delete_messages(&[msg_id], false);
                 if let Err(e) = client.invoke(&del_req).await {
-                    emit_log(t_with("warmer_del_msg_error", &[("id", &msg_id.to_string()), ("error", &e)]));
+                    emit_log(t_with(
+                        "warmer_del_msg_error",
+                        &[("id", &msg_id.to_string()), ("error", &e)],
+                    ));
                 }
                 sleep_jitter(200, 100).await;
             }
         }
         if !fake_chat_peers.is_empty() {
-            emit_log(t_with("warmer_cleanup_chats", &[("count", &fake_chat_peers.len().to_string())]));
+            emit_log(t_with(
+                "warmer_cleanup_chats",
+                &[("count", &fake_chat_peers.len().to_string())],
+            ));
             for (peer_id, peer_hash) in &fake_chat_peers {
-                if !token.load(Ordering::Relaxed) { break; }
+                if !token.load(Ordering::Relaxed) {
+                    break;
+                }
                 let req = tl::build_delete_history(*peer_id, *peer_hash);
                 if let Err(e) = client.invoke(&req).await {
-                    emit_log(t_with("warmer_cleanup_chat_error", &[("id", &peer_id.to_string()), ("error", &e)]));
+                    emit_log(t_with(
+                        "warmer_cleanup_chat_error",
+                        &[("id", &peer_id.to_string()), ("error", &e)],
+                    ));
                 }
                 sleep_jitter(500, 300).await;
             }
         }
         if !added_contacts.is_empty() {
-            let valid_contacts: Vec<(i64, i64)> = added_contacts.iter()
+            let valid_contacts: Vec<(i64, i64)> = added_contacts
+                .iter()
                 .filter(|(_, hash)| *hash != 0)
                 .copied()
                 .collect();
             if !valid_contacts.is_empty() {
-                emit_log(t_with("warmer_cleanup_contacts", &[("valid", &valid_contacts.len().to_string()), ("total", &added_contacts.len().to_string())]));
+                emit_log(t_with(
+                    "warmer_cleanup_contacts",
+                    &[
+                        ("valid", &valid_contacts.len().to_string()),
+                        ("total", &added_contacts.len().to_string()),
+                    ],
+                ));
                 for chunk in valid_contacts.chunks(50) {
                     let req = tl::build_contacts_delete_contacts(chunk);
                     if let Err(e) = client.invoke(&req).await {
@@ -855,7 +1138,10 @@ async fn warm_session(
                     sleep_jitter(300, 200).await;
                 }
             } else {
-                emit_log(t_with("warmer_cleanup_contacts_skip", &[("count", &added_contacts.len().to_string())]));
+                emit_log(t_with(
+                    "warmer_cleanup_contacts_skip",
+                    &[("count", &added_contacts.len().to_string())],
+                ));
             }
         }
         // remove temporary username
@@ -869,7 +1155,10 @@ async fn warm_session(
         }
     }
 
-    emit_log(t_with("warmer_session_done", &[("count", &action_count.to_string())]));
+    emit_log(t_with(
+        "warmer_session_done",
+        &[("count", &action_count.to_string())],
+    ));
     Ok(())
 }
 
@@ -894,10 +1183,15 @@ fn find_channel_in_search_results(data: &[u8]) -> Option<(i64, i64)> {
 
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::CHANNEL {
             let mut cursor = std::io::Cursor::new(&data[i..]);
-            if let Ok(tl_gen::TlChat::Channel { id, access_hash: Some(ah), .. }) = tl_gen::TlChat::deserialize(&mut cursor) {
+            if let Ok(tl_gen::TlChat::Channel {
+                id,
+                access_hash: Some(ah),
+                ..
+            }) = tl_gen::TlChat::deserialize(&mut cursor)
+            {
                 if id > 0 && ah != 0 {
                     return Some((id, ah));
                 }
@@ -925,10 +1219,16 @@ fn find_user_in_search_results(data: &[u8]) -> Option<(i64, i64)> {
 
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::USER {
             let mut cursor = std::io::Cursor::new(&data[i..]);
-            if let Ok(tl_gen::TlUser::User { id, access_hash: Some(ah), bot, .. }) = tl_gen::TlUser::deserialize(&mut cursor) {
+            if let Ok(tl_gen::TlUser::User {
+                id,
+                access_hash: Some(ah),
+                bot,
+                ..
+            }) = tl_gen::TlUser::deserialize(&mut cursor)
+            {
                 // skip bots (bot flag), keep regular users
                 if id > 0 && ah != 0 && !bot {
                     return Some((id, ah));
@@ -942,9 +1242,13 @@ fn find_user_in_search_results(data: &[u8]) -> Option<(i64, i64)> {
 fn generate_temp_username(rng: &mut impl Rng) -> String {
     let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let mut name = String::with_capacity(11);
-    for _ in 0..5 { name.push(chars[rng.gen_range(0..chars.len())] as char); }
+    for _ in 0..5 {
+        name.push(chars[rng.gen_range(0..chars.len())] as char);
+    }
     name.push('_');
-    for _ in 0..5 { name.push(chars[rng.gen_range(0..chars.len())] as char); }
+    for _ in 0..5 {
+        name.push(chars[rng.gen_range(0..chars.len())] as char);
+    }
     name
 }
 
@@ -952,8 +1256,12 @@ fn generate_random_name(rng: &mut impl Rng) -> String {
     let chars: &[u8] = b"abcdefghijklmnopqrstuvwxyz";
     let mut first = String::with_capacity(5);
     let mut last = String::with_capacity(5);
-    for _ in 0..5 { first.push(chars[rng.gen_range(0..chars.len())] as char); }
-    for _ in 0..5 { last.push(chars[rng.gen_range(0..chars.len())] as char); }
+    for _ in 0..5 {
+        first.push(chars[rng.gen_range(0..chars.len())] as char);
+    }
+    for _ in 0..5 {
+        last.push(chars[rng.gen_range(0..chars.len())] as char);
+    }
     format!("{first} {last}")
 }
 
@@ -978,10 +1286,17 @@ fn find_group_in_search_results(data: &[u8]) -> Option<(i64, i64, bool)> {
 
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::CHANNEL {
             let mut cursor = std::io::Cursor::new(&data[i..]);
-            if let Ok(tl_gen::TlChat::Channel { id, access_hash: Some(ah), broadcast, megagroup, .. }) = tl_gen::TlChat::deserialize(&mut cursor) {
+            if let Ok(tl_gen::TlChat::Channel {
+                id,
+                access_hash: Some(ah),
+                broadcast,
+                megagroup,
+                ..
+            }) = tl_gen::TlChat::deserialize(&mut cursor)
+            {
                 if id > 0 && ah != 0 {
                     return Some((id, ah, megagroup && !broadcast));
                 }
@@ -1003,10 +1318,11 @@ fn extract_story_ids_from_peer_stories(data: &[u8]) -> Vec<i32> {
     let mut ids = Vec::new();
     let mut i = 0usize;
     while i + 12 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::STORY_ITEM && i + 12 <= data.len() {
             // flags(4) + id(4)
-            let story_id = i32::from_le_bytes([data[i+8], data[i+9], data[i+10], data[i+11]]);
+            let story_id =
+                i32::from_le_bytes([data[i + 8], data[i + 9], data[i + 10], data[i + 11]]);
             if story_id > 0 {
                 ids.push(story_id);
             }
@@ -1038,10 +1354,15 @@ fn build_import_contact(phone: &str, first_name: &str) -> Vec<u8> {
 fn extract_imported_user(data: &[u8]) -> Option<(i64, i64)> {
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::USER {
             let mut cursor = std::io::Cursor::new(&data[i..]);
-            if let Ok(tl_gen::TlUser::User { id, access_hash: Some(ah), .. }) = tl_gen::TlUser::deserialize(&mut cursor) {
+            if let Ok(tl_gen::TlUser::User {
+                id,
+                access_hash: Some(ah),
+                ..
+            }) = tl_gen::TlUser::deserialize(&mut cursor)
+            {
                 if id > 0 && ah != 0 {
                     return Some((id, ah));
                 }

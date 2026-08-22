@@ -3,22 +3,23 @@
 // edits the forwarded copy to apply text replacements.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
 use crate::accounts::connect::connect_account;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl::{self, ParsedMessage};
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 use super::config::{ClonerConfig, ClonerConfigPayload};
-use super::destination::{resolve_or_create_destination, ChannelHandle, SourceContext, SourcePhoto};
+use super::destination::{
+    resolve_or_create_destination, ChannelHandle, SourceContext, SourcePhoto,
+};
 use super::media::{detect_media, MediaKind};
 use super::transform::{
-    build_edited_text, classify_skip, has_external_link,
-    has_telegram_link, SkipReason,
+    build_edited_text, classify_skip, has_external_link, has_telegram_link, SkipReason,
 };
 
 const PAGE_SIZE: i32 = 100;
@@ -38,11 +39,13 @@ pub async fn cloner_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "cloner".to_string(),
-        t_with("cloner_task_name", &[("id", &account_id)]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "cloner".to_string(),
+            t_with("cloner_task_name", &[("id", &account_id)]),
+        )
+        .await;
 
     tokio::spawn(async move {
         let result = run(&account_id, cfg, max_flood_wait, &app, token.clone()).await;
@@ -83,16 +86,34 @@ async fn run(
 
     // ---- resolve source channel ----
     let source = resolve_source(&mut client, &cfg.source_channel).await?;
-    emit(app, t_with("cloner_source", &[("title", &source.title), ("id", &source.channel_id.to_string())]));
+    emit(
+        app,
+        t_with(
+            "cloner_source",
+            &[
+                ("title", &source.title),
+                ("id", &source.channel_id.to_string()),
+            ],
+        ),
+    );
 
     // ---- resolve / create destination ----
     let dest = resolve_or_create_destination(&mut client, &cfg.destination, &source, app).await?;
-    emit(app, t_with("cloner_destination", &[("id", &dest.channel_id.to_string())]));
+    emit(
+        app,
+        t_with(
+            "cloner_destination",
+            &[("id", &dest.channel_id.to_string())],
+        ),
+    );
 
     // when we just created a channel, sweep all service messages (channel-created,
     // photo-update, title-update, about-update etc.) so the cloned posts start
     // from a clean head.
-    if matches!(cfg.destination, crate::cloner::config::DestinationSpec::NewChannel { .. }) {
+    if matches!(
+        cfg.destination,
+        crate::cloner::config::DestinationSpec::NewChannel { .. }
+    ) {
         if let Err(e) = sweep_service_messages(&mut client, &dest, app).await {
             emit(app, t_with("cloner_sweep_error", &[("error", &e)]));
         }
@@ -111,7 +132,17 @@ async fn run(
         }
     }
 
-    emit(app, t_with("cloner_stats", &[("copied", &stats.copied.to_string()), ("skipped", &stats.skipped.to_string()), ("errors", &stats.errors.to_string())]));
+    emit(
+        app,
+        t_with(
+            "cloner_stats",
+            &[
+                ("copied", &stats.copied.to_string()),
+                ("skipped", &stats.skipped.to_string()),
+                ("errors", &stats.errors.to_string()),
+            ],
+        ),
+    );
     Ok(())
 }
 
@@ -125,7 +156,9 @@ struct CloneStats {
 async fn interruptible_sleep(ms: u64, token: &AtomicBool) {
     let mut remaining = ms;
     while remaining > 0 {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = remaining.min(200);
         tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
         remaining -= chunk;
@@ -162,7 +195,17 @@ async fn clone_messages(
 
     let lo = messages.iter().map(|m| m.id).min().unwrap_or(0);
     let hi = messages.iter().map(|m| m.id).max().unwrap_or(0);
-    emit(app, t_with("cloner_collected", &[("count", &messages.len().to_string()), ("lo", &lo.to_string()), ("hi", &hi.to_string())]));
+    emit(
+        app,
+        t_with(
+            "cloner_collected",
+            &[
+                ("count", &messages.len().to_string()),
+                ("lo", &lo.to_string()),
+                ("hi", &hi.to_string()),
+            ],
+        ),
+    );
 
     for msg in &messages {
         if !token.load(Ordering::Relaxed) {
@@ -177,7 +220,13 @@ async fn clone_messages(
                     return Err(e);
                 }
                 stats.errors += 1;
-                emit(app, t_with("cloner_error_msg", &[("id", &msg.id.to_string()), ("error", &e)]));
+                emit(
+                    app,
+                    t_with(
+                        "cloner_error_msg",
+                        &[("id", &msg.id.to_string()), ("error", &e)],
+                    ),
+                );
             }
         }
 
@@ -201,7 +250,9 @@ async fn collect_messages(
     // offset_id seed: 0 means "start from the newest"; if user supplied an upper
     // bound less than i32::MAX we hint the server with offset_id = upper + 1
     // so it skips anything strictly newer than `upper`.
-    let mut offset_id: i32 = if upper == i32::MAX || upper <= 0 { 0 } else {
+    let mut offset_id: i32 = if upper == i32::MAX || upper <= 0 {
+        0
+    } else {
         upper.saturating_add(1)
     };
     // min_id is exclusive on telegram side; we want id >= lower
@@ -211,30 +262,44 @@ async fn collect_messages(
     let mut seen: std::collections::HashSet<i32> = std::collections::HashSet::new();
 
     loop {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let req = tl::build_get_history_channel_paged(
             source.channel_id,
             source.access_hash,
             offset_id,
-            0,                  // add_offset
-            PAGE_SIZE,          // limit
-            0,                  // max_id (0 = no upper cap; offset_id handles it)
+            0,         // add_offset
+            PAGE_SIZE, // limit
+            0,         // max_id (0 = no upper cap; offset_id handles it)
             min_id,
         );
-        let data = client.invoke(&req).await
+        let data = client
+            .invoke(&req)
+            .await
             .map_err(|e| format!("getHistory: {e}"))?;
-        let batch = tl::parse_messages_structured(&data)
-            .map_err(|e| format!("parse history: {e}"))?;
+        let batch =
+            tl::parse_messages_structured(&data).map_err(|e| format!("parse history: {e}"))?;
 
-        if batch.is_empty() { break; }
+        if batch.is_empty() {
+            break;
+        }
 
         // server returns newest-first
         let mut keepers: Vec<ParsedMessage> = Vec::new();
         for m in &batch {
-            if m.id <= 0 { continue; }
-            if m.id < lower { continue; }
-            if upper != i32::MAX && m.id > upper { continue; }
-            if seen.insert(m.id) { keepers.push(m.clone()); }
+            if m.id <= 0 {
+                continue;
+            }
+            if m.id < lower {
+                continue;
+            }
+            if upper != i32::MAX && m.id > upper {
+                continue;
+            }
+            if seen.insert(m.id) {
+                keepers.push(m.clone());
+            }
         }
 
         let oldest_in_batch = batch.iter().map(|m| m.id).filter(|i| *i > 0).min();
@@ -244,7 +309,9 @@ async fn collect_messages(
             Some(o) if o > min_id + 1 => offset_id = o,
             _ => break,
         }
-        if batch.len() < PAGE_SIZE as usize { break; }
+        if batch.len() < PAGE_SIZE as usize {
+            break;
+        }
     }
 
     all.sort_by_key(|m| m.id);
@@ -266,12 +333,21 @@ async fn process_message(
         return Ok(false);
     }
     if msg.is_service {
-        emit(app, t_with("cloner_skipped_service", &[("id", &msg.id.to_string())]));
+        emit(
+            app,
+            t_with("cloner_skipped_service", &[("id", &msg.id.to_string())]),
+        );
         return Ok(false);
     }
 
     if let Some(reason) = classify_skip(msg, cfg) {
-        emit(app, t_with("cloner_skipped_reason", &[("id", &msg.id.to_string()), ("reason", &reason.ru())]));
+        emit(
+            app,
+            t_with(
+                "cloner_skipped_reason",
+                &[("id", &msg.id.to_string()), ("reason", &reason.ru())],
+            ),
+        );
         return Ok(false);
     }
 
@@ -292,40 +368,74 @@ async fn process_message(
         let kind_skip = match info.kind {
             MediaKind::Photo if !cfg.copy_photos => Some(SkipReason::PhotoDisabled),
             MediaKind::Video if !cfg.copy_videos => Some(SkipReason::VideoDisabled),
-            MediaKind::Video if !cfg.copy_messages_with_video => Some(SkipReason::VideoMessageDisabled),
+            MediaKind::Video if !cfg.copy_messages_with_video => {
+                Some(SkipReason::VideoMessageDisabled)
+            }
             MediaKind::Document if !cfg.copy_documents => Some(SkipReason::DocumentDisabled),
             MediaKind::Audio if !cfg.copy_documents => Some(SkipReason::DocumentDisabled),
             _ => None,
         };
         if let Some(reason) = kind_skip {
-            emit(app, t_with("cloner_skipped_media", &[("id", &msg.id.to_string()), ("reason", &reason.ru())]));
+            emit(
+                app,
+                t_with(
+                    "cloner_skipped_media",
+                    &[("id", &msg.id.to_string()), ("reason", &reason.ru())],
+                ),
+            );
             return Ok(false);
         }
 
         // size gates — only enforced when both a limit and a known size are present
         let size_skip = match info.kind {
-            MediaKind::Photo if cfg.max_photo_bytes > 0
-                && info.size_bytes > 0
-                && info.size_bytes > cfg.max_photo_bytes => Some(SkipReason::OversizedPhoto),
-            MediaKind::Video if cfg.max_video_bytes > 0
-                && info.size_bytes > 0
-                && info.size_bytes > cfg.max_video_bytes => Some(SkipReason::OversizedVideo),
+            MediaKind::Photo
+                if cfg.max_photo_bytes > 0
+                    && info.size_bytes > 0
+                    && info.size_bytes > cfg.max_photo_bytes =>
+            {
+                Some(SkipReason::OversizedPhoto)
+            }
+            MediaKind::Video
+                if cfg.max_video_bytes > 0
+                    && info.size_bytes > 0
+                    && info.size_bytes > cfg.max_video_bytes =>
+            {
+                Some(SkipReason::OversizedVideo)
+            }
             MediaKind::Document | MediaKind::Audio
                 if cfg.max_file_bytes > 0
                     && info.size_bytes > 0
-                    && info.size_bytes > cfg.max_file_bytes => Some(SkipReason::OversizedFile),
+                    && info.size_bytes > cfg.max_file_bytes =>
+            {
+                Some(SkipReason::OversizedFile)
+            }
             _ => None,
         };
         if let Some(reason) = size_skip {
-            emit(app, t_with("cloner_skipped_size", &[("id", &msg.id.to_string()), ("reason", &reason.ru()), ("kb", &(info.size_bytes / 1024).to_string())]));
+            emit(
+                app,
+                t_with(
+                    "cloner_skipped_size",
+                    &[
+                        ("id", &msg.id.to_string()),
+                        ("reason", &reason.ru()),
+                        ("kb", &(info.size_bytes / 1024).to_string()),
+                    ],
+                ),
+            );
             return Ok(false);
         }
     }
 
     // Determine if we should use forward or send (for reply chains / noforwards)
     let source_reply_to = msg.reply_to_msg_id;
-    let mapped_reply = source_reply_to
-        .and_then(|orig_id| if cfg.preserve_replies { reply_map.get(&orig_id).copied() } else { None });
+    let mapped_reply = source_reply_to.and_then(|orig_id| {
+        if cfg.preserve_replies {
+            reply_map.get(&orig_id).copied()
+        } else {
+            None
+        }
+    });
 
     // If there's a mapped reply or content is protected (noforwards),
     // we must re-send instead of forward (forward doesn't support reply_to)
@@ -349,22 +459,28 @@ async fn process_message(
 
     let new_id = if use_send_mode {
         // send as new message (preserves reply chain, works for protected content)
-        let text = build_edited_text(&msg.text, &cfg.replacements)
-            .unwrap_or_else(|| msg.text.clone());
+        let text =
+            build_edited_text(&msg.text, &cfg.replacements).unwrap_or_else(|| msg.text.clone());
 
         // try to send. if MediaCaptionTooLong — send media without caption, then text separately
         match send_as_copy(client, source, dest, msg, &text, mapped_reply).await {
             Ok(id) => id,
             Err(e) if e.contains("MEDIA_CAPTION_TOO_LONG") => {
                 // send media without text
-                let id = send_as_copy(client, source, dest, msg, "", mapped_reply).await
+                let id = send_as_copy(client, source, dest, msg, "", mapped_reply)
+                    .await
                     .unwrap_or(0);
                 // send text as separate message
                 if !text.is_empty() && id > 0 {
                     let (plain, entities) = tl::parse_markdown_v2(&text);
                     let rid: i64 = rand::random();
                     let req = tl::build_send_message_with_entities(
-                        dest.channel_id, dest.access_hash, true, &plain, &entities, rid,
+                        dest.channel_id,
+                        dest.access_hash,
+                        true,
+                        &plain,
+                        &entities,
+                        rid,
                     );
                     let _ = client.invoke(&req).await;
                 }
@@ -387,11 +503,16 @@ async fn process_message(
 
         match client.invoke(&req).await {
             Ok(resp) => tl::extract_first_new_message_id(&resp).unwrap_or(0),
-            Err(e) if e.contains("CHAT_FORWARDS_RESTRICTED") || e.contains("ChatForwardsRestricted") => {
+            Err(e)
+                if e.contains("CHAT_FORWARDS_RESTRICTED")
+                    || e.contains("ChatForwardsRestricted") =>
+            {
                 // content is protected — fall back to send mode
                 let text = build_edited_text(&msg.text, &cfg.replacements)
                     .unwrap_or_else(|| msg.text.clone());
-                send_as_copy(client, source, dest, msg, &text, mapped_reply).await.unwrap_or(0)
+                send_as_copy(client, source, dest, msg, &text, mapped_reply)
+                    .await
+                    .unwrap_or(0)
             }
             Err(e) => return Err(e),
         }
@@ -425,7 +546,13 @@ async fn process_message(
         }
     }
 
-    emit(app, t_with("cloner_copied_msg", &[("id", &msg.id.to_string()), ("dst", &new_id.to_string())]));
+    emit(
+        app,
+        t_with(
+            "cloner_copied_msg",
+            &[("id", &msg.id.to_string()), ("dst", &new_id.to_string())],
+        ),
+    );
     Ok(true)
 }
 
@@ -448,7 +575,10 @@ async fn fetch_message_blob(
     client.invoke(&req).await
 }
 
-async fn resolve_source(client: &mut MtpClient, source_link: &str) -> Result<SourceContext, String> {
+async fn resolve_source(
+    client: &mut MtpClient,
+    source_link: &str,
+) -> Result<SourceContext, String> {
     let resolved = crate::mtproto::invite::resolve_channel_link(client, source_link).await?;
     let mut source = load_source_full(
         client,
@@ -456,7 +586,8 @@ async fn resolve_source(client: &mut MtpClient, source_link: &str) -> Result<Sou
         resolved.access_hash,
         resolved.username_hint.as_deref(),
         resolved.joined_now,
-    ).await;
+    )
+    .await;
     if source.title.is_empty() && !resolved.title_hint.is_empty() {
         source.title = resolved.title_hint;
     }
@@ -497,7 +628,15 @@ async fn load_source_full(
         };
     }
 
-    SourceContext { channel_id, access_hash, title, about, photo, joined_now, noforwards: false }
+    SourceContext {
+        channel_id,
+        access_hash,
+        title,
+        about,
+        photo,
+        joined_now,
+        noforwards: false,
+    }
 }
 
 /// Send a text message as a copy (for reply chains and noforwards channels).
@@ -516,17 +655,49 @@ async fn send_as_copy(
     // text, so accepting them here would silently discard the attachment.
     let req = if let Some(reply_id) = reply_to {
         // build with reply_to
-        let peer = crate::mtproto::tl_gen::serialize_input_peer_channel(dest.channel_id, dest.access_hash);
-        let reply_to_bytes = crate::mtproto::tl_gen::serialize_inputReplyToMessage(reply_id, None, None, None, None, None, None, None, None);
+        let peer =
+            crate::mtproto::tl_gen::serialize_input_peer_channel(dest.channel_id, dest.access_hash);
+        let reply_to_bytes = crate::mtproto::tl_gen::serialize_inputReplyToMessage(
+            reply_id, None, None, None, None, None, None, None, None,
+        );
         crate::mtproto::tl_gen::build_messages_sendMessage(
-            false, false, false, false, false, false, false, false,
-            &peer, Some(&reply_to_bytes), &plain, rid, None, None, None, None, None, None, None, None, None, None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            &peer,
+            Some(&reply_to_bytes),
+            &plain,
+            rid,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
     } else {
-        tl::build_send_message_with_entities(dest.channel_id, dest.access_hash, true, &plain, &entities, rid)
+        tl::build_send_message_with_entities(
+            dest.channel_id,
+            dest.access_hash,
+            true,
+            &plain,
+            &entities,
+            rid,
+        )
     };
 
-    let resp = client.invoke(&req).await
+    let resp = client
+        .invoke(&req)
+        .await
         .map_err(|e| format!("sendMessage copy: {e}"))?;
     let new_id = tl::extract_first_new_message_id(&resp).unwrap_or(0);
     Ok(new_id)
@@ -546,13 +717,14 @@ async fn sweep_service_messages(
 ) -> Result<(), String> {
     // pull a larger page so we cover photo-update, title-update, about-update
     // even if telegram inserts placeholders between them
-    let req = tl::build_get_history_channel_paged(
-        dest.channel_id,
-        dest.access_hash,
-        0, 0, 100, 0, 0,
-    );
-    let data = client.invoke(&req).await.map_err(|e| format!("getHistory dest: {e}"))?;
-    let msgs = tl::parse_messages_structured(&data).map_err(|e| format!("parse dest history: {e}"))?;
+    let req =
+        tl::build_get_history_channel_paged(dest.channel_id, dest.access_hash, 0, 0, 100, 0, 0);
+    let data = client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("getHistory dest: {e}"))?;
+    let msgs =
+        tl::parse_messages_structured(&data).map_err(|e| format!("parse dest history: {e}"))?;
     // a freshly created channel only contains service messages — delete all of them.
     // mixing in regular Message ids (would happen on re-runs against an existing
     // channel) is avoided by limiting deletion to is_service entries.
@@ -568,7 +740,10 @@ async fn sweep_service_messages(
     let del = tl::build_channels_delete_messages(dest.channel_id, dest.access_hash, &ids);
     match client.invoke(&del).await {
         Ok(_) => {
-            emit(app, t_with("cloner_sweep_count", &[("count", &ids.len().to_string())]));
+            emit(
+                app,
+                t_with("cloner_sweep_count", &[("count", &ids.len().to_string())]),
+            );
             Ok(())
         }
         Err(e) => {

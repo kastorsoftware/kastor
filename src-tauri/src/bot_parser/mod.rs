@@ -169,7 +169,10 @@ async fn run(
                         error_total.fetch_add(1, Ordering::Relaxed);
                         emit(&app_clone, format!("__ERROR__:{id}"));
                         let prefix = format!("[{}/{}] {}", idx + 1, total_accounts, id);
-                        emit(&app_clone, format!("{prefix} account timeout after {ACCOUNT_TIMEOUT_SECS} sec"));
+                        emit(
+                            &app_clone,
+                            format!("{prefix} account timeout after {ACCOUNT_TIMEOUT_SECS} sec"),
+                        );
                     }
                 }
             }
@@ -422,10 +425,7 @@ async fn resolve_botfather(
                     app,
                     t_with(
                         "bot_parser_flood_wait_wait",
-                        &[
-                            ("prefix", prefix),
-                            ("seconds", &wait_secs.to_string()),
-                        ],
+                        &[("prefix", prefix), ("seconds", &wait_secs.to_string())],
                     ),
                 );
                 pause_ms((wait_secs + 1) * 1000, token).await;
@@ -454,7 +454,8 @@ async fn collect_bot_usernames(
         if !token.load(Ordering::Relaxed) {
             break;
         }
-        let data = invoke_botfather(client, &tl::build_get_history(bf_id, bf_hash, 8), token).await?;
+        let data =
+            invoke_botfather(client, &tl::build_get_history(bf_id, bf_hash, 8), token).await?;
         let messages = tl::parse_messages_structured(&data)
             .map_err(|e| format!("parse /mybots history: {e}"))?;
         let Some(msg) = messages
@@ -519,7 +520,8 @@ async fn request_token_command(
             return Ok(None);
         }
         pause_ms(500, cancel).await;
-        let data = invoke_botfather(client, &tl::build_get_history(bf_id, bf_hash, 8), cancel).await?;
+        let data =
+            invoke_botfather(client, &tl::build_get_history(bf_id, bf_hash, 8), cancel).await?;
         let messages = tl::parse_messages_structured(&data)
             .map_err(|e| format!("parse token history: {e}"))?;
         for msg in messages.iter().filter(|m| m.id > before) {
@@ -551,7 +553,13 @@ async fn max_history_id(
     access_hash: i64,
     cancel: &Arc<AtomicBool>,
 ) -> i32 {
-    let Ok(data) = invoke_botfather(client, &tl::build_get_history(peer_id, access_hash, 10), cancel).await else {
+    let Ok(data) = invoke_botfather(
+        client,
+        &tl::build_get_history(peer_id, access_hash, 10),
+        cancel,
+    )
+    .await
+    else {
         return 0;
     };
     let Ok(messages) = tl::parse_messages_structured(&data) else {

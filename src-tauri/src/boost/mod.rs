@@ -1,20 +1,20 @@
 // boost / engagement: bot start, views, reactions, channel/group subscribe, addlist import
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use serde::Deserialize;
-use tauri::{Emitter, Manager};
 use rusqlite;
+use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use tauri::{Emitter, Manager};
 
+use crate::accounts::commands::get_storage_pub;
+use crate::accounts::connect::connect_account;
+use crate::accounts::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
+use crate::mtproto::text_parse;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
-use crate::mtproto::text_parse;
-use crate::accounts::commands::get_storage_pub;
-use crate::accounts::session::AccountJson;
-use crate::accounts::connect::connect_account;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 // matches BoostMode discriminator emitted by frontend
 #[derive(Deserialize, Clone)]
@@ -23,15 +23,15 @@ pub enum BoostConfig {
     Bot {
         bot_link: String,
         #[serde(default)]
-        bot_links: Vec<String>,   // list of bot links for batch mode
+        bot_links: Vec<String>, // list of bot links for batch mode
         use_referral: bool,
         ref_param: String,
         #[serde(default)]
         delete_after: bool,
         #[serde(default)]
-        distribute_mode: String,  // "all" (each account starts all bots) | "unique" (queue-based distribution)
+        distribute_mode: String, // "all" (each account starts all bots) | "unique" (queue-based distribution)
         #[serde(default)]
-        max_per_account: u32,     // 0 = no limit
+        max_per_account: u32, // 0 = no limit
     },
     Views {
         post_link: String,
@@ -49,7 +49,7 @@ pub enum BoostConfig {
     Reactions {
         post_link: String,
         #[serde(default)]
-        post_links: Vec<String>,  // multiple post links from different channels
+        post_links: Vec<String>, // multiple post links from different channels
         is_private: bool,
         join_link: String,
         leave_after: bool,
@@ -57,15 +57,15 @@ pub enum BoostConfig {
         emoji_mode: String, // "random_positive" | "random_negative" | "specific" | "custom_list"
         specific_emoji: String,
         #[serde(default)]
-        emoji_list: Vec<String>,  // custom list of emoji for "custom_list" mode
+        emoji_list: Vec<String>, // custom list of emoji for "custom_list" mode
         #[serde(default)]
-        reactions_shuffle: bool,  // shuffle emoji list order
+        reactions_shuffle: bool, // shuffle emoji list order
         #[serde(default = "default_one")]
-        reactions_per_post_min: u32,  // how many different reactions per post
+        reactions_per_post_min: u32, // how many different reactions per post
         #[serde(default = "default_one")]
         reactions_per_post_max: u32,
         #[serde(default)]
-        reactions_delay_min: u32,  // delay between reactions on same post (seconds)
+        reactions_delay_min: u32, // delay between reactions on same post (seconds)
         #[serde(default)]
         reactions_delay_max: u32,
         #[serde(default = "default_post_target")]
@@ -75,9 +75,9 @@ pub enum BoostConfig {
         #[serde(default)]
         last_n_max: u32,
         #[serde(default = "default_true_boost")]
-        view_after_each: bool,  // call getMessagesViews after each reaction
+        view_after_each: bool, // call getMessagesViews after each reaction
         #[serde(default = "default_true_boost")]
-        auto_join: bool,  // auto-join channel if not a member
+        auto_join: bool, // auto-join channel if not a member
     },
     #[serde(rename = "subscribe-channel")]
     SubscribeChannel {
@@ -90,14 +90,18 @@ pub enum BoostConfig {
         archive_after: bool,
     },
     #[serde(rename = "import-folder")]
-    ImportFolder {
-        links: Vec<String>,
-    },
+    ImportFolder { links: Vec<String> },
 }
 
-fn default_post_target() -> String { "specific".to_string() }
-fn default_one() -> u32 { 1 }
-fn default_true_boost() -> bool { true }
+fn default_post_target() -> String {
+    "specific".to_string()
+}
+fn default_one() -> u32 {
+    1
+}
+fn default_true_boost() -> bool {
+    true
+}
 
 async fn rate_limit() {
     let jitter = rand::random::<u64>() % 500;
@@ -105,13 +109,31 @@ async fn rate_limit() {
 }
 
 const POSITIVE_EMOJIS: &[&str] = &[
-    "\u{1F44D}", "\u{2764}\u{FE0F}", "\u{1F525}", "\u{1F970}", "\u{1F44F}",
-    "\u{1F389}", "\u{1F929}", "\u{1F4AF}", "\u{26A1}", "\u{1F3C6}",
-    "\u{1F60D}", "\u{1F91D}", "\u{1F64F}",
+    "\u{1F44D}",
+    "\u{2764}\u{FE0F}",
+    "\u{1F525}",
+    "\u{1F970}",
+    "\u{1F44F}",
+    "\u{1F389}",
+    "\u{1F929}",
+    "\u{1F4AF}",
+    "\u{26A1}",
+    "\u{1F3C6}",
+    "\u{1F60D}",
+    "\u{1F91D}",
+    "\u{1F64F}",
 ];
 const NEGATIVE_EMOJIS: &[&str] = &[
-    "\u{1F44E}", "\u{1F622}", "\u{1F4A9}", "\u{1F92E}", "\u{1F631}",
-    "\u{1F92C}", "\u{1F494}", "\u{1F971}", "\u{1F921}", "\u{1F928}",
+    "\u{1F44E}",
+    "\u{1F622}",
+    "\u{1F4A9}",
+    "\u{1F92E}",
+    "\u{1F631}",
+    "\u{1F92C}",
+    "\u{1F494}",
+    "\u{1F971}",
+    "\u{1F921}",
+    "\u{1F928}",
 ];
 
 #[tauri::command]
@@ -129,11 +151,13 @@ pub async fn boost_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "boost".to_string(),
-        t_with("boost_task_name", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "boost".to_string(),
+            t_with("boost_task_name", &[("count", &ids.len().to_string())]),
+        )
+        .await;
 
     let config = Arc::new(config);
 
@@ -142,7 +166,9 @@ pub async fn boost_start(
         let total = ids.len();
         let mut handles = Vec::new();
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
             let sem = sem.clone();
             let config = config.clone();
             let app_clone = app.clone();
@@ -150,12 +176,26 @@ pub async fn boost_start(
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                if !token_clone.load(Ordering::Relaxed) { return; }
+                if !token_clone.load(Ordering::Relaxed) {
+                    return;
+                }
 
-                let result = process_account(&id, i + 1, total, &config, max_flood_wait, &app_clone, &token_clone).await;
+                let result = process_account(
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    max_flood_wait,
+                    &app_clone,
+                    &token_clone,
+                )
+                .await;
                 if let Err(e) = result {
                     crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                    let _ = app_clone.emit("boost-log", format!("[{}/{}] {}: {}", i + 1, total, t("error"), e));
+                    let _ = app_clone.emit(
+                        "boost-log",
+                        format!("[{}/{}] {}: {}", i + 1, total, t("error"), e),
+                    );
                 }
             }));
         }
@@ -202,10 +242,23 @@ async fn process_account(
     };
 
     let phone = json.phone.clone();
-    let prefix = format!("[{}/{}] +{}", idx, total, if phone.is_empty() { "?" } else { &phone });
+    let prefix = format!(
+        "[{}/{}] +{}",
+        idx,
+        total,
+        if phone.is_empty() { "?" } else { &phone }
+    );
 
     let result = match config {
-        BoostConfig::Bot { bot_link, bot_links, use_referral, ref_param, delete_after, distribute_mode, max_per_account } => {
+        BoostConfig::Bot {
+            bot_link,
+            bot_links,
+            use_referral,
+            ref_param,
+            delete_after,
+            distribute_mode,
+            max_per_account,
+        } => {
             // build effective list of bots
             let mut links: Vec<&str> = bot_links.iter().map(|s| s.as_str()).collect();
             if links.is_empty() && !bot_link.is_empty() {
@@ -216,7 +269,11 @@ async fn process_account(
             }
 
             let is_unique = distribute_mode == "unique";
-            let limit = if *max_per_account > 0 { *max_per_account as usize } else { links.len() };
+            let limit = if *max_per_account > 0 {
+                *max_per_account as usize
+            } else {
+                links.len()
+            };
 
             if is_unique {
                 // unique mode: this account takes bots from shared index
@@ -228,16 +285,40 @@ async fn process_account(
                 let start_offset = ((idx - 1) * limit) % links.len();
                 let mut started = 0;
                 for i in 0..links.len() {
-                    if started >= limit { break; }
-                    if !token.load(Ordering::Relaxed) { break; }
+                    if started >= limit {
+                        break;
+                    }
+                    if !token.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let link = links[(start_offset + i) % links.len()];
-                    if let Err(e) = run_bot_activation(&mut client, &prefix, link, *use_referral, ref_param, *delete_after, app, token).await {
-                        emit(app, t_with("boost_bot_error", &[("prefix", &prefix), ("link", link), ("error", &e)]));
-                        if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
+                    if let Err(e) = run_bot_activation(
+                        &mut client,
+                        &prefix,
+                        link,
+                        *use_referral,
+                        ref_param,
+                        *delete_after,
+                        app,
+                        token,
+                    )
+                    .await
+                    {
+                        emit(
+                            app,
+                            t_with(
+                                "boost_bot_error",
+                                &[("prefix", &prefix), ("link", link), ("error", &e)],
+                            ),
+                        );
+                        if crate::mtproto::is_fatal_session_error(&e) {
+                            return Err(e);
+                        }
                     }
                     started += 1;
                     if started < limit {
-                        interruptible_sleep_boost(1500 + (rand::random::<u64>() % 1500), token).await;
+                        interruptible_sleep_boost(1500 + (rand::random::<u64>() % 1500), token)
+                            .await;
                     }
                 }
                 Ok(())
@@ -245,31 +326,147 @@ async fn process_account(
                 // mass mode: each account starts all bots (up to limit)
                 let mut started = 0;
                 for link in &links {
-                    if started >= limit { break; }
-                    if !token.load(Ordering::Relaxed) { break; }
-                    if let Err(e) = run_bot_activation(&mut client, &prefix, link, *use_referral, ref_param, *delete_after, app, token).await {
-                        emit(app, t_with("boost_bot_error", &[("prefix", &prefix), ("link", link), ("error", &e)]));
-                        if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
+                    if started >= limit {
+                        break;
+                    }
+                    if !token.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if let Err(e) = run_bot_activation(
+                        &mut client,
+                        &prefix,
+                        link,
+                        *use_referral,
+                        ref_param,
+                        *delete_after,
+                        app,
+                        token,
+                    )
+                    .await
+                    {
+                        emit(
+                            app,
+                            t_with(
+                                "boost_bot_error",
+                                &[("prefix", &prefix), ("link", link), ("error", &e)],
+                            ),
+                        );
+                        if crate::mtproto::is_fatal_session_error(&e) {
+                            return Err(e);
+                        }
                     }
                     started += 1;
                     if started < limit {
-                        interruptible_sleep_boost(1500 + (rand::random::<u64>() % 1500), token).await;
+                        interruptible_sleep_boost(1500 + (rand::random::<u64>() % 1500), token)
+                            .await;
                     }
                 }
                 Ok(())
             }
         }
-        BoostConfig::Views { post_link, is_private, join_link, leave_after, archive_after, post_target, last_n_min, last_n_max } => {
-            run_views(&mut client, &prefix, post_link, *is_private, join_link, *leave_after, *archive_after, post_target, *last_n_min, *last_n_max, app, token).await
+        BoostConfig::Views {
+            post_link,
+            is_private,
+            join_link,
+            leave_after,
+            archive_after,
+            post_target,
+            last_n_min,
+            last_n_max,
+        } => {
+            run_views(
+                &mut client,
+                &prefix,
+                post_link,
+                *is_private,
+                join_link,
+                *leave_after,
+                *archive_after,
+                post_target,
+                *last_n_min,
+                *last_n_max,
+                app,
+                token,
+            )
+            .await
         }
-        BoostConfig::Reactions { post_link, post_links, is_private, join_link, leave_after, archive_after, emoji_mode, specific_emoji, emoji_list, reactions_shuffle, reactions_per_post_min, reactions_per_post_max, reactions_delay_min, reactions_delay_max, post_target, last_n_min, last_n_max, view_after_each, auto_join } => {
-            run_reactions(&mut client, &prefix, post_link, post_links, *is_private, join_link, *leave_after, *archive_after, emoji_mode, specific_emoji, emoji_list, *reactions_shuffle, *reactions_per_post_min, *reactions_per_post_max, *reactions_delay_min, *reactions_delay_max, post_target, *last_n_min, *last_n_max, *view_after_each, *auto_join, app, token).await
+        BoostConfig::Reactions {
+            post_link,
+            post_links,
+            is_private,
+            join_link,
+            leave_after,
+            archive_after,
+            emoji_mode,
+            specific_emoji,
+            emoji_list,
+            reactions_shuffle,
+            reactions_per_post_min,
+            reactions_per_post_max,
+            reactions_delay_min,
+            reactions_delay_max,
+            post_target,
+            last_n_min,
+            last_n_max,
+            view_after_each,
+            auto_join,
+        } => {
+            run_reactions(
+                &mut client,
+                &prefix,
+                post_link,
+                post_links,
+                *is_private,
+                join_link,
+                *leave_after,
+                *archive_after,
+                emoji_mode,
+                specific_emoji,
+                emoji_list,
+                *reactions_shuffle,
+                *reactions_per_post_min,
+                *reactions_per_post_max,
+                *reactions_delay_min,
+                *reactions_delay_max,
+                post_target,
+                *last_n_min,
+                *last_n_max,
+                *view_after_each,
+                *auto_join,
+                app,
+                token,
+            )
+            .await
         }
-        BoostConfig::SubscribeChannel { join_link, archive_after } => {
-            run_subscribe(&mut client, &prefix, join_link, *archive_after, app, token, false).await
+        BoostConfig::SubscribeChannel {
+            join_link,
+            archive_after,
+        } => {
+            run_subscribe(
+                &mut client,
+                &prefix,
+                join_link,
+                *archive_after,
+                app,
+                token,
+                false,
+            )
+            .await
         }
-        BoostConfig::SubscribeGroup { join_link, archive_after } => {
-            run_subscribe(&mut client, &prefix, join_link, *archive_after, app, token, true).await
+        BoostConfig::SubscribeGroup {
+            join_link,
+            archive_after,
+        } => {
+            run_subscribe(
+                &mut client,
+                &prefix,
+                join_link,
+                *archive_after,
+                app,
+                token,
+                true,
+            )
+            .await
         }
         BoostConfig::ImportFolder { links } => {
             run_import_folders(&mut client, &prefix, links, app, token).await
@@ -297,7 +494,9 @@ async fn run_bot_activation(
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let username = bot_link
         .trim()
         .trim_start_matches("https://t.me/")
@@ -320,10 +519,12 @@ async fn run_bot_activation(
     };
 
     let resolve_req = tl::build_resolve_username(username);
-    let resolve_data = client.invoke(&resolve_req).await
+    let resolve_data = client
+        .invoke(&resolve_req)
+        .await
         .map_err(|e| format!("resolve {}: {e}", username))?;
-    let (bot_id, bot_access_hash) = tl::parse_resolved_peer(&resolve_data)
-        .map_err(|e| format!("parse bot peer: {e}"))?;
+    let (bot_id, bot_access_hash) =
+        tl::parse_resolved_peer(&resolve_data).map_err(|e| format!("parse bot peer: {e}"))?;
 
     // unblock in case the user previously blocked it
     let unblock_req = tl::build_unblock_peer(bot_id, bot_access_hash);
@@ -338,23 +539,50 @@ async fn run_bot_activation(
     };
     let random_id: i64 = rand::random();
     let req = tl::build_send_message(bot_id, bot_access_hash, &start_text, random_id);
-    client.invoke(&req).await.map_err(|e| format!("send /start: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("send /start: {e}"))?;
     rate_limit().await;
 
     if payload.is_empty() {
-        emit(app, t_with("boost_bot_activated", &[("prefix", prefix), ("username", username)]));
+        emit(
+            app,
+            t_with(
+                "boost_bot_activated",
+                &[("prefix", prefix), ("username", username)],
+            ),
+        );
     } else {
-        emit(app, t_with("boost_bot_activated_ref", &[("prefix", prefix), ("username", username), ("payload", &payload)]));
+        emit(
+            app,
+            t_with(
+                "boost_bot_activated_ref",
+                &[
+                    ("prefix", prefix),
+                    ("username", username),
+                    ("payload", &payload),
+                ],
+            ),
+        );
     }
 
     if delete_after {
-        if !token.load(Ordering::Relaxed) { return Ok(()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(());
+        }
         let del_req = tl::build_delete_history(bot_id, bot_access_hash);
         let _ = client.invoke(&del_req).await;
         rate_limit().await;
         let block_req = tl::build_block_peer(bot_id, bot_access_hash);
         let _ = client.invoke(&block_req).await;
-        emit(app, t_with("boost_bot_blocked", &[("prefix", prefix), ("username", username)]));
+        emit(
+            app,
+            t_with(
+                "boost_bot_blocked",
+                &[("prefix", prefix), ("username", username)],
+            ),
+        );
     }
 
     Ok(())
@@ -388,27 +616,66 @@ async fn run_views(
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
-    let (channel_label, channel_id, access_hash, joined, msg_ids) =
-        resolve_channel_and_messages(client, post_link, is_private, join_link, post_target, last_n_min, last_n_max).await?;
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
+    let (channel_label, channel_id, access_hash, joined, msg_ids) = resolve_channel_and_messages(
+        client,
+        post_link,
+        is_private,
+        join_link,
+        post_target,
+        last_n_min,
+        last_n_max,
+    )
+    .await?;
 
     if msg_ids.is_empty() {
         return Err(t("boost_no_posts_to_view"));
     }
 
     let req = tl::build_get_messages_views_channel(channel_id, access_hash, &msg_ids, true);
-    client.invoke(&req).await.map_err(|e| format!("getMessagesViews: {e}"))?;
-    emit(app, t_with("boost_views_done", &[("prefix", prefix), ("count", &msg_ids.len().to_string()), ("channel", &channel_label)]));
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("getMessagesViews: {e}"))?;
+    emit(
+        app,
+        t_with(
+            "boost_views_done",
+            &[
+                ("prefix", prefix),
+                ("count", &msg_ids.len().to_string()),
+                ("channel", &channel_label),
+            ],
+        ),
+    );
 
     let mut joined_now = joined;
     if !is_private && (leave_after || archive_after) {
-        if let Err(e) = client.invoke(&tl::build_join_channel(channel_id, access_hash)).await {
-            emit(app, t_with("boost_join_failed", &[("prefix", prefix), ("error", &e)]));
+        if let Err(e) = client
+            .invoke(&tl::build_join_channel(channel_id, access_hash))
+            .await
+        {
+            emit(
+                app,
+                t_with("boost_join_failed", &[("prefix", prefix), ("error", &e)]),
+            );
         } else {
             joined_now = true;
         }
     }
-    post_subscribe_actions(client, prefix, channel_id, access_hash, joined_now, leave_after, archive_after, app).await;
+    post_subscribe_actions(
+        client,
+        prefix,
+        channel_id,
+        access_hash,
+        joined_now,
+        leave_after,
+        archive_after,
+        app,
+    )
+    .await;
     Ok(())
 }
 
@@ -438,7 +705,9 @@ async fn run_reactions(
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
 
     // Build list of (channel_id, access_hash, msg_ids, label, joined) tuples
     struct TargetInfo {
@@ -461,33 +730,79 @@ async fn run_reactions(
     };
 
     for link in &links_to_process {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let link = link.trim();
-        if link.is_empty() { continue; }
+        if link.is_empty() {
+            continue;
+        }
 
-        match resolve_channel_and_messages(client, link, is_private, join_link, post_target, last_n_min, last_n_max).await {
+        match resolve_channel_and_messages(
+            client,
+            link,
+            is_private,
+            join_link,
+            post_target,
+            last_n_min,
+            last_n_max,
+        )
+        .await
+        {
             Ok((label, channel_id, access_hash, joined, msg_ids)) => {
                 if msg_ids.is_empty() {
-                    emit(app, t_with("boost_no_posts_for", &[("prefix", prefix), ("label", &label)]));
+                    emit(
+                        app,
+                        t_with(
+                            "boost_no_posts_for",
+                            &[("prefix", prefix), ("label", &label)],
+                        ),
+                    );
                     continue;
                 }
                 // Auto-join if not a member
                 let actual_joined = if auto_join && !joined {
-                    match client.invoke(&tl::build_join_channel(channel_id, access_hash)).await {
+                    match client
+                        .invoke(&tl::build_join_channel(channel_id, access_hash))
+                        .await
+                    {
                         Ok(_) => {
-                            emit(app, t_with("boost_joined", &[("prefix", prefix), ("label", &label)]));
+                            emit(
+                                app,
+                                t_with("boost_joined", &[("prefix", prefix), ("label", &label)]),
+                            );
                             true
                         }
                         Err(e) => {
-                            emit(app, t_with("boost_join_failed_label", &[("prefix", prefix), ("label", &label), ("error", &e)]));
+                            emit(
+                                app,
+                                t_with(
+                                    "boost_join_failed_label",
+                                    &[("prefix", prefix), ("label", &label), ("error", &e)],
+                                ),
+                            );
                             joined
                         }
                     }
-                } else { joined };
-                targets.push(TargetInfo { label, channel_id, access_hash, msg_ids, joined: actual_joined });
+                } else {
+                    joined
+                };
+                targets.push(TargetInfo {
+                    label,
+                    channel_id,
+                    access_hash,
+                    msg_ids,
+                    joined: actual_joined,
+                });
             }
             Err(e) => {
-                emit(app, t_with("boost_resolve_error", &[("prefix", prefix), ("link", link), ("error", &e)]));
+                emit(
+                    app,
+                    t_with(
+                        "boost_resolve_error",
+                        &[("prefix", prefix), ("link", link), ("error", &e)],
+                    ),
+                );
             }
         }
     }
@@ -512,13 +827,22 @@ async fn run_reactions(
     }
 
     // SQLite for reactions results
-    let data_dir = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("kastor").join("reactions");
+    let data_dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("kastor")
+        .join("reactions");
     std::fs::create_dir_all(&data_dir).ok();
     let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let db_path = data_dir.join(format!("{}_reactions.db", timestamp));
     let reactions_db = init_reactions_db(&db_path);
     if let Ok(ref _db) = reactions_db {
-        emit(app, t_with("boost_reactions_db", &[("prefix", prefix), ("path", &db_path.display().to_string())]));
+        emit(
+            app,
+            t_with(
+                "boost_reactions_db",
+                &[("prefix", prefix), ("path", &db_path.display().to_string())],
+            ),
+        );
     }
 
     let mut total_ok = 0u32;
@@ -526,24 +850,37 @@ async fn run_reactions(
     let mut emoji_idx = 0usize;
 
     for target in &targets {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
 
         // Initial views bump
-        let views_req = tl::build_get_messages_views_channel(target.channel_id, target.access_hash, &target.msg_ids, true);
+        let views_req = tl::build_get_messages_views_channel(
+            target.channel_id,
+            target.access_hash,
+            &target.msg_ids,
+            true,
+        );
         let _ = client.invoke(&views_req).await;
 
         for &msg_id in &target.msg_ids {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
 
             // Determine how many reactions for this post
             let min_r = reactions_per_post_min.max(1);
             let max_r = reactions_per_post_max.max(min_r);
-            let num_reactions = if min_r == max_r { min_r } else {
+            let num_reactions = if min_r == max_r {
+                min_r
+            } else {
                 min_r + (rand::random::<u32>() % (max_r - min_r + 1))
             };
 
             for reaction_idx in 0..num_reactions {
-                if !token.load(Ordering::Relaxed) { break; }
+                if !token.load(Ordering::Relaxed) {
+                    break;
+                }
 
                 // Pick emoji
                 let emoji = if !emoji_pool.is_empty() {
@@ -558,21 +895,64 @@ async fn run_reactions(
                     break;
                 }
 
-                let req = tl::build_send_reaction_channel(target.channel_id, target.access_hash, msg_id, Some(&emoji), false);
+                let req = tl::build_send_reaction_channel(
+                    target.channel_id,
+                    target.access_hash,
+                    msg_id,
+                    Some(&emoji),
+                    false,
+                );
                 let status = match client.invoke(&req).await {
                     Ok(_) => {
                         total_ok += 1;
-                        emit(app, t_with("boost_reaction_progress", &[("prefix", prefix), ("emoji", &emoji), ("label", &target.label), ("msg_id", &msg_id.to_string()), ("idx", &(reaction_idx + 1).to_string()), ("ok", &total_ok.to_string()), ("total", &(total_ok + total_errs).to_string())]));
+                        emit(
+                            app,
+                            t_with(
+                                "boost_reaction_progress",
+                                &[
+                                    ("prefix", prefix),
+                                    ("emoji", &emoji),
+                                    ("label", &target.label),
+                                    ("msg_id", &msg_id.to_string()),
+                                    ("idx", &(reaction_idx + 1).to_string()),
+                                    ("ok", &total_ok.to_string()),
+                                    ("total", &(total_ok + total_errs).to_string()),
+                                ],
+                            ),
+                        );
                         "done"
                     }
                     Err(e) => {
-                        if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
+                        if crate::mtproto::is_fatal_session_error(&e) {
+                            return Err(e);
+                        }
                         if e.contains("REACTIONS_TOO_MANY") {
-                            emit(app, t_with("boost_reaction_limit", &[("prefix", prefix), ("label", &target.label), ("msg_id", &msg_id.to_string())]));
+                            emit(
+                                app,
+                                t_with(
+                                    "boost_reaction_limit",
+                                    &[
+                                        ("prefix", prefix),
+                                        ("label", &target.label),
+                                        ("msg_id", &msg_id.to_string()),
+                                    ],
+                                ),
+                            );
                             "too_many"
                         } else {
                             total_errs += 1;
-                            emit(app, t_with("boost_reaction_error", &[("prefix", prefix), ("label", &target.label), ("msg_id", &msg_id.to_string()), ("error", &e)]));
+                            emit(
+                                app,
+                                t_with(
+                                    "boost_reaction_error",
+                                    &[
+                                        ("prefix", prefix),
+                                        ("label", &target.label),
+                                        ("msg_id", &msg_id.to_string()),
+                                        ("error", &e),
+                                    ],
+                                ),
+                            );
                             "error"
                         }
                     }
@@ -580,12 +960,23 @@ async fn run_reactions(
 
                 // Record to DB
                 if let Ok(ref db) = reactions_db {
-                    record_reaction(db, prefix, &format!("{}/{}", target.label, msg_id), &emoji, status);
+                    record_reaction(
+                        db,
+                        prefix,
+                        &format!("{}/{}", target.label, msg_id),
+                        &emoji,
+                        status,
+                    );
                 }
 
                 // View after each reaction
                 if view_after_each {
-                    let view_req = tl::build_get_messages_views_channel(target.channel_id, target.access_hash, &[msg_id], true);
+                    let view_req = tl::build_get_messages_views_channel(
+                        target.channel_id,
+                        target.access_hash,
+                        &[msg_id],
+                        true,
+                    );
                     let _ = client.invoke(&view_req).await;
                 }
 
@@ -596,7 +987,11 @@ async fn run_reactions(
                     } else {
                         let lo = reactions_delay_min.min(reactions_delay_max) as u64 * 1000;
                         let hi = reactions_delay_min.max(reactions_delay_max) as u64 * 1000;
-                        if lo == hi { lo } else { lo + (rand::random::<u64>() % (hi - lo + 1)) }
+                        if lo == hi {
+                            lo
+                        } else {
+                            lo + (rand::random::<u64>() % (hi - lo + 1))
+                        }
                     };
                     interruptible_sleep_boost(delay_ms, token).await;
                 }
@@ -607,13 +1002,33 @@ async fn run_reactions(
         }
     }
 
-    emit(app, t_with("boost_reactions_done", &[("prefix", prefix), ("ok", &total_ok.to_string()), ("errs", &total_errs.to_string())]));
+    emit(
+        app,
+        t_with(
+            "boost_reactions_done",
+            &[
+                ("prefix", prefix),
+                ("ok", &total_ok.to_string()),
+                ("errs", &total_errs.to_string()),
+            ],
+        ),
+    );
 
     // Leave channels if configured
     if leave_after || archive_after {
         for target in &targets {
             if target.joined {
-                post_subscribe_actions(client, prefix, target.channel_id, target.access_hash, true, leave_after, archive_after, app).await;
+                post_subscribe_actions(
+                    client,
+                    prefix,
+                    target.channel_id,
+                    target.access_hash,
+                    true,
+                    leave_after,
+                    archive_after,
+                    app,
+                )
+                .await;
             }
         }
     }
@@ -653,10 +1068,13 @@ async fn resolve_channel_and_messages(
         let request_limit = if post_target == "all" || post_target == "pin" {
             500i32
         } else {
-            (target_count.saturating_mul(2)).max(target_count + 5).min(100) as i32
+            (target_count.saturating_mul(2))
+                .max(target_count + 5)
+                .min(100) as i32
         };
 
-        let (label, channel_id, access_hash, joined) = resolve_channel_target(client, post_link, is_private, join_link).await?;
+        let (label, channel_id, access_hash, joined) =
+            resolve_channel_target(client, post_link, is_private, join_link).await?;
 
         let req = if post_target == "pin" {
             // Use search with InputMessagesFilterPinned to get only pinned messages
@@ -664,8 +1082,12 @@ async fn resolve_channel_and_messages(
         } else {
             tl::build_get_history_channel(channel_id, access_hash, request_limit)
         };
-        let data = client.invoke(&req).await.map_err(|e| format!("getHistory/search: {e}"))?;
-        let msgs = tl::parse_messages_structured(&data).map_err(|e| format!("parse history: {e}"))?;
+        let data = client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("getHistory/search: {e}"))?;
+        let msgs =
+            tl::parse_messages_structured(&data).map_err(|e| format!("parse history: {e}"))?;
         let ids: Vec<i32> = msgs
             .iter()
             .filter(|m| m.id > 0 && !m.is_service)
@@ -674,10 +1096,17 @@ async fn resolve_channel_and_messages(
             .collect();
         Ok((label, channel_id, access_hash, joined, ids))
     } else {
-        let (channel_username, msg_id) = text_parse::parse_post_link(post_link)
-            .ok_or_else(|| t("boost_invalid_post_link"))?;
-        let (channel_id, access_hash, joined) = resolve_post_target(client, &channel_username, is_private, join_link).await?;
-        Ok((format!("{}/{}", channel_username, msg_id), channel_id, access_hash, joined, vec![msg_id]))
+        let (channel_username, msg_id) =
+            text_parse::parse_post_link(post_link).ok_or_else(|| t("boost_invalid_post_link"))?;
+        let (channel_id, access_hash, joined) =
+            resolve_post_target(client, &channel_username, is_private, join_link).await?;
+        Ok((
+            format!("{}/{}", channel_username, msg_id),
+            channel_id,
+            access_hash,
+            joined,
+            vec![msg_id],
+        ))
     }
 }
 
@@ -692,7 +1121,16 @@ async fn resolve_channel_target(
 ) -> Result<(String, i64, i64, bool), String> {
     if is_private {
         let (id, hash, joined, title) = join_by_link_with_title(client, join_link, false).await?;
-        return Ok((if title.is_empty() { "private".to_string() } else { title }, id, hash, joined));
+        return Ok((
+            if title.is_empty() {
+                "private".to_string()
+            } else {
+                title
+            },
+            id,
+            hash,
+            joined,
+        ));
     }
     let username = channel_link
         .trim()
@@ -708,10 +1146,12 @@ async fn resolve_channel_target(
         return Err(t("boost_empty_channel_link"));
     }
     let resolve_req = tl::build_resolve_username(username);
-    let resolve_data = client.invoke(&resolve_req).await
+    let resolve_data = client
+        .invoke(&resolve_req)
+        .await
         .map_err(|e| format!("resolve {}: {e}", username))?;
-    let (id, hash) = tl::parse_resolved_peer(&resolve_data)
-        .map_err(|e| format!("parse channel: {e}"))?;
+    let (id, hash) =
+        tl::parse_resolved_peer(&resolve_data).map_err(|e| format!("parse channel: {e}"))?;
     Ok((username.to_string(), id, hash, false))
 }
 
@@ -721,12 +1161,18 @@ fn pick_emoji(mode: &str, specific: &str) -> String {
         "random_positive" => {
             use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
-            POSITIVE_EMOJIS.choose(&mut rng).map(|s| s.to_string()).unwrap_or_default()
+            POSITIVE_EMOJIS
+                .choose(&mut rng)
+                .map(|s| s.to_string())
+                .unwrap_or_default()
         }
         "random_negative" => {
             use rand::seq::SliceRandom;
             let mut rng = rand::thread_rng();
-            NEGATIVE_EMOJIS.choose(&mut rng).map(|s| s.to_string()).unwrap_or_default()
+            NEGATIVE_EMOJIS
+                .choose(&mut rng)
+                .map(|s| s.to_string())
+                .unwrap_or_default()
         }
         _ => specific.trim().to_string(),
     }
@@ -742,14 +1188,25 @@ async fn run_subscribe(
     token: &Arc<AtomicBool>,
     is_group: bool,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let (channel_id, access_hash, joined) = join_by_link(client, link, is_group).await?;
-    emit(app, t_with("boost_join_link_done", &[("prefix", prefix), ("link", link)]));
+    emit(
+        app,
+        t_with(
+            "boost_join_link_done",
+            &[("prefix", prefix), ("link", link)],
+        ),
+    );
 
     if archive_after && joined {
         let req = tl::build_edit_peer_folder_channel(channel_id, access_hash, 1);
         if let Err(e) = client.invoke(&req).await {
-            emit(app, t_with("boost_archive_error", &[("prefix", prefix), ("error", &e)]));
+            emit(
+                app,
+                t_with("boost_archive_error", &[("prefix", prefix), ("error", &e)]),
+            );
         } else {
             emit(app, t_with("boost_archived", &[("prefix", prefix)]));
         }
@@ -765,7 +1222,9 @@ async fn run_import_folders(
     app: &tauri::AppHandle,
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
-    if !token.load(Ordering::Relaxed) { return Ok(()); }
+    if !token.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     if links.is_empty() {
         return Err(t("boost_empty_folder_links"));
     }
@@ -773,11 +1232,16 @@ async fn run_import_folders(
     let mut ok = 0u32;
     let mut errs = 0u32;
     for link in links {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let slug = match text_parse::parse_invite_link(link) {
             Some((kind, slug)) if kind == "addlist" => slug,
             _ => {
-                emit(app, t_with("boost_not_addlist", &[("prefix", prefix), ("link", link)]));
+                emit(
+                    app,
+                    t_with("boost_not_addlist", &[("prefix", prefix), ("link", link)]),
+                );
                 errs += 1;
                 continue;
             }
@@ -787,8 +1251,16 @@ async fn run_import_folders(
         let check_data = match client.invoke(&check_req).await {
             Ok(d) => d,
             Err(e) => {
-                if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
-                emit(app, t_with("boost_check_invite_error", &[("prefix", prefix), ("slug", &slug), ("error", &e)]));
+                if crate::mtproto::is_fatal_session_error(&e) {
+                    return Err(e);
+                }
+                emit(
+                    app,
+                    t_with(
+                        "boost_check_invite_error",
+                        &[("prefix", prefix), ("slug", &slug), ("error", &e)],
+                    ),
+                );
                 errs += 1;
                 continue;
             }
@@ -797,7 +1269,13 @@ async fn run_import_folders(
         let (title, peers_blob) = match tl::parse_chatlist_invite_as_input_peers(&check_data) {
             Ok(x) => x,
             Err(e) => {
-                emit(app, t_with("boost_parse_invite_error", &[("prefix", prefix), ("slug", &slug), ("error", &e)]));
+                emit(
+                    app,
+                    t_with(
+                        "boost_parse_invite_error",
+                        &[("prefix", prefix), ("slug", &slug), ("error", &e)],
+                    ),
+                );
                 errs += 1;
                 continue;
             }
@@ -806,12 +1284,28 @@ async fn run_import_folders(
         let join_req = tl::build_join_chatlist_invite(&slug, &peers_blob);
         match client.invoke(&join_req).await {
             Ok(_) => {
-                let pretty = if title.is_empty() { slug.clone() } else { title };
-                emit(app, t_with("boost_folder_imported", &[("prefix", prefix), ("name", &pretty)]));
+                let pretty = if title.is_empty() {
+                    slug.clone()
+                } else {
+                    title
+                };
+                emit(
+                    app,
+                    t_with(
+                        "boost_folder_imported",
+                        &[("prefix", prefix), ("name", &pretty)],
+                    ),
+                );
                 ok += 1;
             }
             Err(e) => {
-                emit(app, t_with("boost_join_invite_error", &[("prefix", prefix), ("slug", &slug), ("error", &e)]));
+                emit(
+                    app,
+                    t_with(
+                        "boost_join_invite_error",
+                        &[("prefix", prefix), ("slug", &slug), ("error", &e)],
+                    ),
+                );
                 errs += 1;
             }
         }
@@ -819,7 +1313,10 @@ async fn run_import_folders(
     }
 
     if errs > 0 && ok == 0 {
-        return Err(t_with("boost_no_folders_imported", &[("count", &links.len().to_string())]));
+        return Err(t_with(
+            "boost_no_folders_imported",
+            &[("count", &links.len().to_string())],
+        ));
     }
     Ok(())
 }
@@ -838,23 +1335,31 @@ async fn resolve_post_target(
     }
 
     let resolve_req = tl::build_resolve_username(channel_username);
-    let resolve_data = client.invoke(&resolve_req).await
+    let resolve_data = client
+        .invoke(&resolve_req)
+        .await
         .map_err(|e| format!("resolve {}: {e}", channel_username))?;
-    let (id, hash) = tl::parse_resolved_peer(&resolve_data)
-        .map_err(|e| format!("parse channel: {e}"))?;
+    let (id, hash) =
+        tl::parse_resolved_peer(&resolve_data).map_err(|e| format!("parse channel: {e}"))?;
     Ok((id, hash, false))
 }
 
 // joins a channel/group by its public username, t.me/+invite or t.me/joinchat link
 // returns (channel_id, access_hash, joined_now, title)
-async fn join_by_link_with_title(client: &mut MtpClient, link: &str, is_group: bool) -> Result<(i64, i64, bool, String), String> {
+async fn join_by_link_with_title(
+    client: &mut MtpClient,
+    link: &str,
+    is_group: bool,
+) -> Result<(i64, i64, bool, String), String> {
     let (kind, body) = text_parse::parse_invite_link(link)
         .ok_or_else(|| t_with("boost_parse_link_error", &[("link", link)]))?;
 
     match kind {
         "private" => {
             let req = tl::build_import_chat_invite(&body);
-            let data = client.invoke(&req).await
+            let data = client
+                .invoke(&req)
+                .await
                 .map_err(|e| format!("importChatInvite: {e}"))?;
             let (id, hash) = tl::parse_created_channel(&data)
                 .map_err(|e| format!("parse joined channel: {e}"))?;
@@ -864,20 +1369,28 @@ async fn join_by_link_with_title(client: &mut MtpClient, link: &str, is_group: b
         }
         "public" => {
             let resolve_req = tl::build_resolve_username(&body);
-            let resolve_data = client.invoke(&resolve_req).await
+            let resolve_data = client
+                .invoke(&resolve_req)
+                .await
                 .map_err(|e| format!("resolve {}: {e}", body))?;
             let (id, hash) = tl::parse_resolved_peer(&resolve_data)
                 .map_err(|e| format!("parse channel: {e}"))?;
             if hash == 0 {
                 if is_group {
                     let req = tl::build_add_chat_user(id);
-                    client.invoke(&req).await.map_err(|e| format!("addChatUser: {e}"))?;
+                    client
+                        .invoke(&req)
+                        .await
+                        .map_err(|e| format!("addChatUser: {e}"))?;
                     return Ok((id, 0, true, String::new()));
                 }
                 return Err(t("boost_sub_username_failed"));
             }
             let join_req = tl::build_join_channel(id, hash);
-            client.invoke(&join_req).await.map_err(|e| format!("joinChannel: {e}"))?;
+            client
+                .invoke(&join_req)
+                .await
+                .map_err(|e| format!("joinChannel: {e}"))?;
             Ok((id, hash, true, String::new()))
         }
         "addlist" => Err(t("boost_addlist_unsupported")),
@@ -885,8 +1398,14 @@ async fn join_by_link_with_title(client: &mut MtpClient, link: &str, is_group: b
     }
 }
 
-async fn join_by_link(client: &mut MtpClient, link: &str, is_group: bool) -> Result<(i64, i64, bool), String> {
-    join_by_link_with_title(client, link, is_group).await.map(|(id, hash, joined, _)| (id, hash, joined))
+async fn join_by_link(
+    client: &mut MtpClient,
+    link: &str,
+    is_group: bool,
+) -> Result<(i64, i64, bool), String> {
+    join_by_link_with_title(client, link, is_group)
+        .await
+        .map(|(id, hash, joined, _)| (id, hash, joined))
 }
 
 fn extract_title_from_updates(data: &[u8]) -> Option<String> {
@@ -923,18 +1442,26 @@ async fn post_subscribe_actions(
     archive_after: bool,
     app: &tauri::AppHandle,
 ) {
-    if !joined { return; }
+    if !joined {
+        return;
+    }
     if leave_after {
         let req = tl::build_leave_channel(channel_id, access_hash);
         match client.invoke(&req).await {
             Ok(_) => emit(app, t_with("boost_left_channel", &[("prefix", prefix)])),
-            Err(e) => emit(app, t_with("boost_leave_error", &[("prefix", prefix), ("error", &e)])),
+            Err(e) => emit(
+                app,
+                t_with("boost_leave_error", &[("prefix", prefix), ("error", &e)]),
+            ),
         }
     } else if archive_after {
         let req = tl::build_edit_peer_folder_channel(channel_id, access_hash, 1);
         match client.invoke(&req).await {
             Ok(_) => emit(app, t_with("boost_archived", &[("prefix", prefix)])),
-            Err(e) => emit(app, t_with("boost_archive_error", &[("prefix", prefix), ("error", &e)])),
+            Err(e) => emit(
+                app,
+                t_with("boost_archive_error", &[("prefix", prefix), ("error", &e)]),
+            ),
         }
     }
 }
@@ -944,7 +1471,9 @@ async fn post_subscribe_actions(
 async fn interruptible_sleep_boost(ms: u64, token: &Arc<AtomicBool>) {
     let mut remaining = ms;
     while remaining > 0 {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = remaining.min(200);
         tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
         remaining -= chunk;
@@ -952,9 +1481,14 @@ async fn interruptible_sleep_boost(ms: u64, token: &Arc<AtomicBool>) {
 }
 
 fn init_reactions_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, String> {
-    let conn = rusqlite::Connection::open(path)
-        .map_err(|e| t_with("boost_reactions_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    let conn = rusqlite::Connection::open(path).map_err(|e| {
+        t_with(
+            "boost_reactions_db_open_error",
+            &[("error", &e.to_string())],
+        )
+    })?;
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -968,13 +1502,22 @@ fn init_reactions_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, 
         );
 
         CREATE INDEX IF NOT EXISTS idx_reactions_status ON reactions(status);
-    ").map_err(|e| format!("create tables: {e}"))?;
+    ",
+    )
+    .map_err(|e| format!("create tables: {e}"))?;
     Ok(conn)
 }
 
-fn record_reaction(conn: &rusqlite::Connection, account: &str, target: &str, emoji: &str, status: &str) {
+fn record_reaction(
+    conn: &rusqlite::Connection,
+    account: &str,
+    target: &str,
+    emoji: &str,
+    status: &str,
+) {
     conn.execute(
         "INSERT INTO reactions (account, target, emoji, status) VALUES (?1,?2,?3,?4)",
         rusqlite::params![account, target, emoji, status],
-    ).ok();
+    )
+    .ok();
 }

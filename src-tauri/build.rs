@@ -21,9 +21,9 @@ enum FType {
     Int256,
     Str,
     Bytes,
-    Bool,    // boxed Bool (4 bytes ctor)
-    True,    // flag bit, no wire data
-    Object,  // nested TL object
+    Bool,   // boxed Bool (4 bytes ctor)
+    True,   // flag bit, no wire data
+    Object, // nested TL object
     VecInt,
     VecLong,
     VecStr,
@@ -51,7 +51,9 @@ struct Constructor {
 fn generate_tl() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let schema_path = Path::new(&manifest_dir).join("schema.txt");
-    if !schema_path.exists() { return; }
+    if !schema_path.exists() {
+        return;
+    }
     println!("cargo:rerun-if-changed={}", schema_path.display());
 
     let schema = fs::read_to_string(&schema_path).expect("read schema.txt");
@@ -78,10 +80,20 @@ fn parse_schema(schema: &str) -> Vec<Constructor> {
     let mut is_function = false;
     for line in schema.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with("//") { continue; }
-        if line == "---functions---" { is_function = true; continue; }
-        if line == "---types---" { is_function = false; continue; }
-        if !line.contains('#') || !line.contains('=') { continue; }
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if line == "---functions---" {
+            is_function = true;
+            continue;
+        }
+        if line == "---types---" {
+            is_function = false;
+            continue;
+        }
+        if !line.contains('#') || !line.contains('=') {
+            continue;
+        }
         if let Some(mut ctor) = parse_line(line) {
             ctor.is_function = is_function;
             constructors.push(ctor);
@@ -91,12 +103,17 @@ fn parse_schema(schema: &str) -> Vec<Constructor> {
     // occurrence (newer definition). also deduplicate by (result_type, name) to avoid
     // duplicate enum variants when a constructor is redefined with a new ctor_id.
     let mut seen_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
-    let mut seen_names: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+    let mut seen_names: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
     let mut deduped = Vec::new();
     for ctor in constructors.into_iter().rev() {
-        if seen_ids.contains(&ctor.id) { continue; }
+        if seen_ids.contains(&ctor.id) {
+            continue;
+        }
         let key = (ctor.result_type.clone(), ctor.name.clone());
-        if seen_names.contains(&key) { continue; }
+        if seen_names.contains(&key) {
+            continue;
+        }
         seen_ids.insert(ctor.id);
         seen_names.insert(key);
         deduped.push(ctor);
@@ -111,7 +128,9 @@ fn parse_line(line: &str) -> Option<Constructor> {
     let result_type = line[eq_pos + 1..].trim().to_string();
     let left = line[..eq_pos].trim();
     let parts: Vec<&str> = left.split_whitespace().collect();
-    if parts.is_empty() { return None; }
+    if parts.is_empty() {
+        return None;
+    }
 
     let name_id = parts[0];
     let hash_pos = name_id.find('#')?;
@@ -120,14 +139,24 @@ fn parse_line(line: &str) -> Option<Constructor> {
 
     let mut fields = Vec::new();
     for part in &parts[1..] {
-        if part.starts_with('{') || part.starts_with('#') || part.starts_with('[') || part.starts_with(']') {
+        if part.starts_with('{')
+            || part.starts_with('#')
+            || part.starts_with('[')
+            || part.starts_with(']')
+        {
             continue;
         }
         if let Some(f) = parse_field(part) {
             fields.push(f);
         }
     }
-    Some(Constructor { name, id, fields, result_type, is_function: false })
+    Some(Constructor {
+        name,
+        id,
+        fields,
+        result_type,
+        is_function: false,
+    })
 }
 
 fn parse_field(s: &str) -> Option<Field> {
@@ -146,7 +175,12 @@ fn parse_field(s: &str) -> Option<Field> {
     };
 
     let ftype = parse_type(actual)?;
-    Some(Field { name, ftype, flag_field, flag_bit })
+    Some(Field {
+        name,
+        ftype,
+        flag_field,
+        flag_bit,
+    })
 }
 
 fn parse_type(s: &str) -> Option<FType> {
@@ -179,8 +213,14 @@ fn to_const_name(name: &str) -> String {
     let mut result = String::new();
     let mut prev_lower = false;
     for ch in name.chars() {
-        if ch == '.' { result.push('_'); prev_lower = false; continue; }
-        if ch.is_uppercase() && prev_lower { result.push('_'); }
+        if ch == '.' {
+            result.push('_');
+            prev_lower = false;
+            continue;
+        }
+        if ch.is_uppercase() && prev_lower {
+            result.push('_');
+        }
         result.push(ch.to_ascii_uppercase());
         prev_lower = ch.is_lowercase();
     }
@@ -194,7 +234,11 @@ fn write_header(out: &mut fs::File) {
     writeln!(out, "use byteorder::{{LittleEndian, ReadBytesExt}};").unwrap();
     writeln!(out, "use std::io::{{Cursor, Read}};").unwrap();
     writeln!(out, "use std::collections::HashMap;").unwrap();
-    writeln!(out, "use super::tl::{{deserialize_bytes, deserialize_string}};").unwrap();
+    writeln!(
+        out,
+        "use super::tl::{{deserialize_bytes, deserialize_string}};"
+    )
+    .unwrap();
     writeln!(out, "").unwrap();
 }
 
@@ -287,7 +331,9 @@ fn write_field_descriptors(out: &mut fs::File, ctors: &[Constructor]) {
     let mut seen_ids = std::collections::HashSet::new();
 
     for ctor in ctors {
-        if !seen_ids.insert(ctor.id) { continue; }
+        if !seen_ids.insert(ctor.id) {
+            continue;
+        }
         let offset = all_fields.len();
         let mut count = 0usize;
         for field in &ctor.fields {
@@ -321,7 +367,8 @@ fn write_field_descriptors(out: &mut fs::File, ctors: &[Constructor]) {
     writeln!(out, "// (ctor_id, offset, field_count) sorted by ctor_id").unwrap();
     writeln!(out, "static CTOR_INDEX: &[(u32, u32, u16)] = &[").unwrap();
     for chunk in index.chunks(5) {
-        let vals: Vec<String> = chunk.iter()
+        let vals: Vec<String> = chunk
+            .iter()
             .map(|(id, off, cnt)| format!("({:#010x}, {}, {})", id, off, cnt))
             .collect();
         writeln!(out, "    {},", vals.join(", ")).unwrap();
@@ -430,12 +477,21 @@ pub fn skip_tl_by_id(cursor: &mut Cursor<&[u8]>, ctor: u32) -> Result<(), String
 fn write_method_builders(out: &mut fs::File, ctors: &[Constructor]) {
     writeln!(out, "// --- method serializers ---").unwrap();
     writeln!(out, "use byteorder::WriteBytesExt;").unwrap();
-    writeln!(out, "use super::tl::{{serialize_string, serialize_bytes as tl_serialize_bytes}};").unwrap();
+    writeln!(
+        out,
+        "use super::tl::{{serialize_string, serialize_bytes as tl_serialize_bytes}};"
+    )
+    .unwrap();
     writeln!(out, "").unwrap();
 
     for ctor in ctors.iter().filter(|c| c.is_function) {
-        let has_obj = ctor.fields.iter().any(|f| matches!(f.ftype, FType::Object | FType::VecObj));
-        let real_fields: Vec<&Field> = ctor.fields.iter()
+        let has_obj = ctor
+            .fields
+            .iter()
+            .any(|f| matches!(f.ftype, FType::Object | FType::VecObj));
+        let real_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| !matches!(f.ftype, FType::True | FType::Flags))
             .collect();
         let has_flags = ctor.fields.iter().any(|f| matches!(f.ftype, FType::Flags));
@@ -444,7 +500,12 @@ fn write_method_builders(out: &mut fs::File, ctors: &[Constructor]) {
         if real_fields.is_empty() && !has_flags {
             writeln!(out, "pub fn {}() -> Vec<u8> {{", fn_name).unwrap();
             writeln!(out, "    let mut buf = Vec::new();").unwrap();
-            writeln!(out, "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();", ctor.id).unwrap();
+            writeln!(
+                out,
+                "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();",
+                ctor.id
+            )
+            .unwrap();
             writeln!(out, "    buf").unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
@@ -474,12 +535,11 @@ fn sanitize_name(name: &str) -> String {
     match name {
         "self" => "self_".to_string(),
         "Self" => "self_type".to_string(),
-        "type" | "loop" | "move" | "ref" | "match" | "mod" | "use" |
-        "fn" | "let" | "mut" | "pub" | "return" | "where" | "async" | "await" |
-        "in" | "for" | "if" | "else" | "while" | "break" | "continue" | "struct" |
-        "enum" | "trait" | "impl" | "static" | "const" | "super" | "crate" |
-        "box" | "yield" | "dyn" | "abstract" | "final" | "override" | "macro" =>
-            format!("r#{}", name),
+        "type" | "loop" | "move" | "ref" | "match" | "mod" | "use" | "fn" | "let" | "mut"
+        | "pub" | "return" | "where" | "async" | "await" | "in" | "for" | "if" | "else"
+        | "while" | "break" | "continue" | "struct" | "enum" | "trait" | "impl" | "static"
+        | "const" | "super" | "crate" | "box" | "yield" | "dyn" | "abstract" | "final"
+        | "override" | "macro" => format!("r#{}", name),
         _ => name.to_string(),
     }
 }
@@ -502,12 +562,24 @@ fn rust_type_for(ft: FType) -> &'static str {
 
 fn write_simple_builder(out: &mut fs::File, ctor: &Constructor, fields: &[&Field], fn_name: &str) {
     // build function signature
-    let params: Vec<String> = fields.iter().map(|f| {
-        format!("{}: {}", sanitize_name(&f.name), rust_type_for(f.ftype))
-    }).collect();
-    writeln!(out, "pub fn {}({}) -> Vec<u8> {{", fn_name, params.join(", ")).unwrap();
+    let params: Vec<String> = fields
+        .iter()
+        .map(|f| format!("{}: {}", sanitize_name(&f.name), rust_type_for(f.ftype)))
+        .collect();
+    writeln!(
+        out,
+        "pub fn {}({}) -> Vec<u8> {{",
+        fn_name,
+        params.join(", ")
+    )
+    .unwrap();
     writeln!(out, "    let mut buf = Vec::new();").unwrap();
-    writeln!(out, "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();", ctor.id).unwrap();
+    writeln!(
+        out,
+        "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();",
+        ctor.id
+    )
+    .unwrap();
 
     for field in fields {
         write_serialize_value(out, field.ftype, &sanitize_name(&field.name), "    ");
@@ -533,7 +605,9 @@ fn write_flagged_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) 
             _ => {}
         }
         let base_type = rust_type_for(field.ftype);
-        if base_type == "UNSUPPORTED" { return; } // skip complex methods
+        if base_type == "UNSUPPORTED" {
+            return;
+        } // skip complex methods
         let sname = sanitize_name(&field.name);
         if field.flag_field.is_some() {
             params.push(format!("{}: Option<{}>", sname, base_type));
@@ -542,12 +616,25 @@ fn write_flagged_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) 
         }
     }
 
-    writeln!(out, "pub fn {}({}) -> Vec<u8> {{", fn_name, params.join(", ")).unwrap();
+    writeln!(
+        out,
+        "pub fn {}({}) -> Vec<u8> {{",
+        fn_name,
+        params.join(", ")
+    )
+    .unwrap();
     writeln!(out, "    let mut buf = Vec::new();").unwrap();
-    writeln!(out, "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();", ctor.id).unwrap();
+    writeln!(
+        out,
+        "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();",
+        ctor.id
+    )
+    .unwrap();
 
     // compute flags value
-    let flag_fields: Vec<&Field> = ctor.fields.iter()
+    let flag_fields: Vec<&Field> = ctor
+        .fields
+        .iter()
         .filter(|f| matches!(f.ftype, FType::Flags))
         .collect();
 
@@ -558,17 +645,32 @@ fn write_flagged_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) 
                 let bit = field.flag_bit.unwrap();
                 let sname = sanitize_name(&field.name);
                 if matches!(field.ftype, FType::True) {
-                    flag_expr_parts.push(format!("(if {} {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
+                    flag_expr_parts
+                        .push(format!("(if {} {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
                 } else {
-                    flag_expr_parts.push(format!("(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
+                    flag_expr_parts.push(format!(
+                        "(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})",
+                        sname, bit
+                    ));
                 }
             }
         }
         if flag_expr_parts.is_empty() {
             writeln!(out, "    buf.write_u32::<LittleEndian>(0).unwrap();").unwrap();
         } else {
-            writeln!(out, "    let {}_val: u32 = {};", ff.name, flag_expr_parts.join(" | ")).unwrap();
-            writeln!(out, "    buf.write_u32::<LittleEndian>({}_val).unwrap();", ff.name).unwrap();
+            writeln!(
+                out,
+                "    let {}_val: u32 = {};",
+                ff.name,
+                flag_expr_parts.join(" | ")
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "    buf.write_u32::<LittleEndian>({}_val).unwrap();",
+                ff.name
+            )
+            .unwrap();
         }
     }
 
@@ -630,7 +732,9 @@ fn write_serialize_value(out: &mut fs::File, ftype: FType, var: &str, indent: &s
 }
 
 fn write_vector_helpers(out: &mut fs::File) {
-    writeln!(out, r#"
+    writeln!(
+        out,
+        r#"
 // skip a Vector<T> where T is a boxed TL object
 pub fn skip_vector(cursor: &mut Cursor<&[u8]>) -> Result<u32, String> {{
     let vc = cursor.read_u32::<LittleEndian>().map_err(|_| "skip_vector: ctor")?;
@@ -703,11 +807,15 @@ pub fn read_vector_string(cursor: &mut Cursor<&[u8]>) -> Result<Vec<String>, Str
     for _ in 0..cnt {{ v.push(deserialize_string(cursor)?); }}
     Ok(v)
 }}
-"#).unwrap();
+"#
+    )
+    .unwrap();
 }
 
 fn write_field_readers(out: &mut fs::File) {
-    writeln!(out, r#"
+    writeln!(
+        out,
+        r#"
 // check if a constructor is known in the schema
 pub fn is_known_ctor(id: u32) -> bool {{
     lookup_ctor(id).is_some()
@@ -735,12 +843,16 @@ pub fn deserialize_tl_vec<T: TlDeserialize>(raw_vec: &[Vec<u8>]) -> Result<Vec<T
 pub trait TlDeserialize: Sized {{
     fn tl_deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String>;
 }}
-"#).unwrap();
+"#
+    )
+    .unwrap();
 
     // now emit TlDeserialize impls for all generated structs and enums
     // (we'll do this in a separate pass after all types are generated)
 
-    writeln!(out, r#"
+    writeln!(
+        out,
+        r#"
 // serialize a bare TL constructor (just the ID, no fields)
 pub fn serialize_bare_ctor(id: u32) -> Vec<u8> {{
     id.to_le_bytes().to_vec()
@@ -799,7 +911,9 @@ pub fn serialize_input_channel(channel_id: i64, access_hash: i64) -> Vec<u8> {{
     buf.extend_from_slice(&access_hash.to_le_bytes());
     buf
 }}
-"#).unwrap();
+"#
+    )
+    .unwrap();
 }
 
 fn write_raw_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) {
@@ -832,7 +946,9 @@ fn write_raw_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) {
             FType::VecBytes => "&[&[u8]]",
             _ => "UNSUPPORTED",
         };
-        if ty == "UNSUPPORTED" { return; }
+        if ty == "UNSUPPORTED" {
+            return;
+        }
         if field.flag_field.is_some() {
             params.push(format!("{}: Option<{}>", sname, ty));
         } else {
@@ -840,12 +956,25 @@ fn write_raw_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) {
         }
     }
 
-    writeln!(out, "pub fn {}({}) -> Vec<u8> {{", fn_name, params.join(", ")).unwrap();
+    writeln!(
+        out,
+        "pub fn {}({}) -> Vec<u8> {{",
+        fn_name,
+        params.join(", ")
+    )
+    .unwrap();
     writeln!(out, "    let mut buf = Vec::new();").unwrap();
-    writeln!(out, "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();", ctor.id).unwrap();
+    writeln!(
+        out,
+        "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();",
+        ctor.id
+    )
+    .unwrap();
 
     if has_flags {
-        let flag_fields: Vec<&Field> = ctor.fields.iter()
+        let flag_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| matches!(f.ftype, FType::Flags))
             .collect();
         for ff in &flag_fields {
@@ -857,7 +986,10 @@ fn write_raw_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) {
                     if matches!(field.ftype, FType::True) {
                         parts.push(format!("(if {} {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
                     } else {
-                        parts.push(format!("(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
+                        parts.push(format!(
+                            "(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})",
+                            sname, bit
+                        ));
                     }
                 }
             }
@@ -865,7 +997,12 @@ fn write_raw_builder(out: &mut fs::File, ctor: &Constructor, fn_name: &str) {
                 writeln!(out, "    buf.write_u32::<LittleEndian>(0).unwrap();").unwrap();
             } else {
                 writeln!(out, "    let {}_val: u32 = {};", ff.name, parts.join(" | ")).unwrap();
-                writeln!(out, "    buf.write_u32::<LittleEndian>({}_val).unwrap();", ff.name).unwrap();
+                writeln!(
+                    out,
+                    "    buf.write_u32::<LittleEndian>({}_val).unwrap();",
+                    ff.name
+                )
+                .unwrap();
             }
         }
     }
@@ -1140,7 +1277,9 @@ impl RpcError {{
 }
 
 fn write_peer_helpers(out: &mut fs::File) {
-    writeln!(out, r#"
+    writeln!(
+        out,
+        r#"
 // --- Peer deserialization ---
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1180,11 +1319,15 @@ impl Peer {{
     pub fn is_chat(&self) -> bool {{ matches!(self, Peer::Chat(_)) }}
     pub fn is_channel(&self) -> bool {{ matches!(self, Peer::Channel(_)) }}
 }}
-"#).unwrap();
+"#
+    )
+    .unwrap();
 }
 
 fn write_wrap_helpers(out: &mut fs::File) {
-    writeln!(out, r#"
+    writeln!(
+        out,
+        r#"
 // --- invokeWithLayer + initConnection wrapper ---
 
 pub const CURRENT_LAYER: i32 = 228;
@@ -1234,7 +1377,9 @@ pub fn build_get_me(
     inner.write_u32::<LittleEndian>(INPUT_USER_SELF).unwrap();
     wrap_invoke_with_layer(&inner, api_id, device, system, app_version, system_lang, lang)
 }}
-"#).unwrap();
+"#
+    )
+    .unwrap();
 }
 
 fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
@@ -1242,7 +1387,9 @@ fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
     writeln!(out, "").unwrap();
 
     for ctor in ctors.iter().filter(|c| !c.is_function) {
-        let real_fields: Vec<&Field> = ctor.fields.iter()
+        let real_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| !matches!(f.ftype, FType::True | FType::Flags))
             .collect();
         if real_fields.is_empty() && !ctor.fields.iter().any(|f| matches!(f.ftype, FType::Flags)) {
@@ -1269,7 +1416,10 @@ fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
                 FType::VecObj => "&[&[u8]]",
                 _ => rust_type_for(field.ftype),
             };
-            if ty == "UNSUPPORTED" { has_unsupported = true; break; }
+            if ty == "UNSUPPORTED" {
+                has_unsupported = true;
+                break;
+            }
             let sname = sanitize_name(&field.name);
             if field.flag_field.is_some() {
                 params.push(format!("{}: Option<{}>", sname, ty));
@@ -1277,14 +1427,29 @@ fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
                 params.push(format!("{}: {}", sname, ty));
             }
         }
-        if has_unsupported { continue; }
+        if has_unsupported {
+            continue;
+        }
 
-        writeln!(out, "pub fn {}({}) -> Vec<u8> {{", fn_name, params.join(", ")).unwrap();
+        writeln!(
+            out,
+            "pub fn {}({}) -> Vec<u8> {{",
+            fn_name,
+            params.join(", ")
+        )
+        .unwrap();
         writeln!(out, "    let mut buf = Vec::new();").unwrap();
-        writeln!(out, "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();", ctor.id).unwrap();
+        writeln!(
+            out,
+            "    buf.write_u32::<LittleEndian>({:#010x}).unwrap();",
+            ctor.id
+        )
+        .unwrap();
 
         if has_flags {
-            let flag_fields: Vec<&Field> = ctor.fields.iter()
+            let flag_fields: Vec<&Field> = ctor
+                .fields
+                .iter()
                 .filter(|f| matches!(f.ftype, FType::Flags))
                 .collect();
             for ff in &flag_fields {
@@ -1294,9 +1459,13 @@ fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
                         let bit = field.flag_bit.unwrap();
                         let sname = sanitize_name(&field.name);
                         if matches!(field.ftype, FType::True) {
-                            parts.push(format!("(if {} {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
+                            parts
+                                .push(format!("(if {} {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
                         } else {
-                            parts.push(format!("(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})", sname, bit));
+                            parts.push(format!(
+                                "(if {}.is_some() {{ 1u32 << {} }} else {{ 0 }})",
+                                sname, bit
+                            ));
                         }
                     }
                 }
@@ -1304,7 +1473,12 @@ fn write_type_serializers(out: &mut fs::File, ctors: &[Constructor]) {
                     writeln!(out, "    buf.write_u32::<LittleEndian>(0).unwrap();").unwrap();
                 } else {
                     writeln!(out, "    let {}_val: u32 = {};", ff.name, parts.join(" | ")).unwrap();
-                    writeln!(out, "    buf.write_u32::<LittleEndian>({}_val).unwrap();", ff.name).unwrap();
+                    writeln!(
+                        out,
+                        "    buf.write_u32::<LittleEndian>({}_val).unwrap();",
+                        ff.name
+                    )
+                    .unwrap();
                 }
             }
         }
@@ -1337,7 +1511,10 @@ fn write_type_deserializers(out: &mut fs::File, ctors: &[Constructor]) {
         if ctor.result_type.contains(' ') || ctor.result_type.contains('<') {
             continue;
         }
-        by_type.entry(ctor.result_type.clone()).or_default().push(ctor);
+        by_type
+            .entry(ctor.result_type.clone())
+            .or_default()
+            .push(ctor);
     }
 
     writeln!(out, "// --- type deserializers ---").unwrap();
@@ -1373,9 +1550,15 @@ fn to_snake(name: &str) -> String {
     let mut result = String::new();
     let mut prev_upper = false;
     for (i, ch) in name.chars().enumerate() {
-        if ch == '.' { result.push('_'); prev_upper = false; continue; }
+        if ch == '.' {
+            result.push('_');
+            prev_upper = false;
+            continue;
+        }
         if ch.is_uppercase() {
-            if i > 0 && !prev_upper { result.push('_'); }
+            if i > 0 && !prev_upper {
+                result.push('_');
+            }
             result.push(ch.to_ascii_lowercase());
             prev_upper = true;
         } else {
@@ -1409,15 +1592,21 @@ fn rust_owned_type(ft: FType) -> &'static str {
 
 fn write_single_ctor_struct(out: &mut fs::File, ctor: &Constructor, type_name: &str) {
     let struct_name = to_struct_name(type_name);
-    let real_fields: Vec<&Field> = ctor.fields.iter()
+    let real_fields: Vec<&Field> = ctor
+        .fields
+        .iter()
         .filter(|f| !matches!(f.ftype, FType::Flags))
         .collect();
 
     // pre-check: all field types must be representable
     for field in &real_fields {
-        if matches!(field.ftype, FType::True) { continue; }
+        if matches!(field.ftype, FType::True) {
+            continue;
+        }
         let ty = rust_owned_type(field.ftype);
-        if ty == "SKIP" { return; }
+        if ty == "SKIP" {
+            return;
+        }
     }
 
     writeln!(out, "#[derive(Debug, Clone, Default)]").unwrap();
@@ -1435,19 +1624,31 @@ fn write_single_ctor_struct(out: &mut fs::File, ctor: &Constructor, type_name: &
     writeln!(out, "").unwrap();
 
     writeln!(out, "impl {} {{", struct_name).unwrap();
-    writeln!(out, "    pub fn deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{").unwrap();
+    writeln!(
+        out,
+        "    pub fn deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{"
+    )
+    .unwrap();
     writeln!(out, "        let mut obj = Self::default();").unwrap();
 
-    let flag_fields: Vec<&Field> = ctor.fields.iter()
+    let flag_fields: Vec<&Field> = ctor
+        .fields
+        .iter()
         .filter(|f| matches!(f.ftype, FType::Flags))
         .collect();
     for ff in &flag_fields {
-        writeln!(out, "        let {} = cursor.read_u32::<LittleEndian>().map_err(|_| \"read {}\")?;",
-            ff.name, ff.name).unwrap();
+        writeln!(
+            out,
+            "        let {} = cursor.read_u32::<LittleEndian>().map_err(|_| \"read {}\")?;",
+            ff.name, ff.name
+        )
+        .unwrap();
     }
 
     for field in &real_fields {
-        if matches!(field.ftype, FType::Flags) { continue; }
+        if matches!(field.ftype, FType::Flags) {
+            continue;
+        }
         let sname = sanitize_name(&field.name);
         let is_cond = field.flag_field.is_some();
 
@@ -1460,7 +1661,12 @@ fn write_single_ctor_struct(out: &mut fs::File, ctor: &Constructor, type_name: &
         } else if matches!(field.ftype, FType::True) {
             let ff_name = field.flag_field.as_ref().unwrap();
             let bit = field.flag_bit.unwrap();
-            writeln!(out, "        obj.{} = {} & (1 << {}) != 0;", sname, ff_name, bit).unwrap();
+            writeln!(
+                out,
+                "        obj.{} = {} & (1 << {}) != 0;",
+                sname, ff_name, bit
+            )
+            .unwrap();
         } else {
             write_deser_field_v2(out, field.ftype, &sname, false, "        ");
         }
@@ -1476,7 +1682,13 @@ fn write_deser_field(out: &mut fs::File, ftype: FType, name: &str, is_option: bo
     write_deser_field_v2(out, ftype, name, is_option, indent);
 }
 
-fn write_deser_field_v2(out: &mut fs::File, ftype: FType, name: &str, is_option: bool, indent: &str) {
+fn write_deser_field_v2(
+    out: &mut fs::File,
+    ftype: FType,
+    name: &str,
+    is_option: bool,
+    indent: &str,
+) {
     let assign = if is_option {
         format!("obj.{} = Some(", name)
     } else {
@@ -1485,22 +1697,84 @@ fn write_deser_field_v2(out: &mut fs::File, ftype: FType, name: &str, is_option:
     let close = if is_option { ");" } else { ";" };
 
     match ftype {
-        FType::Int => writeln!(out, "{}{}cursor.read_i32::<LittleEndian>().map_err(|_| \"read {}\")?{}", indent, assign, name, close).unwrap(),
-        FType::Long => writeln!(out, "{}{}cursor.read_i64::<LittleEndian>().map_err(|_| \"read {}\")?{}", indent, assign, name, close).unwrap(),
-        FType::Double => writeln!(out, "{}{}f64::from_bits(cursor.read_u64::<LittleEndian>().map_err(|_| \"read {}\")?){}", indent, assign, name, close).unwrap(),
-        FType::Str => writeln!(out, "{}{}deserialize_string(cursor)?{}", indent, assign, close).unwrap(),
-        FType::Bytes => writeln!(out, "{}{}deserialize_bytes(cursor).map_err(|_| \"read {}\".to_string())?{}", indent, assign, name, close).unwrap(),
-        FType::Bool => writeln!(out, "{}{}cursor.read_u32::<LittleEndian>().map_err(|_| \"read {}\")? == 0x997275b5{}", indent, assign, name, close).unwrap(),
-        FType::VecInt => writeln!(out, "{}{}read_vector_int(cursor)?{}", indent, assign, close).unwrap(),
-        FType::VecLong => writeln!(out, "{}{}read_vector_long(cursor)?{}", indent, assign, close).unwrap(),
-        FType::VecStr => writeln!(out, "{}{}read_vector_string(cursor)?{}", indent, assign, close).unwrap(),
+        FType::Int => writeln!(
+            out,
+            "{}{}cursor.read_i32::<LittleEndian>().map_err(|_| \"read {}\")?{}",
+            indent, assign, name, close
+        )
+        .unwrap(),
+        FType::Long => writeln!(
+            out,
+            "{}{}cursor.read_i64::<LittleEndian>().map_err(|_| \"read {}\")?{}",
+            indent, assign, name, close
+        )
+        .unwrap(),
+        FType::Double => writeln!(
+            out,
+            "{}{}f64::from_bits(cursor.read_u64::<LittleEndian>().map_err(|_| \"read {}\")?){}",
+            indent, assign, name, close
+        )
+        .unwrap(),
+        FType::Str => writeln!(
+            out,
+            "{}{}deserialize_string(cursor)?{}",
+            indent, assign, close
+        )
+        .unwrap(),
+        FType::Bytes => writeln!(
+            out,
+            "{}{}deserialize_bytes(cursor).map_err(|_| \"read {}\".to_string())?{}",
+            indent, assign, name, close
+        )
+        .unwrap(),
+        FType::Bool => writeln!(
+            out,
+            "{}{}cursor.read_u32::<LittleEndian>().map_err(|_| \"read {}\")? == 0x997275b5{}",
+            indent, assign, name, close
+        )
+        .unwrap(),
+        FType::VecInt => {
+            writeln!(out, "{}{}read_vector_int(cursor)?{}", indent, assign, close).unwrap()
+        }
+        FType::VecLong => writeln!(
+            out,
+            "{}{}read_vector_long(cursor)?{}",
+            indent, assign, close
+        )
+        .unwrap(),
+        FType::VecStr => writeln!(
+            out,
+            "{}{}read_vector_string(cursor)?{}",
+            indent, assign, close
+        )
+        .unwrap(),
         FType::VecBytes => {
             writeln!(out, "{}{{", indent).unwrap();
-            writeln!(out, "{}    let vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;", indent).unwrap();
-            writeln!(out, "{}    if vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}", indent).unwrap();
-            writeln!(out, "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;", indent).unwrap();
+            writeln!(
+                out,
+                "{}    let vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;",
+                indent
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{}    if vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}",
+                indent
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;",
+                indent
+            )
+            .unwrap();
             writeln!(out, "{}    check_vector_count(cnt)?;", indent).unwrap();
-            writeln!(out, "{}    let mut v = Vec::with_capacity(cnt as usize);", indent).unwrap();
+            writeln!(
+                out,
+                "{}    let mut v = Vec::with_capacity(cnt as usize);",
+                indent
+            )
+            .unwrap();
             writeln!(out, "{}    for _ in 0..cnt {{ v.push(deserialize_bytes(cursor).map_err(|_| \"vb\".to_string())?); }}", indent).unwrap();
             writeln!(out, "{}    {}v{}", indent, assign, close).unwrap();
             writeln!(out, "{}}}", indent).unwrap();
@@ -1512,22 +1786,52 @@ fn write_deser_field_v2(out: &mut fs::File, ftype: FType, name: &str, is_option:
             writeln!(out, "{}    skip_tl(cursor)?;", indent).unwrap();
             writeln!(out, "{}    let end = cursor.position() as usize;", indent).unwrap();
             writeln!(out, "{}    let slice = cursor.get_ref();", indent).unwrap();
-            writeln!(out, "{}    {}slice[start..end].to_vec(){}", indent, assign, close).unwrap();
+            writeln!(
+                out,
+                "{}    {}slice[start..end].to_vec(){}",
+                indent, assign, close
+            )
+            .unwrap();
             writeln!(out, "{}}}", indent).unwrap();
         }
         FType::VecObj => {
             // capture each object in vector as raw bytes
             writeln!(out, "{}{{", indent).unwrap();
-            writeln!(out, "{}    let _vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;", indent).unwrap();
-            writeln!(out, "{}    if _vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}", indent).unwrap();
-            writeln!(out, "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;", indent).unwrap();
+            writeln!(
+                out,
+                "{}    let _vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec ctor\")?;",
+                indent
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{}    if _vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }}",
+                indent
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "{}    let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"vec cnt\")?;",
+                indent
+            )
+            .unwrap();
             writeln!(out, "{}    check_vector_count(cnt)?;", indent).unwrap();
-            writeln!(out, "{}    let mut v = Vec::with_capacity(cnt as usize);", indent).unwrap();
+            writeln!(
+                out,
+                "{}    let mut v = Vec::with_capacity(cnt as usize);",
+                indent
+            )
+            .unwrap();
             writeln!(out, "{}    for _ in 0..cnt {{", indent).unwrap();
             writeln!(out, "{}        let s = cursor.position() as usize;", indent).unwrap();
             writeln!(out, "{}        skip_tl(cursor)?;", indent).unwrap();
             writeln!(out, "{}        let e = cursor.position() as usize;", indent).unwrap();
-            writeln!(out, "{}        v.push(cursor.get_ref()[s..e].to_vec());", indent).unwrap();
+            writeln!(
+                out,
+                "{}        v.push(cursor.get_ref()[s..e].to_vec());",
+                indent
+            )
+            .unwrap();
             writeln!(out, "{}    }}", indent).unwrap();
             writeln!(out, "{}    {}v{}", indent, assign, close).unwrap();
             writeln!(out, "{}}}", indent).unwrap();
@@ -1546,9 +1850,13 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
     // check no unsupported types (only SKIP is unsupported now)
     for ctor in type_ctors {
         for field in &ctor.fields {
-            if matches!(field.ftype, FType::Flags | FType::True) { continue; }
+            if matches!(field.ftype, FType::Flags | FType::True) {
+                continue;
+            }
             let ty = rust_owned_type(field.ftype);
-            if ty == "SKIP" { return; }
+            if ty == "SKIP" {
+                return;
+            }
         }
     }
 
@@ -1563,22 +1871,27 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
 
     for ctor in type_ctors {
         let variant = variant_name(&ctor.name, base);
-        let real_fields: Vec<&Field> = ctor.fields.iter()
+        let real_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| !matches!(f.ftype, FType::Flags))
             .collect();
 
         if real_fields.is_empty() {
             writeln!(out, "    {},", variant).unwrap();
         } else {
-            let field_defs: Vec<String> = real_fields.iter().map(|f| {
-                let sname = sanitize_name(&f.name);
-                let ty = rust_owned_type(f.ftype);
-                if f.flag_field.is_some() && !matches!(f.ftype, FType::True) {
-                    format!("{}: Option<{}>", sname, ty)
-                } else {
-                    format!("{}: {}", sname, ty)
-                }
-            }).collect();
+            let field_defs: Vec<String> = real_fields
+                .iter()
+                .map(|f| {
+                    let sname = sanitize_name(&f.name);
+                    let ty = rust_owned_type(f.ftype);
+                    if f.flag_field.is_some() && !matches!(f.ftype, FType::True) {
+                        format!("{}: Option<{}>", sname, ty)
+                    } else {
+                        format!("{}: {}", sname, ty)
+                    }
+                })
+                .collect();
             writeln!(out, "    {} {{ {} }},", variant, field_defs.join(", ")).unwrap();
         }
     }
@@ -1587,8 +1900,16 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
 
     // generate deserialize
     writeln!(out, "impl {} {{", enum_name).unwrap();
-    writeln!(out, "    pub fn deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{").unwrap();
-    writeln!(out, "        let ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"read ctor\")?;").unwrap();
+    writeln!(
+        out,
+        "    pub fn deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "        let ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"read ctor\")?;"
+    )
+    .unwrap();
     writeln!(out, "        Self::deserialize_by_id(cursor, ctor)").unwrap();
     writeln!(out, "    }}").unwrap();
     writeln!(out, "").unwrap();
@@ -1597,10 +1918,14 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
 
     for ctor in type_ctors {
         let variant = variant_name(&ctor.name, base);
-        let real_fields: Vec<&Field> = ctor.fields.iter()
+        let real_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| !matches!(f.ftype, FType::Flags))
             .collect();
-        let flag_fields: Vec<&Field> = ctor.fields.iter()
+        let flag_fields: Vec<&Field> = ctor
+            .fields
+            .iter()
             .filter(|f| matches!(f.ftype, FType::Flags))
             .collect();
 
@@ -1621,11 +1946,21 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
                     // bool from flag bit
                     let ff_name = field.flag_field.as_ref().unwrap();
                     let bit = field.flag_bit.unwrap();
-                    writeln!(out, "                let {} = {} & (1 << {}) != 0;", sname, ff_name, bit).unwrap();
+                    writeln!(
+                        out,
+                        "                let {} = {} & (1 << {}) != 0;",
+                        sname, ff_name, bit
+                    )
+                    .unwrap();
                 } else if field.flag_field.is_some() {
                     let ff_name = field.flag_field.as_ref().unwrap();
                     let bit = field.flag_bit.unwrap();
-                    writeln!(out, "                let {} = if {} & (1 << {}) != 0 {{", sname, ff_name, bit).unwrap();
+                    writeln!(
+                        out,
+                        "                let {} = if {} & (1 << {}) != 0 {{",
+                        sname, ff_name, bit
+                    )
+                    .unwrap();
                     write_deser_expr(out, field.ftype, "                    ");
                     writeln!(out, "                }} else {{ None }};").unwrap();
                 } else {
@@ -1634,13 +1969,26 @@ fn write_enum_type(out: &mut fs::File, type_ctors: &[&Constructor], type_name: &
                     writeln!(out, "                }};").unwrap();
                 }
             }
-            let field_names: Vec<String> = real_fields.iter().map(|f| sanitize_name(&f.name)).collect();
-            writeln!(out, "                Ok({}::{} {{ {} }})", enum_name, variant, field_names.join(", ")).unwrap();
+            let field_names: Vec<String> =
+                real_fields.iter().map(|f| sanitize_name(&f.name)).collect();
+            writeln!(
+                out,
+                "                Ok({}::{} {{ {} }})",
+                enum_name,
+                variant,
+                field_names.join(", ")
+            )
+            .unwrap();
         }
         writeln!(out, "            }}").unwrap();
     }
 
-    writeln!(out, "            _ => Err(format!(\"unknown {} ctor {{:#x}}\", ctor)),", type_name).unwrap();
+    writeln!(
+        out,
+        "            _ => Err(format!(\"unknown {} ctor {{:#x}}\", ctor)),",
+        type_name
+    )
+    .unwrap();
     writeln!(out, "        }}").unwrap();
     writeln!(out, "    }}").unwrap();
     writeln!(out, "}}").unwrap();
@@ -1662,7 +2010,8 @@ fn variant_name(ctor_name: &str, base_type: &str) -> String {
     // try to find the longest matching prefix
     let stripped = if lower_name.len() > 2 {
         // try removing base type name (without "Result"/"Full" suffix)
-        let base_clean = lower_base.trim_end_matches("result")
+        let base_clean = lower_base
+            .trim_end_matches("result")
             .trim_end_matches("full")
             .trim_end_matches("type");
         if lower_name.starts_with(base_clean) && name_no_ns.len() > base_clean.len() {
@@ -1726,12 +2075,37 @@ fn write_deser_expr(out: &mut fs::File, ftype: FType, indent: &str) {
 
 fn write_deser_expr_direct(out: &mut fs::File, ftype: FType, indent: &str) {
     match ftype {
-        FType::Int => writeln!(out, "{}cursor.read_i32::<LittleEndian>().map_err(|_| \"int\")?", indent).unwrap(),
-        FType::Long => writeln!(out, "{}cursor.read_i64::<LittleEndian>().map_err(|_| \"long\")?", indent).unwrap(),
-        FType::Double => writeln!(out, "{}f64::from_bits(cursor.read_u64::<LittleEndian>().map_err(|_| \"double\")?)", indent).unwrap(),
+        FType::Int => writeln!(
+            out,
+            "{}cursor.read_i32::<LittleEndian>().map_err(|_| \"int\")?",
+            indent
+        )
+        .unwrap(),
+        FType::Long => writeln!(
+            out,
+            "{}cursor.read_i64::<LittleEndian>().map_err(|_| \"long\")?",
+            indent
+        )
+        .unwrap(),
+        FType::Double => writeln!(
+            out,
+            "{}f64::from_bits(cursor.read_u64::<LittleEndian>().map_err(|_| \"double\")?)",
+            indent
+        )
+        .unwrap(),
         FType::Str => writeln!(out, "{}deserialize_string(cursor)?", indent).unwrap(),
-        FType::Bytes => writeln!(out, "{}deserialize_bytes(cursor).map_err(|_| \"bytes\".to_string())?", indent).unwrap(),
-        FType::Bool => writeln!(out, "{}cursor.read_u32::<LittleEndian>().map_err(|_| \"bool\")? == 0x997275b5", indent).unwrap(),
+        FType::Bytes => writeln!(
+            out,
+            "{}deserialize_bytes(cursor).map_err(|_| \"bytes\".to_string())?",
+            indent
+        )
+        .unwrap(),
+        FType::Bool => writeln!(
+            out,
+            "{}cursor.read_u32::<LittleEndian>().map_err(|_| \"bool\")? == 0x997275b5",
+            indent
+        )
+        .unwrap(),
         FType::VecInt => writeln!(out, "{}read_vector_int(cursor)?", indent).unwrap(),
         FType::VecLong => writeln!(out, "{}read_vector_long(cursor)?", indent).unwrap(),
         FType::VecStr => writeln!(out, "{}read_vector_string(cursor)?", indent).unwrap(),
@@ -1741,8 +2115,18 @@ fn write_deser_expr_direct(out: &mut fs::File, ftype: FType, indent: &str) {
         FType::VecObj => {
             writeln!(out, "{}{{ let vc = cursor.read_u32::<LittleEndian>().map_err(|_| \"vc\")?; if vc != 0x1cb5c415 {{ return Err(\"not a vector\".into()); }} let cnt = cursor.read_u32::<LittleEndian>().map_err(|_| \"cnt\")?; check_vector_count(cnt)?; let mut v = Vec::new(); for _ in 0..cnt {{ let s = cursor.position() as usize; skip_tl(cursor)?; let e = cursor.position() as usize; v.push(cursor.get_ref()[s..e].to_vec()); }} v }}", indent).unwrap();
         }
-        FType::Int128 => writeln!(out, "{}{{ let mut b = [0u8; 16]; cursor.read_exact(&mut b).map_err(|_| \"i128\")?; b }}", indent).unwrap(),
-        FType::Int256 => writeln!(out, "{}{{ let mut b = [0u8; 32]; cursor.read_exact(&mut b).map_err(|_| \"i256\")?; b }}", indent).unwrap(),
+        FType::Int128 => writeln!(
+            out,
+            "{}{{ let mut b = [0u8; 16]; cursor.read_exact(&mut b).map_err(|_| \"i128\")?; b }}",
+            indent
+        )
+        .unwrap(),
+        FType::Int256 => writeln!(
+            out,
+            "{}{{ let mut b = [0u8; 32]; cursor.read_exact(&mut b).map_err(|_| \"i256\")?; b }}",
+            indent
+        )
+        .unwrap(),
         _ => writeln!(out, "{}Default::default() // unsupported", indent).unwrap(),
     }
 }
@@ -1754,8 +2138,13 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
     let mut known_types: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut by_type: HashMap<String, Vec<&Constructor>> = HashMap::new();
     for ctor in ctors.iter().filter(|c| !c.is_function) {
-        if ctor.result_type.contains(' ') || ctor.result_type.contains('<') { continue; }
-        by_type.entry(ctor.result_type.clone()).or_default().push(ctor);
+        if ctor.result_type.contains(' ') || ctor.result_type.contains('<') {
+            continue;
+        }
+        by_type
+            .entry(ctor.result_type.clone())
+            .or_default()
+            .push(ctor);
     }
     for (type_name, _) in &by_type {
         known_types.insert(type_name.clone());
@@ -1767,7 +2156,12 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
 
         // Bool result type
         if rt == "Bool" {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<bool, String> {{", fn_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<bool, String> {{",
+                fn_name
+            )
+            .unwrap();
             writeln!(out, "    parse_bool(data)").unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
@@ -1776,7 +2170,12 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
 
         // Vector<int>
         if rt == "Vector<int>" {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<Vec<i32>, String> {{", fn_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<Vec<i32>, String> {{",
+                fn_name
+            )
+            .unwrap();
             writeln!(out, "    parse_vector_int_response(data)").unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
@@ -1785,7 +2184,12 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
 
         // Vector<long>
         if rt == "Vector<long>" {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<Vec<i64>, String> {{", fn_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<Vec<i64>, String> {{",
+                fn_name
+            )
+            .unwrap();
             writeln!(out, "    parse_vector_long_response(data)").unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
@@ -1794,9 +2198,14 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
 
         // Vector<T> where T is a known type
         if rt.starts_with("Vector<") && rt.ends_with('>') {
-            let inner_type = &rt[7..rt.len()-1];
+            let inner_type = &rt[7..rt.len() - 1];
             if inner_type == "string" {
-                writeln!(out, "pub fn {}(data: &[u8]) -> Result<Vec<String>, String> {{", fn_name).unwrap();
+                writeln!(
+                    out,
+                    "pub fn {}(data: &[u8]) -> Result<Vec<String>, String> {{",
+                    fn_name
+                )
+                .unwrap();
                 writeln!(out, "    let inner = unwrap_rpc(data)?;").unwrap();
                 writeln!(out, "    let mut cursor = Cursor::new(inner.as_slice());").unwrap();
                 writeln!(out, "    read_vector_string(&mut cursor)").unwrap();
@@ -1804,7 +2213,12 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
                 writeln!(out, "").unwrap();
             } else if known_types.contains(inner_type) {
                 let inner_struct = to_struct_name(inner_type);
-                writeln!(out, "pub fn {}(data: &[u8]) -> Result<Vec<{}>, String> {{", fn_name, inner_struct).unwrap();
+                writeln!(
+                    out,
+                    "pub fn {}(data: &[u8]) -> Result<Vec<{}>, String> {{",
+                    fn_name, inner_struct
+                )
+                .unwrap();
                 writeln!(out, "    parse_vector_response::<{}>(data)", inner_struct).unwrap();
                 writeln!(out, "}}").unwrap();
                 writeln!(out, "").unwrap();
@@ -1813,33 +2227,58 @@ fn write_method_parsers(out: &mut fs::File, ctors: &[Constructor]) {
         }
 
         // skip generic/unknown
-        if rt.contains(' ') || rt.contains('<') { continue; }
-        if rt == "X" { continue; }
+        if rt.contains(' ') || rt.contains('<') {
+            continue;
+        }
+        if rt == "X" {
+            continue;
+        }
 
         // Updates — generate parser that returns raw bytes (too complex for full deser)
         if rt == "Updates" {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<Vec<u8>, String> {{", fn_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<Vec<u8>, String> {{",
+                fn_name
+            )
+            .unwrap();
             writeln!(out, "    unwrap_rpc(data)").unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
             continue;
         }
 
-        if !known_types.contains(rt) { continue; }
+        if !known_types.contains(rt) {
+            continue;
+        }
 
         let struct_name = to_struct_name(rt);
         let type_ctors = by_type.get(rt).unwrap();
 
         if type_ctors.len() == 1 {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<{}, String> {{", fn_name, struct_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<{}, String> {{",
+                fn_name, struct_name
+            )
+            .unwrap();
             writeln!(out, "    let inner = unwrap_rpc(data)?;").unwrap();
             writeln!(out, "    let mut cursor = Cursor::new(inner.as_slice());").unwrap();
-            writeln!(out, "    let _ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"ctor\")?;").unwrap();
+            writeln!(
+                out,
+                "    let _ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"ctor\")?;"
+            )
+            .unwrap();
             writeln!(out, "    {}::deserialize(&mut cursor)", struct_name).unwrap();
             writeln!(out, "}}").unwrap();
             writeln!(out, "").unwrap();
         } else {
-            writeln!(out, "pub fn {}(data: &[u8]) -> Result<{}, String> {{", fn_name, struct_name).unwrap();
+            writeln!(
+                out,
+                "pub fn {}(data: &[u8]) -> Result<{}, String> {{",
+                fn_name, struct_name
+            )
+            .unwrap();
             writeln!(out, "    let inner = unwrap_rpc(data)?;").unwrap();
             writeln!(out, "    let mut cursor = Cursor::new(inner.as_slice());").unwrap();
             writeln!(out, "    {}::deserialize(&mut cursor)", struct_name).unwrap();
@@ -1853,8 +2292,13 @@ fn write_trait_impls(out: &mut fs::File, ctors: &[Constructor]) {
     // generate TlDeserialize impls for all generated types
     let mut by_type: HashMap<String, Vec<&Constructor>> = HashMap::new();
     for ctor in ctors.iter().filter(|c| !c.is_function) {
-        if ctor.result_type.contains(' ') || ctor.result_type.contains('<') { continue; }
-        by_type.entry(ctor.result_type.clone()).or_default().push(ctor);
+        if ctor.result_type.contains(' ') || ctor.result_type.contains('<') {
+            continue;
+        }
+        by_type
+            .entry(ctor.result_type.clone())
+            .or_default()
+            .push(ctor);
     }
 
     writeln!(out, "// --- TlDeserialize trait impls ---").unwrap();
@@ -1867,8 +2311,16 @@ fn write_trait_impls(out: &mut fs::File, ctors: &[Constructor]) {
             // single-ctor struct: TlDeserialize reads ctor then calls deserialize
             // but our struct::deserialize doesn't read ctor, so we need to handle it
             writeln!(out, "impl TlDeserialize for {} {{", struct_name).unwrap();
-            writeln!(out, "    fn tl_deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{").unwrap();
-            writeln!(out, "        let _ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"ctor\")?;").unwrap();
+            writeln!(
+                out,
+                "    fn tl_deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{"
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        let _ctor = cursor.read_u32::<LittleEndian>().map_err(|_| \"ctor\")?;"
+            )
+            .unwrap();
             writeln!(out, "        Self::deserialize(cursor)").unwrap();
             writeln!(out, "    }}").unwrap();
             writeln!(out, "}}").unwrap();
@@ -1876,7 +2328,11 @@ fn write_trait_impls(out: &mut fs::File, ctors: &[Constructor]) {
         } else {
             // multi-ctor enum: TlDeserialize calls deserialize which reads ctor internally
             writeln!(out, "impl TlDeserialize for {} {{", struct_name).unwrap();
-            writeln!(out, "    fn tl_deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{").unwrap();
+            writeln!(
+                out,
+                "    fn tl_deserialize(cursor: &mut Cursor<&[u8]>) -> Result<Self, String> {{"
+            )
+            .unwrap();
             writeln!(out, "        Self::deserialize(cursor)").unwrap();
             writeln!(out, "    }}").unwrap();
             writeln!(out, "}}").unwrap();

@@ -5,13 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::mtproto::auth::{perform_dh, compute_srp, Srp};
-use crate::mtproto::client::MtpClient;
-use crate::mtproto::tl;
-use crate::mtproto::transport::MtpTransport;
 use super::commands::{get_storage_pub, invalidate_accounts_cache};
 use super::devices;
 use super::session::{AccountJson, TelethonSession};
+use crate::mtproto::auth::{compute_srp, perform_dh, Srp};
+use crate::mtproto::client::MtpClient;
+use crate::mtproto::tl;
+use crate::mtproto::transport::MtpTransport;
 
 #[derive(Serialize, Clone, Default)]
 pub struct ReauthResults {
@@ -38,11 +38,17 @@ pub async fn reauth_accounts(
     for id in &ids {
         let session_path = storage.session_path(id);
         let json_path = storage.json_path(id);
-        if !session_path.exists() { continue; }
+        if !session_path.exists() {
+            continue;
+        }
 
         let session = match TelethonSession::from_file(&session_path) {
             Ok(s) => s,
-            Err(_) => { results.failed += 1; results.errors.push("session_read_error".into()); continue; }
+            Err(_) => {
+                results.failed += 1;
+                results.errors.push("session_read_error".into());
+                continue;
+            }
         };
         let json = if json_path.exists() {
             AccountJson::from_file(&json_path).unwrap_or_default()
@@ -51,14 +57,18 @@ pub async fn reauth_accounts(
         };
 
         // skip frozen
-        if json.status == crate::i18n::t("status_frozen") || json.status == crate::i18n::t("status_perm_spam") {
+        if json.status == crate::i18n::t("status_frozen")
+            || json.status == crate::i18n::t("status_perm_spam")
+        {
             results.failed += 1;
             results.errors.push("frozen".into());
             continue;
         }
 
         // skip unknown 2fa
-        if json.two_fa.starts_with(&crate::i18n::t("two_fa_unknown")) || json.two_fa == crate::i18n::t("two_fa_unknown_set") {
+        if json.two_fa.starts_with(&crate::i18n::t("two_fa_unknown"))
+            || json.two_fa == crate::i18n::t("two_fa_unknown_set")
+        {
             results.unknown_2fa += 1;
             continue;
         }
@@ -97,14 +107,21 @@ pub async fn reauth_accounts(
         }));
     }
 
-    for h in handles { let _ = h.await; }
+    for h in handles {
+        let _ = h.await;
+    }
 
     invalidate_accounts_cache();
     let final_results = results_lock.lock().await.clone();
     Ok(final_results)
 }
 
-async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, terminate_others: bool) -> Result<(), String> {
+async fn reauth_single(
+    id: &str,
+    session: &TelethonSession,
+    json: &AccountJson,
+    terminate_others: bool,
+) -> Result<(), String> {
     if session.auth_key.len() != 256 {
         return Err("invalid_auth_key".into());
     }
@@ -119,7 +136,8 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
     old_key.copy_from_slice(&session.auth_key);
 
     // connect with old key to read code later
-    let mut old_client = MtpClient::connect(&addr, &old_key, proxy.as_ref()).await
+    let mut old_client = MtpClient::connect(&addr, &old_key, proxy.as_ref())
+        .await
         .map_err(|e| format!("connect_old: {e}"))?;
 
     // use existing device info from json, or generate random if missing
@@ -127,25 +145,36 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
         devices::DeviceInfo {
             device: json.device.clone(),
             sdk: json.sdk.clone(),
-            app_version: if json.app_version.is_empty() { "10.14.5".to_string() } else { json.app_version.clone() },
+            app_version: if json.app_version.is_empty() {
+                "10.14.5".to_string()
+            } else {
+                json.app_version.clone()
+            },
         }
     } else {
         devices::generate_random_device()
     };
-    let app_id = if json.app_id == 0 { crate::get_app_config().app_id } else { json.app_id };
+    let app_id = if json.app_id == 0 {
+        crate::get_app_config().app_id
+    } else {
+        json.app_id
+    };
 
     // init connection on old client to verify session is alive
-    let get_me_req = tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
-    let me_resp = old_client.invoke(&get_me_req).await
-        .map_err(|e| {
-            // if the session is already dead/banned/frozen at the start, mark it in json
-            super::commands::check_and_mark_dead_session(&e, id);
-            format!("get_me: {e}")
-        })?;
-    let me = tl::parse_users_response(&me_resp)
-        .map_err(|e| format!("parse_me: {e}"))?;
+    let get_me_req =
+        tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
+    let me_resp = old_client.invoke(&get_me_req).await.map_err(|e| {
+        // if the session is already dead/banned/frozen at the start, mark it in json
+        super::commands::check_and_mark_dead_session(&e, id);
+        format!("get_me: {e}")
+    })?;
+    let me = tl::parse_users_response(&me_resp).map_err(|e| format!("parse_me: {e}"))?;
 
-    let phone = if !me.phone.is_empty() { me.phone.clone() } else { json.phone.clone() };
+    let phone = if !me.phone.is_empty() {
+        me.phone.clone()
+    } else {
+        json.phone.clone()
+    };
     if phone.is_empty() {
         return Err("no_phone".into());
     }
@@ -163,27 +192,48 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
     let new_dev = devices::generate_random_device();
     let dc_addr = &addr;
 
-    let mut transport = MtpTransport::connect(dc_addr, proxy.as_ref()).await
+    let mut transport = MtpTransport::connect(dc_addr, proxy.as_ref())
+        .await
         .map_err(|e| format!("connect_new: {e}"))?;
-    let dh = perform_dh(&mut transport).await
+    let dh = perform_dh(&mut transport)
+        .await
         .map_err(|e| format!("dh: {e}"))?;
     let mut new_client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, dc_addr);
 
     // send code
-    let app_hash = if json.app_hash.is_empty() { "b18441a1ff607e10a989891a5462e627".to_string() } else { json.app_hash.clone() };
+    let app_hash = if json.app_hash.is_empty() {
+        "b18441a1ff607e10a989891a5462e627".to_string()
+    } else {
+        json.app_hash.clone()
+    };
     let inner = tl::build_auth_send_code(&phone, app_id, &app_hash);
-    let request = tl::wrap_init_connection(&inner, app_id, &new_dev.device, &new_dev.sdk, &new_dev.app_version, "en", "en");
-    let send_resp = new_client.invoke(&request).await
+    let request = tl::wrap_init_connection(
+        &inner,
+        app_id,
+        &new_dev.device,
+        &new_dev.sdk,
+        &new_dev.app_version,
+        "en",
+        "en",
+    );
+    let send_resp = new_client
+        .invoke(&request)
+        .await
         .map_err(|e| format!("send_code: {e}"))?;
-    let sent = tl::parse_auth_sent_code(&send_resp)
-        .map_err(|e| format!("parse_sent_code: {e}"))?;
+    let sent = tl::parse_auth_sent_code(&send_resp).map_err(|e| format!("parse_sent_code: {e}"))?;
 
-    let request_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() as i32;
+    let request_time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i32;
 
     // read code from service messages (777000) via old client, up to 3 attempts
     let mut code: Option<String> = None;
     for attempt in 1..=3 {
-        update_status(id, &crate::i18n::t_with("reauth_step", &[("step", &attempt.to_string())]));
+        update_status(
+            id,
+            &crate::i18n::t_with("reauth_step", &[("step", &attempt.to_string())]),
+        );
         tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
         let hist_req = tl::build_get_history_service(3);
@@ -197,7 +247,9 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
                 }
             }
         }
-        if code.is_some() { break; }
+        if code.is_some() {
+            break;
+        }
     }
 
     let code = code.ok_or_else(|| "code_not_received".to_string())?;
@@ -219,7 +271,10 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
             if e.contains("SESSION_PASSWORD_NEEDED") {
                 // try 2fa if password is known
                 let two_fa = &json.two_fa;
-                if two_fa.is_empty() || two_fa.starts_with(&crate::i18n::t("two_fa_unknown")) || *two_fa == crate::i18n::t("two_fa_unknown_set") {
+                if two_fa.is_empty()
+                    || two_fa.starts_with(&crate::i18n::t("two_fa_unknown"))
+                    || *two_fa == crate::i18n::t("two_fa_unknown_set")
+                {
                     // mark as unknown 2fa
                     let mut updated = json.clone();
                     updated.two_fa = crate::i18n::t("two_fa_unknown");
@@ -228,16 +283,26 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
                 }
                 // attempt 2fa
                 let pw_req = tl::build_account_get_password();
-                let pw_data = new_client.invoke(&pw_req).await
+                let pw_data = new_client
+                    .invoke(&pw_req)
+                    .await
                     .map_err(|e| format!("get_password: {e}"))?;
                 let pw = tl::parse_account_password(&pw_data)
                     .map_err(|e| format!("parse_password: {e}"))?;
 
-                let srp = Srp { g: pw.g, p: pw.p, salt1: pw.salt1, salt2: pw.salt2, srp_id: pw.srp_id, srp_b: pw.srp_b };
-                let proof = compute_srp(&srp, two_fa)
-                    .map_err(|e| format!("srp: {e}"))?;
+                let srp = Srp {
+                    g: pw.g,
+                    p: pw.p,
+                    salt1: pw.salt1,
+                    salt2: pw.salt2,
+                    srp_id: pw.srp_id,
+                    srp_b: pw.srp_b,
+                };
+                let proof = compute_srp(&srp, two_fa).map_err(|e| format!("srp: {e}"))?;
                 let check_req = tl::build_auth_check_password(srp.srp_id, &proof.a, &proof.m1);
-                let check_resp = new_client.invoke(&check_req).await
+                let check_resp = new_client
+                    .invoke(&check_req)
+                    .await
                     .map_err(|e| format!("check_password: {e}"))?;
                 let _ = tl::parse_auth_authorization(&check_resp)
                     .map_err(|e| format!("auth_after_2fa: {e}"))?;
@@ -255,7 +320,8 @@ async fn reauth_single(id: &str, session: &TelethonSession, json: &AccountJson, 
         port: session.port,
         auth_key: new_key.to_vec(),
     };
-    new_session.to_file(&storage.session_path(id))
+    new_session
+        .to_file(&storage.session_path(id))
         .map_err(|e| format!("save_session: {e}"))?;
 
     // only logout old session after new one is safely persisted
@@ -289,7 +355,11 @@ fn extract_code(msg: &str, _request_time: i32) -> Option<String> {
         let slice = &text.as_bytes()[i..i + 5];
         if slice.iter().all(|b| b.is_ascii_digit()) {
             let before_ok = i == 0 || !text.as_bytes()[i - 1].is_ascii_digit();
-            let after_ok = text.as_bytes().get(i + 5).map(|b| !b.is_ascii_digit()).unwrap_or(true);
+            let after_ok = text
+                .as_bytes()
+                .get(i + 5)
+                .map(|b| !b.is_ascii_digit())
+                .unwrap_or(true);
             if before_ok && after_ok {
                 return Some(String::from_utf8_lossy(slice).to_string());
             }

@@ -113,7 +113,7 @@ fn kdf(auth_key: &[u8; 256], msg_key: &[u8; 16], x: usize) -> ([u8; 32], [u8; 32
 
 // auth_key_id = lower 64 bits of sha1(auth_key)
 pub fn auth_key_id(auth_key: &[u8; 256]) -> u64 {
-    use sha1::{Sha1, Digest as _};
+    use sha1::{Digest as _, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(auth_key);
     let hash = hasher.finalize();
@@ -126,7 +126,11 @@ pub fn auth_key_id(auth_key: &[u8; 256]) -> u64 {
 pub fn encrypt_message(auth_key: &[u8; 256], plaintext: &[u8]) -> Vec<u8> {
     // mtproto 2.0: padding 12..1024 bytes, total divisible by 16
     let padding_needed = (16 - (plaintext.len() % 16)) % 16;
-    let total_padding = if padding_needed < 12 { padding_needed + 16 } else { padding_needed };
+    let total_padding = if padding_needed < 12 {
+        padding_needed + 16
+    } else {
+        padding_needed
+    };
     let mut padded = Vec::with_capacity(plaintext.len() + total_padding);
     padded.extend_from_slice(plaintext);
     let mut rng_buf = vec![0u8; total_padding];

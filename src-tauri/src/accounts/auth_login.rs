@@ -34,7 +34,11 @@ fn dc_addr(dc_id: i32) -> &'static str {
 }
 
 fn dc_ip(dc_id: i32) -> String {
-    dc_addr(dc_id).split(':').next().unwrap_or(DC2_IP).to_string()
+    dc_addr(dc_id)
+        .split(':')
+        .next()
+        .unwrap_or(DC2_IP)
+        .to_string()
 }
 
 pub struct AuthState {
@@ -100,7 +104,8 @@ pub async fn auth_send_code(
 
     for _attempt in 0..=max_redirects {
         let addr = dc_addr(current_dc);
-        let (client, sent) = match try_send_code_on_dc(addr, &phone, &device, proxy.as_ref()).await {
+        let (client, sent) = match try_send_code_on_dc(addr, &phone, &device, proxy.as_ref()).await
+        {
             Ok(ok) => ok,
             Err(e) => {
                 if let Some(target_dc) = parse_phone_migrate(&e) {
@@ -115,18 +120,24 @@ pub async fn auth_send_code(
 
         let session_id = uuid::Uuid::new_v4().to_string();
         if let Ok(mut map) = sessions.sessions.lock() {
-            map.insert(session_id.clone(), AuthState {
-                client: Some(client),
-                dc_id: current_dc,
-                phone: phone.clone(),
-                phone_code_hash: sent.phone_code_hash,
-                proxy: proxy.clone(),
-                device: device.clone(),
-                created_at: Instant::now(),
-            });
+            map.insert(
+                session_id.clone(),
+                AuthState {
+                    client: Some(client),
+                    dc_id: current_dc,
+                    phone: phone.clone(),
+                    phone_code_hash: sent.phone_code_hash,
+                    proxy: proxy.clone(),
+                    device: device.clone(),
+                    created_at: Instant::now(),
+                },
+            );
         }
 
-        return Ok(AuthSessionResp { session_id, code_type: sent.code_type });
+        return Ok(AuthSessionResp {
+            session_id,
+            code_type: sent.code_type,
+        });
     }
 
     Err(map_rpc_error(&last_err))
@@ -142,7 +153,8 @@ async fn try_send_code_on_dc(
         .await
         .map_err(|e| crate::i18n::t_with("auth_connect_error", &[("error", &e.to_string())]))?;
 
-    let dh = perform_dh(&mut transport).await
+    let dh = perform_dh(&mut transport)
+        .await
         .map_err(|e| crate::i18n::t_with("auth_dh_error", &[("error", &e.to_string())]))?;
 
     let mut client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, addr);
@@ -189,7 +201,11 @@ pub async fn auth_sign_in(
     sessions: tauri::State<'_, Arc<AuthSessions>>,
 ) -> Result<AuthResultResp, String> {
     sessions.cleanup_expired();
-    dbg_log!("auth_sign_in session_id={} code_len={}", session_id, code.len());
+    dbg_log!(
+        "auth_sign_in session_id={} code_len={}",
+        session_id,
+        code.len()
+    );
 
     let mut state = take_state(&sessions, &session_id)?;
     let mut client = state.client.take().ok_or("session lost client")?;
@@ -207,7 +223,11 @@ pub async fn auth_sign_in(
         Ok(user) => {
             let auth_key = *client.auth_key();
             let account_id = save_account(&user, &state, &auth_key, "")?;
-            Ok(AuthResultResp { account_id: Some(account_id), two_fa_required: false, hint: String::new() })
+            Ok(AuthResultResp {
+                account_id: Some(account_id),
+                two_fa_required: false,
+                hint: String::new(),
+            })
         }
         Err(e) => {
             let mapped = map_rpc_error(&e);
@@ -215,7 +235,11 @@ pub async fn auth_sign_in(
                 // restore client into state so check_password can reuse the same connection
                 state.client = Some(client);
                 put_state(&sessions, &session_id, state);
-                return Ok(AuthResultResp { account_id: None, two_fa_required: true, hint: String::new() });
+                return Ok(AuthResultResp {
+                    account_id: None,
+                    two_fa_required: true,
+                    hint: String::new(),
+                });
             }
             if mapped == "PHONE_CODE_INVALID" {
                 // A mistyped code is retryable; keep the authorization session alive.
@@ -241,10 +265,11 @@ pub async fn auth_check_password(
 
     // refetch password to get fresh srp_b/srp_id
     let pw_req = tl::build_account_get_password();
-    let pw_data = client.invoke(&pw_req).await
+    let pw_data = client
+        .invoke(&pw_req)
+        .await
         .map_err(|e| map_rpc_error(&e))?;
-    let pw = tl::parse_account_password(&pw_data)
-        .map_err(|e| map_rpc_error(&e))?;
+    let pw = tl::parse_account_password(&pw_data).map_err(|e| map_rpc_error(&e))?;
 
     if !pw.has_password {
         return Err(crate::i18n::t("auth_2fa_not_set"));
@@ -263,18 +288,20 @@ pub async fn auth_check_password(
         .map_err(|e| crate::i18n::t_with("auth_srp_error", &[("error", &e.to_string())]))?;
 
     let req = tl::build_auth_check_password(srp.srp_id, &proof.a, &proof.m1);
-    let resp = client.invoke(&req).await
-        .map_err(|e| map_rpc_error(&e))?;
-    let user = tl::parse_auth_authorization(&resp)
-        .map_err(|e| map_rpc_error(&e))?;
+    let resp = client.invoke(&req).await.map_err(|e| map_rpc_error(&e))?;
+    let user = tl::parse_auth_authorization(&resp).map_err(|e| map_rpc_error(&e))?;
 
     let auth_key = *client.auth_key();
     save_account(&user, &state, &auth_key, &password)
 }
 
 fn take_state(sessions: &AuthSessions, session_id: &str) -> Result<AuthState, String> {
-    let mut map = sessions.sessions.lock().map_err(|_| "session lock poisoned")?;
-    map.remove(session_id).ok_or_else(|| crate::i18n::t("auth_session_expired"))
+    let mut map = sessions
+        .sessions
+        .lock()
+        .map_err(|_| "session lock poisoned")?;
+    map.remove(session_id)
+        .ok_or_else(|| crate::i18n::t("auth_session_expired"))
 }
 
 fn put_state(sessions: &AuthSessions, session_id: &str, state: AuthState) {
@@ -314,8 +341,9 @@ fn save_account(
         port: DC2_PORT,
         auth_key: new_key_vec.clone(),
     };
-    session.to_file(&storage.session_path(&id))
-        .map_err(|e| crate::i18n::t_with("auth_session_write_error", &[("error", &e.to_string())]))?;
+    session.to_file(&storage.session_path(&id)).map_err(|e| {
+        crate::i18n::t_with("auth_session_write_error", &[("error", &e.to_string())])
+    })?;
 
     let proxy_repr = state.proxy.as_ref().map(|p| p.to_string_repr());
     let config = crate::get_app_config();

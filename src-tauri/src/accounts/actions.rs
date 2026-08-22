@@ -1,20 +1,20 @@
 // account actions: bulk profile modifications via mtproto
 
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use rusqlite;
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::io::Cursor;
-use serde::Deserialize;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
-use rusqlite;
 
+use super::commands::get_storage_pub;
+use super::session::AccountJson;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
-use super::commands::get_storage_pub;
-use super::session::AccountJson;
 
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -76,9 +76,9 @@ pub struct ActionConfig {
     #[serde(default)]
     pub delay_between_max: u32,
     #[serde(default)]
-    pub account_ttl: i32,    // 0 = don't change
+    pub account_ttl: i32, // 0 = don't change
     #[serde(default)]
-    pub session_ttl: i32,    // 0 = don't change
+    pub session_ttl: i32, // 0 = don't change
 
     #[serde(default)]
     pub max_flood_wait: u64,
@@ -96,18 +96,32 @@ pub async fn account_actions_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "account_actions".to_string(),
-        t_with("actions_working_on_accounts", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "account_actions".to_string(),
+            t_with(
+                "actions_working_on_accounts",
+                &[("count", &ids.len().to_string())],
+            ),
+        )
+        .await;
 
     // backend validation: username list must have enough entries
-    if config.change_username && config.username_mode == "from_list" && !config.username_list_path.is_empty() {
+    if config.change_username
+        && config.username_mode == "from_list"
+        && !config.username_list_path.is_empty()
+    {
         let usernames = load_lines(&config.username_list_path);
         let usable = usernames.iter().filter(|l| !l.is_empty()).count();
         if usable < ids.len() {
-            return Err(t_with("actions_not_enough_usernames", &[("usable", &usable.to_string()), ("total", &ids.len().to_string())]));
+            return Err(t_with(
+                "actions_not_enough_usernames",
+                &[
+                    ("usable", &usable.to_string()),
+                    ("total", &ids.len().to_string()),
+                ],
+            ));
         }
     }
 
@@ -130,13 +144,22 @@ pub async fn account_actions_start(
 
     tokio::spawn(async move {
         // Create shared actions SQLite DB for this session
-        let db_dir = dirs::data_local_dir().unwrap_or_else(|| std::path::PathBuf::from(".")).join("kastor").join("actions");
+        let db_dir = dirs::data_local_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("kastor")
+            .join("actions");
         std::fs::create_dir_all(&db_dir).ok();
         let ts = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
         let db_path = db_dir.join(format!("{}_actions.db", ts));
         let actions_db = init_actions_db(&db_path);
         if let Ok(ref _db) = actions_db {
-            let _ = app_arc.emit("account-actions-log", t_with("actions_db_path", &[("path", &db_path.display().to_string())]));
+            let _ = app_arc.emit(
+                "account-actions-log",
+                t_with(
+                    "actions_db_path",
+                    &[("path", &db_path.display().to_string())],
+                ),
+            );
         }
         let actions_db = Arc::new(tokio::sync::Mutex::new(actions_db.ok()));
 
@@ -145,7 +168,9 @@ pub async fn account_actions_start(
         let mut handles = Vec::new();
 
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
 
             let sem = sem.clone();
             let config = config.clone();
@@ -161,12 +186,30 @@ pub async fn account_actions_start(
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                if !token_clone.load(Ordering::Relaxed) { return false; }
+                if !token_clone.load(Ordering::Relaxed) {
+                    return false;
+                }
 
-                let result = process_account(&id, i + 1, total, &config, &names, &surnames, &bios, &usernames, &photos, &username_idx, &actions_db_clone, &app_clone, &token_clone).await;
+                let result = process_account(
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    &names,
+                    &surnames,
+                    &bios,
+                    &usernames,
+                    &photos,
+                    &username_idx,
+                    &actions_db_clone,
+                    &app_clone,
+                    &token_clone,
+                )
+                .await;
                 match result {
                     Ok(_) => {
-                        let _ = app_clone.emit("account-actions-log", format!("__DONE__:{}", i + 1));
+                        let _ =
+                            app_clone.emit("account-actions-log", format!("__DONE__:{}", i + 1));
                         false
                     }
                     Err(e) => {
@@ -174,7 +217,12 @@ pub async fn account_actions_start(
                         let msg = if crate::mtproto::client::is_fatal_session_error(&e) {
                             format!("[{}/{}] {}", i + 1, total, t("actions_account_dead"))
                         } else {
-                            format!("[{}/{}] {}", i + 1, total, t_with("actions_error_generic", &[("error", &e)]))
+                            format!(
+                                "[{}/{}] {}",
+                                i + 1,
+                                total,
+                                t_with("actions_error_generic", &[("error", &e)])
+                            )
                         };
                         let _ = app_clone.emit("account-actions-log", msg);
                         false
@@ -209,11 +257,22 @@ async fn rate_limit() {
 }
 
 async fn delay_between_actions(_client: &mut MtpClient, min_sec: u32, max_sec: u32) {
-    if min_sec == 0 && max_sec == 0 { return; }
+    if min_sec == 0 && max_sec == 0 {
+        return;
+    }
     let min = min_sec.max(1) as u64;
     let max = max_sec.max(min as u32) as u64;
-    let secs = if min == max { min } else { min + rand::random::<u64>() % (max - min + 1) };
-    dbg_log!("account_actions::delay_between_actions range={}..{}, selected={} sec", min, max, secs);
+    let secs = if min == max {
+        min
+    } else {
+        min + rand::random::<u64>() % (max - min + 1)
+    };
+    dbg_log!(
+        "account_actions::delay_between_actions range={}..{}, selected={} sec",
+        min,
+        max,
+        secs
+    );
     tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
 }
 
@@ -260,7 +319,9 @@ async fn process_account(
     app: &tauri::AppHandle,
     cancel_token: &Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), String> {
-    let emit = |msg: String| { let _ = app.emit("account-actions-log", msg); };
+    let emit = |msg: String| {
+        let _ = app.emit("account-actions-log", msg);
+    };
     let storage = get_storage_pub();
     let session_path = storage.session_path(id);
     let json_path = storage.json_path(id);
@@ -275,12 +336,24 @@ async fn process_account(
         AccountJson::default()
     };
 
-    let prefix = format!("[{}/{}] +{}", idx, total, if json.phone.is_empty() { "?" } else { &json.phone });
+    let prefix = format!(
+        "[{}/{}] +{}",
+        idx,
+        total,
+        if json.phone.is_empty() {
+            "?"
+        } else {
+            &json.phone
+        }
+    );
     client.set_log_prefix(&prefix);
 
     let online_req = tl_gen::build_account_updateStatus(false);
     if let Err(e) = client.invoke(&online_req).await {
-        dbg_log!("account_actions::process_account prefix='{}' could not set online: {e}", prefix);
+        dbg_log!(
+            "account_actions::process_account prefix='{}' could not set online: {e}",
+            prefix
+        );
     }
 
     macro_rules! action_err {
@@ -1050,7 +1123,10 @@ async fn process_account(
 
     let offline_req = tl_gen::build_account_updateStatus(true);
     if let Err(e) = client.invoke(&offline_req).await {
-        dbg_log!("account_actions::process_account prefix='{}' could not set offline: {e}", prefix);
+        dbg_log!(
+            "account_actions::process_account prefix='{}' could not set offline: {e}",
+            prefix
+        );
     }
 
     result
@@ -1060,7 +1136,10 @@ fn extract_last_dialog_offset(dialogs_raw: &[Vec<u8>]) -> (i32, Vec<u8>) {
     if let Some(last) = dialogs_raw.last() {
         let mut c = Cursor::new(last.as_slice());
         if let Ok(d) = tl_gen::TlDialog::deserialize(&mut c) {
-            if let tl_gen::TlDialog::Dialog { peer, top_message, .. } = d {
+            if let tl_gen::TlDialog::Dialog {
+                peer, top_message, ..
+            } = d
+            {
                 return (top_message, peer);
             }
         }
@@ -1069,7 +1148,9 @@ fn extract_last_dialog_offset(dialogs_raw: &[Vec<u8>]) -> (i32, Vec<u8>) {
 }
 
 fn load_lines(path: &str) -> Vec<String> {
-    if path.is_empty() { return Vec::new(); }
+    if path.is_empty() {
+        return Vec::new();
+    }
     std::fs::read_to_string(path)
         .unwrap_or_default()
         .lines()
@@ -1079,17 +1160,21 @@ fn load_lines(path: &str) -> Vec<String> {
 }
 
 fn load_photo_paths(folder: &str) -> Vec<String> {
-    if folder.is_empty() { return Vec::new(); }
+    if folder.is_empty() {
+        return Vec::new();
+    }
     std::fs::read_dir(folder)
         .ok()
         .map(|entries| {
-            entries.flatten()
+            entries
+                .flatten()
                 .filter(|e| {
                     let p = e.path();
-                    p.is_file() && matches!(
-                        p.extension().and_then(|x| x.to_str()).unwrap_or(""),
-                        "jpg" | "jpeg" | "png" | "webp"
-                    )
+                    p.is_file()
+                        && matches!(
+                            p.extension().and_then(|x| x.to_str()).unwrap_or(""),
+                            "jpg" | "jpeg" | "png" | "webp"
+                        )
                 })
                 .map(|e| e.path().to_string_lossy().to_string())
                 .collect()
@@ -1134,7 +1219,6 @@ fn random_background_colors() -> Vec<i32> {
     palettes[rand::random::<usize>() % palettes.len()].to_vec()
 }
 
-
 async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), String> {
     let data = std::fs::read(path).map_err(|e| format!("read file: {e}"))?;
     let file_id = rand::random::<i64>();
@@ -1146,7 +1230,10 @@ async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), 
         let end = ((i as usize + 1) * part_size).min(data.len());
         let chunk = &data[start..end];
         let req = tl::build_upload_save_file_part(file_id, i, chunk);
-        client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", i))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload part {}: {e}", i))?;
     }
 
     let filename = std::path::Path::new(path)
@@ -1155,7 +1242,10 @@ async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), 
         .unwrap_or("photo.jpg");
 
     let req = tl::build_photos_upload_profile_photo(file_id, total_parts, filename);
-    client.invoke(&req).await.map_err(|e| format!("set photo: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("set photo: {e}"))?;
     Ok(())
 }
 
@@ -1163,8 +1253,12 @@ async fn set_2fa_password(client: &mut MtpClient, password: &str) -> Result<(), 
     use crate::mtproto::auth::compute_new_password_verifier;
 
     let pw_req = tl::build_account_get_password();
-    let pw_data = client.invoke(&pw_req).await.map_err(|e| format!("get_password: {e}"))?;
-    let pw_info = tl::parse_account_password(&pw_data).map_err(|e| format!("parse_password: {e}"))?;
+    let pw_data = client
+        .invoke(&pw_req)
+        .await
+        .map_err(|e| format!("get_password: {e}"))?;
+    let pw_info =
+        tl::parse_account_password(&pw_data).map_err(|e| format!("parse_password: {e}"))?;
 
     if pw_info.has_password {
         return Err(t("actions_2fa_already_set_err"));
@@ -1180,12 +1274,24 @@ async fn set_2fa_password(client: &mut MtpClient, password: &str) -> Result<(), 
     let salt2 = pw_info.new_salt2.clone();
 
     // new_password_hash is the SRP verifier v = g^x mod p
-    let verifier = compute_new_password_verifier(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, password)?;
+    let verifier =
+        compute_new_password_verifier(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, password)?;
 
-    let req = tl::build_account_set_password(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, &verifier, "");
+    let req = tl::build_account_set_password(
+        pw_info.new_g,
+        &pw_info.new_p,
+        &salt1,
+        &salt2,
+        &verifier,
+        "",
+    );
     match client.invoke(&req).await {
         Ok(_) => Ok(()),
-        Err(e) if e.contains("SRP_ID_INVALID") || e.contains("SRP_G_P_INVALID") || e.contains("NEW_SALT_INVALID") => {
+        Err(e)
+            if e.contains("SRP_ID_INVALID")
+                || e.contains("SRP_G_P_INVALID")
+                || e.contains("NEW_SALT_INVALID") =>
+        {
             Err(t("actions_2fa_srp_stale"))
         }
         Err(e) => Err(format!("set_password: {e}")),
@@ -1203,10 +1309,12 @@ fn extract_story_ids_from_response(data: &[u8]) -> Vec<i32> {
     let mut ids = Vec::new();
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::STORY_ITEM {
             let mut cursor = std::io::Cursor::new(&data[i..]);
-            if let Ok(tl_gen::TlStoryItem::StoryItem { id, .. }) = tl_gen::TlStoryItem::deserialize(&mut cursor) {
+            if let Ok(tl_gen::TlStoryItem::StoryItem { id, .. }) =
+                tl_gen::TlStoryItem::deserialize(&mut cursor)
+            {
                 if id > 0 && !ids.contains(&id) {
                     ids.push(id);
                 }
@@ -1225,8 +1333,13 @@ async fn mark_dialogs_read_from_parts(
 ) -> Result<u32, String> {
     let mut user_hashes: HashMap<i64, i64> = HashMap::new();
     for raw in users_raw {
-        if let Ok(user) = crate::mtproto::tl_gen::deserialize_tl_obj::<crate::mtproto::tl_gen::TlUser>(raw) {
-            if let crate::mtproto::tl_gen::TlUser::User { id, access_hash, .. } = user {
+        if let Ok(user) =
+            crate::mtproto::tl_gen::deserialize_tl_obj::<crate::mtproto::tl_gen::TlUser>(raw)
+        {
+            if let crate::mtproto::tl_gen::TlUser::User {
+                id, access_hash, ..
+            } = user
+            {
                 if let Some(ah) = access_hash {
                     user_hashes.insert(id, ah);
                 }
@@ -1236,14 +1349,20 @@ async fn mark_dialogs_read_from_parts(
 
     let mut channel_hashes: HashMap<i64, i64> = HashMap::new();
     for raw in chats_raw {
-        if let Ok(chat) = crate::mtproto::tl_gen::deserialize_tl_obj::<crate::mtproto::tl_gen::TlChat>(raw) {
+        if let Ok(chat) =
+            crate::mtproto::tl_gen::deserialize_tl_obj::<crate::mtproto::tl_gen::TlChat>(raw)
+        {
             match chat {
-                crate::mtproto::tl_gen::TlChat::Channel { id, access_hash, .. } => {
+                crate::mtproto::tl_gen::TlChat::Channel {
+                    id, access_hash, ..
+                } => {
                     if let Some(ah) = access_hash {
                         channel_hashes.insert(id, ah);
                     }
                 }
-                crate::mtproto::tl_gen::TlChat::ChannelForbidden { id, access_hash, .. } => {
+                crate::mtproto::tl_gen::TlChat::ChannelForbidden {
+                    id, access_hash, ..
+                } => {
                     channel_hashes.insert(id, access_hash);
                 }
                 _ => {}
@@ -1260,13 +1379,20 @@ async fn mark_dialogs_read_from_parts(
         };
 
         let (peer, top_message, unread_count) = match dialog {
-            crate::mtproto::tl_gen::TlDialog::Dialog { peer, top_message, unread_count, .. } => (peer, top_message, unread_count),
+            crate::mtproto::tl_gen::TlDialog::Dialog {
+                peer,
+                top_message,
+                unread_count,
+                ..
+            } => (peer, top_message, unread_count),
             crate::mtproto::tl_gen::TlDialog::Folder { .. } => continue,
             crate::mtproto::tl_gen::TlDialog::Community { .. } => continue,
         };
 
         // Skip already-read dialogs (optimization: avoid unnecessary API calls)
-        if unread_count == 0 { continue; }
+        if unread_count == 0 {
+            continue;
+        }
 
         let mut cursor = Cursor::new(peer.as_slice());
         let peer_type = match crate::mtproto::tl_gen::TlPeer::deserialize(&mut cursor) {
@@ -1312,20 +1438,29 @@ fn serialize_input_privacy_value_disallow_all() -> Vec<u8> {
     tl_gen::serialize_bare_ctor(tl_gen::INPUT_PRIVACY_VALUE_DISALLOW_ALL)
 }
 
-
 fn download_random_face() -> Result<Vec<u8>, String> {
     let resp = ureq::get("https://thispersondoesnotexist.com/")
-        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+        .header(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        )
         .call()
         .map_err(|e| format!("HTTP: {e}"))?;
-    let body = resp.into_body().read_to_vec().map_err(|e| format!("read body: {e}"))?;
+    let body = resp
+        .into_body()
+        .read_to_vec()
+        .map_err(|e| format!("read body: {e}"))?;
     if body.len() < 1000 {
         return Err(t("actions_response_too_small"));
     }
     Ok(body)
 }
 
-async fn upload_and_set_photo_bytes(client: &mut MtpClient, data: &[u8], filename: &str) -> Result<(), String> {
+async fn upload_and_set_photo_bytes(
+    client: &mut MtpClient,
+    data: &[u8],
+    filename: &str,
+) -> Result<(), String> {
     let file_id = rand::random::<i64>();
     let part_size = 128 * 1024;
     let total_parts = ((data.len() + part_size - 1) / part_size) as i32;
@@ -1335,11 +1470,17 @@ async fn upload_and_set_photo_bytes(client: &mut MtpClient, data: &[u8], filenam
         let end = ((i as usize + 1) * part_size).min(data.len());
         let chunk = &data[start..end];
         let req = tl::build_upload_save_file_part(file_id, i, chunk);
-        client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", i))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload part {}: {e}", i))?;
     }
 
     let req = tl::build_photos_upload_profile_photo(file_id, total_parts, filename);
-    client.invoke(&req).await.map_err(|e| format!("set photo: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("set photo: {e}"))?;
     Ok(())
 }
 
@@ -1348,7 +1489,8 @@ async fn upload_and_set_photo_bytes(client: &mut MtpClient, data: &[u8], filenam
 fn init_actions_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, String> {
     let conn = rusqlite::Connection::open(path)
         .map_err(|e| t_with("actions_db_open_error", &[("error", &e.to_string())]))?;
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
 
@@ -1363,13 +1505,22 @@ fn init_actions_db(path: &std::path::PathBuf) -> Result<rusqlite::Connection, St
 
         CREATE INDEX IF NOT EXISTS idx_actions_account ON actions_log(account_id);
         CREATE INDEX IF NOT EXISTS idx_actions_action ON actions_log(action);
-    ").map_err(|e| format!("create actions tables: {e}"))?;
+    ",
+    )
+    .map_err(|e| format!("create actions tables: {e}"))?;
     Ok(conn)
 }
 
-fn log_action(conn: &rusqlite::Connection, account_id: &str, action: &str, details: &str, status: &str) {
+fn log_action(
+    conn: &rusqlite::Connection,
+    account_id: &str,
+    action: &str,
+    details: &str,
+    status: &str,
+) {
     conn.execute(
         "INSERT INTO actions_log (account_id, action, details, status) VALUES (?1,?2,?3,?4)",
         rusqlite::params![account_id, action, details, status],
-    ).ok();
+    )
+    .ok();
 }

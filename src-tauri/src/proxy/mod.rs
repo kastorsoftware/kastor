@@ -81,9 +81,14 @@ impl ProxyConfig {
                 let hp_parts: Vec<&str> = hostport_part.split(':').collect();
                 if hp_parts.len() == 2 {
                     let host = hp_parts[0].to_string();
-                    let port = hp_parts[1].parse::<u16>().map_err(|_| "invalid port".to_string())?;
+                    let port = hp_parts[1]
+                        .parse::<u16>()
+                        .map_err(|_| "invalid port".to_string())?;
                     let (user, pass) = if let Some(colon) = auth_part.find(':') {
-                        (Some(auth_part[..colon].to_string()), Some(auth_part[colon + 1..].to_string()))
+                        (
+                            Some(auth_part[..colon].to_string()),
+                            Some(auth_part[colon + 1..].to_string()),
+                        )
                     } else {
                         (Some(auth_part.to_string()), None)
                     };
@@ -105,7 +110,9 @@ impl ProxyConfig {
 
             if parts.len() == 4 {
                 let host = parts[0].to_string();
-                let port = parts[1].parse::<u16>().map_err(|_| "invalid port".to_string())?;
+                let port = parts[1]
+                    .parse::<u16>()
+                    .map_err(|_| "invalid port".to_string())?;
                 let user = parts[2].to_string();
                 let pass = parts[3].to_string();
                 return Ok(ProxyConfig {
@@ -120,7 +127,9 @@ impl ProxyConfig {
                 });
             } else if parts.len() == 2 {
                 let host = parts[0].to_string();
-                let port = parts[1].parse::<u16>().map_err(|_| "invalid port".to_string())?;
+                let port = parts[1]
+                    .parse::<u16>()
+                    .map_err(|_| "invalid port".to_string())?;
                 return Ok(ProxyConfig {
                     id,
                     proxy_type: ProxyType::Socks5,
@@ -135,7 +144,11 @@ impl ProxyConfig {
                 let host = parts[0].to_string();
                 if let Ok(port) = parts[1].parse::<u16>() {
                     let user = parts[2].to_string();
-                    let pass = if parts.len() > 3 { parts[3..].join(":") } else { String::new() };
+                    let pass = if parts.len() > 3 {
+                        parts[3..].join(":")
+                    } else {
+                        String::new()
+                    };
                     return Ok(ProxyConfig {
                         id,
                         proxy_type: ProxyType::Socks5,
@@ -158,7 +171,10 @@ impl ProxyConfig {
             let auth_part = &rest[..at_pos];
             let hp = &rest[at_pos + 1..];
             let (user, pass) = if let Some(colon) = auth_part.find(':') {
-                (Some(auth_part[..colon].to_string()), Some(auth_part[colon + 1..].to_string()))
+                (
+                    Some(auth_part[..colon].to_string()),
+                    Some(auth_part[colon + 1..].to_string()),
+                )
             } else {
                 (Some(auth_part.to_string()), None)
             };
@@ -236,10 +252,9 @@ impl ProxyList {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("serialize failed: {e}"))?;
-        std::fs::write(&path, content)
-            .map_err(|e| format!("write failed: {e}"))?;
+        let content =
+            serde_json::to_string_pretty(self).map_err(|e| format!("serialize failed: {e}"))?;
+        std::fs::write(&path, content).map_err(|e| format!("write failed: {e}"))?;
         // update cache
         if let Ok(mut cache) = PROXY_CACHE.lock() {
             *cache = Some(self.clone());
@@ -261,7 +276,9 @@ impl ProxyList {
 // priority: account-assigned > random from pool > none (only if allow_no_proxy = true).
 // returns Err with a user-facing ru message when no proxy is available
 // and the global allow_no_proxy flag is off.
-pub fn select_proxy_for_account(account_proxy: Option<&str>) -> Result<Option<ProxyConfig>, String> {
+pub fn select_proxy_for_account(
+    account_proxy: Option<&str>,
+) -> Result<Option<ProxyConfig>, String> {
     if let Some(s) = account_proxy {
         if let Ok(cfg) = ProxyConfig::from_string(s) {
             return Ok(Some(cfg));
@@ -290,7 +307,9 @@ pub async fn validate_proxy(proxy: &ProxyConfig) -> bool {
         match tokio::time::timeout(
             std::time::Duration::from_secs(7),
             connect_via_proxy(proxy, "149.154.167.51", 443),
-        ).await {
+        )
+        .await
+        {
             Ok(Ok(_)) => return true,
             _ => {}
         }
@@ -298,20 +317,32 @@ pub async fn validate_proxy(proxy: &ProxyConfig) -> bool {
     false
 }
 
-pub async fn validate_proxies_batch(list: &mut ProxyList, ids: &[String], concurrency: usize) -> Vec<(String, bool)> {
+pub async fn validate_proxies_batch(
+    list: &mut ProxyList,
+    ids: &[String],
+    concurrency: usize,
+) -> Vec<(String, bool)> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
         .to_string();
 
-    let proxies_to_check: Vec<(String, ProxyConfig)> = ids.iter()
+    let proxies_to_check: Vec<(String, ProxyConfig)> = ids
+        .iter()
         .filter_map(|id| {
-            list.proxies.iter().find(|p| p.id == *id).map(|p| (id.clone(), p.clone()))
+            list.proxies
+                .iter()
+                .find(|p| p.id == *id)
+                .map(|p| (id.clone(), p.clone()))
         })
         .collect();
 
-    dbg_log!("proxy::validate_batch {} proxies, concurrency={}", proxies_to_check.len(), concurrency);
+    dbg_log!(
+        "proxy::validate_batch {} proxies, concurrency={}",
+        proxies_to_check.len(),
+        concurrency
+    );
 
     // mark all as Checking before starting
     for id in ids {
@@ -338,11 +369,17 @@ pub async fn validate_proxies_batch(list: &mut ProxyList, ids: &[String], concur
             {
                 let mut plist = shared.lock().await;
                 if let Some(p) = plist.proxies.iter_mut().find(|p| p.id == id) {
-                    p.status = if valid { ProxyStatus::Valid } else { ProxyStatus::Invalid };
+                    p.status = if valid {
+                        ProxyStatus::Valid
+                    } else {
+                        ProxyStatus::Invalid
+                    };
                     p.last_check = Some(ts.clone());
                 }
                 // save to disk every 5 completions for UI responsiveness
-                let done_count = plist.proxies.iter()
+                let done_count = plist
+                    .proxies
+                    .iter()
                     .filter(|p| p.status != ProxyStatus::Checking)
                     .count();
                 if done_count % 5 == 0 {
@@ -375,7 +412,12 @@ pub async fn connect_via_proxy(
     target_port: u16,
 ) -> Result<TcpStream, String> {
     let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
-    dbg_log!("proxy::connect_via_proxy to {} via {:?} {}", target_host, proxy.proxy_type, proxy_addr);
+    dbg_log!(
+        "proxy::connect_via_proxy to {} via {:?} {}",
+        target_host,
+        proxy.proxy_type,
+        proxy_addr
+    );
 
     let mut stream = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect(&proxy_addr))
         .await
@@ -383,9 +425,27 @@ pub async fn connect_via_proxy(
         .map_err(|e| crate::i18n::t_with("proxy_connect_error", &[("error", &e.to_string())]))?;
 
     let handshake = match proxy.proxy_type {
-        ProxyType::Socks5 => tokio::time::timeout(Duration::from_secs(15), socks5_handshake(&mut stream, proxy, target_host, target_port)).await,
-        ProxyType::Socks4 => tokio::time::timeout(Duration::from_secs(15), socks4_handshake(&mut stream, proxy, target_host, target_port)).await,
-        ProxyType::Https => tokio::time::timeout(Duration::from_secs(15), https_connect(&mut stream, proxy, target_host, target_port)).await,
+        ProxyType::Socks5 => {
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                socks5_handshake(&mut stream, proxy, target_host, target_port),
+            )
+            .await
+        }
+        ProxyType::Socks4 => {
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                socks4_handshake(&mut stream, proxy, target_host, target_port),
+            )
+            .await
+        }
+        ProxyType::Https => {
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                https_connect(&mut stream, proxy, target_host, target_port),
+            )
+            .await
+        }
     };
     handshake.map_err(|_| crate::i18n::t("proxy_handshake_timeout"))??;
 
@@ -401,15 +461,21 @@ async fn socks5_handshake(
     let has_auth = proxy.username.is_some();
 
     if has_auth {
-        stream.write_all(&[0x05, 0x02, 0x00, 0x02]).await
+        stream
+            .write_all(&[0x05, 0x02, 0x00, 0x02])
+            .await
             .map_err(|e| format!("socks5 greeting write: {e}"))?;
     } else {
-        stream.write_all(&[0x05, 0x01, 0x00]).await
+        stream
+            .write_all(&[0x05, 0x01, 0x00])
+            .await
             .map_err(|e| format!("socks5 greeting write: {e}"))?;
     }
 
     let mut resp = [0u8; 2];
-    stream.read_exact(&mut resp).await
+    stream
+        .read_exact(&mut resp)
+        .await
         .map_err(|e| format!("socks5 greeting read: {e}"))?;
 
     if resp[0] != 0x05 {
@@ -423,17 +489,24 @@ async fn socks5_handshake(
         auth_req.extend_from_slice(user.as_bytes());
         auth_req.push(pass.len() as u8);
         auth_req.extend_from_slice(pass.as_bytes());
-        stream.write_all(&auth_req).await
+        stream
+            .write_all(&auth_req)
+            .await
             .map_err(|e| format!("socks5 auth write: {e}"))?;
 
         let mut auth_resp = [0u8; 2];
-        stream.read_exact(&mut auth_resp).await
+        stream
+            .read_exact(&mut auth_resp)
+            .await
             .map_err(|e| format!("socks5 auth read: {e}"))?;
         if auth_resp[1] != 0x00 {
             return Err("socks5: authentication failed".into());
         }
     } else if resp[1] != 0x00 {
-        return Err(format!("socks5: no acceptable auth method (got {:#04x})", resp[1]));
+        return Err(format!(
+            "socks5: no acceptable auth method (got {:#04x})",
+            resp[1]
+        ));
     }
 
     // connect request using domain name
@@ -442,15 +515,22 @@ async fn socks5_handshake(
     connect_req.extend_from_slice(target_host.as_bytes());
     connect_req.push((target_port >> 8) as u8);
     connect_req.push((target_port & 0xff) as u8);
-    stream.write_all(&connect_req).await
+    stream
+        .write_all(&connect_req)
+        .await
         .map_err(|e| format!("socks5 connect write: {e}"))?;
 
     let mut connect_resp = [0u8; 4];
-    stream.read_exact(&mut connect_resp).await
+    stream
+        .read_exact(&mut connect_resp)
+        .await
         .map_err(|e| format!("socks5 connect read: {e}"))?;
 
     if connect_resp[1] != 0x00 {
-        return Err(format!("socks5: connect failed with code {:#04x}", connect_resp[1]));
+        return Err(format!(
+            "socks5: connect failed with code {:#04x}",
+            connect_resp[1]
+        ));
     }
 
     // skip bound address
@@ -487,7 +567,8 @@ async fn socks4_handshake(
         .map_err(|e| format!("dns resolve failed: {e}"))?
         .collect();
 
-    let ip = addrs.iter()
+    let ip = addrs
+        .iter()
         .find_map(|a| match a {
             std::net::SocketAddr::V4(v4) => Some(v4.ip().octets()),
             _ => None,
@@ -502,15 +583,22 @@ async fn socks4_handshake(
     req.extend_from_slice(user.as_bytes());
     req.push(0x00);
 
-    stream.write_all(&req).await
+    stream
+        .write_all(&req)
+        .await
         .map_err(|e| format!("socks4 write: {e}"))?;
 
     let mut resp = [0u8; 8];
-    stream.read_exact(&mut resp).await
+    stream
+        .read_exact(&mut resp)
+        .await
         .map_err(|e| format!("socks4 read: {e}"))?;
 
     if resp[1] != 0x5a {
-        return Err(format!("socks4: connect rejected with code {:#04x}", resp[1]));
+        return Err(format!(
+            "socks4: connect rejected with code {:#04x}",
+            resp[1]
+        ));
     }
 
     Ok(())
@@ -537,13 +625,17 @@ async fn https_connect(
         connect_line.push_str(&format!("Proxy-Authorization: Basic {credentials}\r\n"));
     }
     connect_line.push_str("\r\n");
-    stream.write_all(connect_line.as_bytes()).await
+    stream
+        .write_all(connect_line.as_bytes())
+        .await
         .map_err(|e| format!("https connect write: {e}"))?;
 
     let mut buf = Vec::with_capacity(512);
     loop {
         let mut byte = [0u8; 1];
-        stream.read_exact(&mut byte).await
+        stream
+            .read_exact(&mut byte)
+            .await
             .map_err(|e| format!("https connect read: {e}"))?;
         buf.push(byte[0]);
         if buf.len() >= 4 && &buf[buf.len() - 4..] == b"\r\n\r\n" {

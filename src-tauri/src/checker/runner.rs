@@ -1,19 +1,19 @@
 // checker runner: tdata path collection, zip extraction, main check loop
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter};
 use tokio::sync::Semaphore;
 
+use super::analysis;
+use super::checks;
 use crate::accounts;
-use crate::mtproto;
-use crate::proxy;
 use crate::converter::tdata;
 use crate::i18n::{t, t_with};
-use super::checks;
-use super::analysis;
+use crate::mtproto;
+use crate::proxy;
 
 pub fn is_tdata_folder(dir: &Path) -> bool {
     for suffix in &["key_datas", "key_data1", "key_data0"] {
@@ -42,7 +42,10 @@ pub fn collect_tdata_paths(dir: &Path, out: &mut Vec<PathBuf>) {
         if p.is_dir() {
             if is_tdata_folder(&p) {
                 let tdata_sub = p.join("tdata");
-                if tdata_sub.is_dir() && (tdata_sub.join("key_datas").exists() || tdata_sub.join("key_data1").exists()) {
+                if tdata_sub.is_dir()
+                    && (tdata_sub.join("key_datas").exists()
+                        || tdata_sub.join("key_data1").exists())
+                {
                     out.push(tdata_sub);
                 } else {
                     out.push(p);
@@ -53,9 +56,15 @@ pub fn collect_tdata_paths(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if p.extension().map(|e| e == "session").unwrap_or(false) {
             out.push(p);
         } else if p.extension().map(|e| e == "zip").unwrap_or(false) {
-            let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_lowercase();
+            let stem = p
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
             if stem == "tdata" || stem.starts_with("tdata") {
-                let temp_dir = std::env::temp_dir().join("combine_checker").join(uuid::Uuid::new_v4().to_string());
+                let temp_dir = std::env::temp_dir()
+                    .join("combine_checker")
+                    .join(uuid::Uuid::new_v4().to_string());
                 if extract_zip_to(&p, &temp_dir).is_ok() {
                     collect_tdata_paths(&temp_dir, out);
                 }
@@ -123,7 +132,9 @@ pub struct CheckerOptions {
     pub threads: u32,
 }
 
-fn default_checker_threads() -> u32 { 5 }
+fn default_checker_threads() -> u32 {
+    5
+}
 
 struct CheckerEntry {
     auth_key: Vec<u8>,
@@ -132,19 +143,20 @@ struct CheckerEntry {
     is_session_file: bool,
 }
 
-pub async fn run_checker(
-    folders: Vec<String>,
-    options: CheckerOptions,
-    app: AppHandle,
-) {
-    let emit = |msg: String| { let _ = app.emit("checker-log", msg); };
+pub async fn run_checker(folders: Vec<String>, options: CheckerOptions, app: AppHandle) {
+    let emit = |msg: String| {
+        let _ = app.emit("checker-log", msg);
+    };
 
     let mut tdata_paths = Vec::new();
     for folder in &folders {
         collect_tdata_paths(Path::new(folder), &mut tdata_paths);
     }
 
-    emit(t_with("checker_checking_accounts", &[("count", &tdata_paths.len().to_string())]));
+    emit(t_with(
+        "checker_checking_accounts",
+        &[("count", &tdata_paths.len().to_string())],
+    ));
 
     if tdata_paths.is_empty() {
         emit(t("checker_no_accounts"));
@@ -161,7 +173,10 @@ pub async fn run_checker(
     // expand paths into entries
     let mut entries: Vec<CheckerEntry> = Vec::new();
     for tdata_path in &tdata_paths {
-        let is_session = tdata_path.extension().map(|e| e == "session").unwrap_or(false);
+        let is_session = tdata_path
+            .extension()
+            .map(|e| e == "session")
+            .unwrap_or(false);
         if is_session {
             // try telethon first, then pyrogram
             let result = accounts::session::TelethonSession::from_file(tdata_path)
@@ -178,7 +193,10 @@ pub async fn run_checker(
                     is_session_file: true,
                 }),
                 Err(e) => {
-                    let _ = app.emit("checker-log", t_with("checker_session_read_error", &[("error", &e)]));
+                    let _ = app.emit(
+                        "checker-log",
+                        t_with("checker_session_read_error", &[("error", &e)]),
+                    );
                     invalid_count.fetch_add(1, Ordering::Relaxed);
                     let _ = app.emit("checker-stats", "invalid");
                 }
@@ -187,12 +205,27 @@ pub async fn run_checker(
             match tdata::parse_tdata(tdata_path) {
                 Ok(accs) => {
                     if accs.is_empty() {
-                        let _ = app.emit("checker-log", t_with("checker_no_accounts_in_tdata", &[("path", &format!("{:?}", tdata_path))]));
+                        let _ = app.emit(
+                            "checker-log",
+                            t_with(
+                                "checker_no_accounts_in_tdata",
+                                &[("path", &format!("{:?}", tdata_path))],
+                            ),
+                        );
                         invalid_count.fetch_add(1, Ordering::Relaxed);
                         let _ = app.emit("checker-stats", "invalid");
                     } else {
                         if accs.len() > 1 {
-                            let _ = app.emit("checker-log", t_with("checker_multi_account_tdata", &[("count", &accs.len().to_string()), ("path", &format!("{:?}", tdata_path))]));
+                            let _ = app.emit(
+                                "checker-log",
+                                t_with(
+                                    "checker_multi_account_tdata",
+                                    &[
+                                        ("count", &accs.len().to_string()),
+                                        ("path", &format!("{:?}", tdata_path)),
+                                    ],
+                                ),
+                            );
                         }
                         for acc in accs {
                             entries.push(CheckerEntry {
@@ -206,9 +239,18 @@ pub async fn run_checker(
                 }
                 Err(e) => {
                     if e == "local_passcode" {
-                        let _ = app.emit("checker-log", t_with("checker_local_passcode", &[("path", &format!("{:?}", tdata_path))]));
+                        let _ = app.emit(
+                            "checker-log",
+                            t_with(
+                                "checker_local_passcode",
+                                &[("path", &format!("{:?}", tdata_path))],
+                            ),
+                        );
                     } else {
-                        let _ = app.emit("checker-log", t_with("checker_parse_error", &[("error", &e)]));
+                        let _ = app.emit(
+                            "checker-log",
+                            t_with("checker_parse_error", &[("error", &e)]),
+                        );
                     }
                     invalid_count.fetch_add(1, Ordering::Relaxed);
                     let _ = app.emit("checker-stats", "invalid");
@@ -651,6 +693,12 @@ pub async fn run_checker(
 
     let v = valid_count.load(Ordering::Relaxed);
     let inv = invalid_count.load(Ordering::Relaxed);
-    let _ = app.emit("checker-log", t_with("checker_summary", &[("valid", &v.to_string()), ("invalid", &inv.to_string())]));
+    let _ = app.emit(
+        "checker-log",
+        t_with(
+            "checker_summary",
+            &[("valid", &v.to_string()), ("invalid", &inv.to_string())],
+        ),
+    );
     let _ = app.emit("checker-done", format!("{}/{}", v, inv));
 }

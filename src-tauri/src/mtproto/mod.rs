@@ -1,11 +1,11 @@
-pub mod crypto;
-pub mod transport;
-pub mod tl;
-pub mod tl_gen;
-pub mod client;
 pub mod auth;
+pub mod client;
+pub mod crypto;
 pub mod invite;
 pub mod text_parse;
+pub mod tl;
+pub mod tl_gen;
+pub mod transport;
 
 pub use client::is_fatal_session_error;
 pub use client::is_network_error;

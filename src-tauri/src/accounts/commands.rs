@@ -1,12 +1,12 @@
-use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use super::import::{self, ImportFormat};
 use super::session::AccountJson;
 use super::storage::AccountStorage;
 use crate::checker::validate;
-use crate::proxy::ProxyList;
 use crate::i18n::{t, t_with};
+use crate::proxy::ProxyList;
 
 pub use crate::check_and_mark_dead_session;
 
@@ -116,7 +116,10 @@ pub struct AccountsWithStats {
 
 #[tauri::command]
 pub fn phones_to_countries(phones: Vec<String>) -> Vec<String> {
-    phones.iter().map(|p| super::geo::phone_to_country_code(p)).collect()
+    phones
+        .iter()
+        .map(|p| super::geo::phone_to_country_code(p))
+        .collect()
 }
 
 #[tauri::command]
@@ -130,11 +133,23 @@ pub async fn get_real_accounts_stats() -> RealAccountsStats {
     let storage = get_storage_pub();
     let accounts = get_cached_accounts(&storage);
     let total = accounts.len() as u32;
-    let restricted = accounts.iter()
-        .filter(|a| a.status != crate::i18n::t("status_clean") && a.status != crate::i18n::t("status_unchecked")
-            && !a.status.starts_with(&crate::i18n::t("status_checking").trim_end_matches('.').to_string()))
+    let restricted = accounts
+        .iter()
+        .filter(|a| {
+            a.status != crate::i18n::t("status_clean")
+                && a.status != crate::i18n::t("status_unchecked")
+                && !a.status.starts_with(
+                    &crate::i18n::t("status_checking")
+                        .trim_end_matches('.')
+                        .to_string(),
+                )
+        })
         .count() as u32;
-    RealAccountsStats { total, clean: total - restricted, restricted }
+    RealAccountsStats {
+        total,
+        clean: total - restricted,
+        restricted,
+    }
 }
 
 #[tauri::command]
@@ -146,25 +161,36 @@ pub async fn get_accounts_with_stats() -> AccountsWithStats {
     let status_unchecked = crate::i18n::t("status_unchecked");
     let status_checking = crate::i18n::t("status_checking");
     let checking_prefix = status_checking.trim_end_matches('.');
-    let restricted = accounts.iter()
+    let restricted = accounts
+        .iter()
         .filter(|a| {
             let s = &a.status;
             let is_clean = s == &status_clean || s == "Без ограничений" || s == "No restrictions";
             let is_unchecked = s == &status_unchecked || s == "Не проверен" || s == "Unchecked";
-            let is_checking = s.starts_with(checking_prefix) || s.starts_with("Проверка") || s.starts_with("Checking");
+            let is_checking = s.starts_with(checking_prefix)
+                || s.starts_with("Проверка")
+                || s.starts_with("Checking");
             let is_tdata = s.starts_with("TData");
             !is_clean && !is_unchecked && !is_checking && !is_tdata
         })
         .count() as u32;
     AccountsWithStats {
         accounts,
-        stats: RealAccountsStats { total, clean: total - restricted, restricted },
+        stats: RealAccountsStats {
+            total,
+            clean: total - restricted,
+            restricted,
+        },
     }
 }
 
 #[tauri::command]
 pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<ImportedAccount> {
-    dbg_log!("import_accounts called: {} paths, format='{}'", paths.len(), format);
+    dbg_log!(
+        "import_accounts called: {} paths, format='{}'",
+        paths.len(),
+        format
+    );
     let storage = get_storage_pub();
     let fmt = match format.as_str() {
         "tdata" => ImportFormat::Tdata,
@@ -197,7 +223,9 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
                     let session_file = find_session_in_dir(&path);
                     let json_file = find_json_in_dir(&path);
                     match session_file {
-                        Some(sf) => import::import_session(&sf, json_file.as_deref(), &fmt, &storage),
+                        Some(sf) => {
+                            import::import_session(&sf, json_file.as_deref(), &fmt, &storage)
+                        }
                         None => Err("no .session file found in folder".to_string()),
                     }
                 }
@@ -205,12 +233,9 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
         } else if path.extension().map(|e| e == "zip").unwrap_or(false) {
             if fmt == ImportFormat::Tdata {
                 match import::import_tdata_archive(&path, &storage) {
-                    Ok(import_results) => append_tdata_results(
-                        import_results,
-                        &storage,
-                        &existing_keys,
-                        &mut results,
-                    ),
+                    Ok(import_results) => {
+                        append_tdata_results(import_results, &storage, &existing_keys, &mut results)
+                    }
                     Err(e) => results.push(ImportedAccount {
                         id: String::new(),
                         success: false,
@@ -224,7 +249,11 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
             import::import_from_zip(&path, &fmt, &storage)
         } else if path.extension().map(|e| e == "session").unwrap_or(false) {
             let json_path = path.with_extension("json");
-            let json_ref = if json_path.exists() { Some(json_path.as_path()) } else { None };
+            let json_ref = if json_path.exists() {
+                Some(json_path.as_path())
+            } else {
+                None
+            };
             import::import_session(&path, json_ref, &fmt, &storage)
         } else if path.extension().map(|e| e == "json").unwrap_or(false) {
             let session_path = path.with_extension("session");
@@ -242,7 +271,9 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
                 dbg_log!("import_accounts: SUCCESS id={}", id);
                 // check for duplicate auth_key
                 let session_path = storage.session_path(&id);
-                let is_dupe = if let Ok(session) = super::session::TelethonSession::from_file(&session_path) {
+                let is_dupe = if let Ok(session) =
+                    super::session::TelethonSession::from_file(&session_path)
+                {
                     existing_keys.contains(&session.auth_key)
                 } else {
                     false
@@ -278,7 +309,13 @@ pub async fn import_accounts(paths: Vec<String>, format: String) -> Vec<Imported
                         true
                     }
                 };
-                results.push(ImportedAccount { id, success: true, missing_json: missing, error: None, multi_account_split: false });
+                results.push(ImportedAccount {
+                    id,
+                    success: true,
+                    missing_json: missing,
+                    error: None,
+                    multi_account_split: false,
+                });
             }
             Err(e) => {
                 dbg_log!("import_accounts: FAILED: {}", e);
@@ -351,12 +388,17 @@ fn append_tdata_results(
 }
 
 #[tauri::command]
-pub async fn import_from_authkey(auth_key_hex: String, dc_id: Option<i32>) -> Result<String, String> {
-    let auth_key_bytes = hex_to_bytes(&auth_key_hex)
-        .map_err(|_| t("acc_invalid_authkey"))?;
+pub async fn import_from_authkey(
+    auth_key_hex: String,
+    dc_id: Option<i32>,
+) -> Result<String, String> {
+    let auth_key_bytes = hex_to_bytes(&auth_key_hex).map_err(|_| t("acc_invalid_authkey"))?;
 
     if auth_key_bytes.len() != 256 {
-        return Err(t_with("acc_authkey_len", &[("bytes", &auth_key_bytes.len().to_string())]));
+        return Err(t_with(
+            "acc_authkey_len",
+            &[("bytes", &auth_key_bytes.len().to_string())],
+        ));
     }
 
     // dedup: check if this auth_key already exists
@@ -380,12 +422,20 @@ pub async fn import_from_authkey(auth_key_hex: String, dc_id: Option<i32>) -> Re
         let mut found_dc: Option<i32> = None;
         for dc in 1..=5 {
             let addr = dc_id_to_addr(dc);
-            match crate::mtproto::client::MtpClient::connect(&addr, &auth_key, probe_proxy.as_ref()).await {
+            match crate::mtproto::client::MtpClient::connect(&addr, &auth_key, probe_proxy.as_ref())
+                .await
+            {
                 Ok(mut client) => {
                     let dev = super::devices::generate_random_device();
                     let app_id = crate::get_app_config().app_id;
-        match client.get_me(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en").await {
-                        Ok(_) => { found_dc = Some(dc); break; }
+                    match client
+                        .get_me(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en")
+                        .await
+                    {
+                        Ok(_) => {
+                            found_dc = Some(dc);
+                            break;
+                        }
                         Err(_) => continue,
                     }
                 }
@@ -406,12 +456,17 @@ pub async fn import_from_authkey(auth_key_hex: String, dc_id: Option<i32>) -> Re
     let dc_addr = dc_id_to_addr(resolved_dc);
     let session = super::session::TelethonSession {
         dc_id: resolved_dc,
-        server_address: dc_addr.split(':').next().unwrap_or("149.154.167.51").to_string(),
+        server_address: dc_addr
+            .split(':')
+            .next()
+            .unwrap_or("149.154.167.51")
+            .to_string(),
         port: 443,
         auth_key: auth_key_bytes.clone(),
     };
 
-    session.to_file(&storage.session_path(&id))
+    session
+        .to_file(&storage.session_path(&id))
         .map_err(|e| t_with("acc_session_write_error", &[("error", &e.to_string())]))?;
 
     let dev = super::devices::generate_random_device();
@@ -452,10 +507,12 @@ fn dc_id_to_addr(dc: i32) -> String {
 
 fn hex_to_bytes(hex: &str) -> Result<Vec<u8>, ()> {
     let hex = hex.trim();
-    if hex.len() % 2 != 0 { return Err(()); }
+    if hex.len() % 2 != 0 {
+        return Err(());
+    }
     (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i+2], 16).map_err(|_| ()))
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).map_err(|_| ()))
         .collect()
 }
 
@@ -531,11 +588,21 @@ pub async fn validate_accounts(ids: Vec<String>) -> Vec<ValidationResult> {
         let mut updated = json.clone();
         updated.validated = true;
         updated.valid = vr.valid;
-        if let Some(ref phone) = vr.phone { updated.phone = phone.clone(); }
-        if let Some(ref name) = vr.first_name { updated.first_name = name.clone(); }
-        if let Some(ref last) = vr.last_name { updated.last_name = last.clone(); }
-        if let Some(ref uname) = vr.username { updated.username = uname.clone(); }
-        if let Some(uid) = vr.user_id { updated.user_id = uid; }
+        if let Some(ref phone) = vr.phone {
+            updated.phone = phone.clone();
+        }
+        if let Some(ref name) = vr.first_name {
+            updated.first_name = name.clone();
+        }
+        if let Some(ref last) = vr.last_name {
+            updated.last_name = last.clone();
+        }
+        if let Some(ref uname) = vr.username {
+            updated.username = uname.clone();
+        }
+        if let Some(uid) = vr.user_id {
+            updated.user_id = uid;
+        }
         updated.status = if vr.valid {
             crate::i18n::t("status_clean")
         } else {
@@ -606,7 +673,11 @@ pub async fn delete_accounts(ids: Vec<String>) -> Result<u32, String> {
         }
     }
 
-    dbg_log!("delete_accounts: deleted {} of {} requested", deleted, ids.len());
+    dbg_log!(
+        "delete_accounts: deleted {} of {} requested",
+        deleted,
+        ids.len()
+    );
     invalidate_accounts_cache();
     Ok(deleted)
 }
@@ -624,8 +695,10 @@ pub async fn add_proxy(proxy_str: String) -> Result<String, String> {
     let mut list = ProxyList::load();
     // check duplicate
     let is_dupe = list.proxies.iter().any(|p| {
-        p.host == config.host && p.port == config.port
-            && p.username == config.username && p.password == config.password
+        p.host == config.host
+            && p.port == config.port
+            && p.username == config.username
+            && p.password == config.password
     });
     if is_dupe {
         return Err(t("acc_proxy_exists"));
@@ -644,12 +717,16 @@ pub async fn add_proxies_bulk(proxies_text: String) -> Result<(u32, u32), String
     let mut dupes = 0u32;
     for line in proxies_text.lines() {
         let line = line.trim();
-        if line.is_empty() { continue; }
+        if line.is_empty() {
+            continue;
+        }
         match crate::proxy::ProxyConfig::from_string(line) {
             Ok(config) => {
                 let is_dupe = list.proxies.iter().any(|p| {
-                    p.host == config.host && p.port == config.port
-                        && p.username == config.username && p.password == config.password
+                    p.host == config.host
+                        && p.port == config.port
+                        && p.username == config.username
+                        && p.password == config.password
                 });
                 if is_dupe {
                     dupes += 1;
@@ -714,7 +791,9 @@ pub async fn validate_proxies(ids: Vec<String>, threads: Option<usize>) -> Vec<(
 pub async fn remove_proxies(ids: Vec<String>) -> Result<u32, String> {
     let mut list = ProxyList::load();
     let before = list.proxies.len();
-    let removed_reprs: Vec<String> = list.proxies.iter()
+    let removed_reprs: Vec<String> = list
+        .proxies
+        .iter()
         .filter(|p| ids.contains(&p.id))
         .map(|p| p.to_string_repr())
         .collect();
@@ -776,15 +855,19 @@ pub async fn import_proxies_from_txt(proxy_type: String) -> Result<(u32, u32), S
     let mut skipped_dupes = 0u32;
     for line in content.lines() {
         let line = line.trim();
-        if line.is_empty() || line.starts_with('#') { continue; }
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
 
         // parse line and override type
         if let Ok(mut config) = crate::proxy::ProxyConfig::from_string(line) {
             config.proxy_type = ptype.clone();
             // check for duplicate (same host:port:user:pass)
             let is_dupe = list.proxies.iter().any(|p| {
-                p.host == config.host && p.port == config.port
-                    && p.username == config.username && p.password == config.password
+                p.host == config.host
+                    && p.port == config.port
+                    && p.username == config.username
+                    && p.password == config.password
             });
             if is_dupe {
                 skipped_dupes += 1;
@@ -796,7 +879,12 @@ pub async fn import_proxies_from_txt(proxy_type: String) -> Result<(u32, u32), S
     }
 
     list.save()?;
-    dbg_log!("import_proxies_from_txt: imported {} proxies, skipped {} dupes from {:?}", count, skipped_dupes, path);
+    dbg_log!(
+        "import_proxies_from_txt: imported {} proxies, skipped {} dupes from {:?}",
+        count,
+        skipped_dupes,
+        path
+    );
     Ok((count, skipped_dupes))
 }
 
@@ -815,7 +903,11 @@ fn scan_accounts(storage: &AccountStorage) -> Vec<StoredAccount> {
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().map(|e| e == "session").unwrap_or(false) {
-            let id = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+            let id = path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
             let json_path = storage.json_path(&id);
 
             let json = if json_path.exists() {
@@ -826,7 +918,11 @@ fn scan_accounts(storage: &AccountStorage) -> Vec<StoredAccount> {
 
             let status = if json.validated {
                 if json.status.is_empty() {
-                    if json.valid { crate::i18n::t("status_clean") } else { crate::i18n::t("status_invalid") }
+                    if json.valid {
+                        crate::i18n::t("status_clean")
+                    } else {
+                        crate::i18n::t("status_invalid")
+                    }
                 } else {
                     normalize_status(&json.status)
                 }
@@ -957,7 +1053,9 @@ fn normalize_status(stored: &str) -> String {
         "Вечный спамблок" | "Permanent spamblock" => t("status_perm_spam"),
         "Не проверен" | "Unchecked" => t("status_unchecked"),
         "TData (не конвертирован)" | "TData (not converted)" => t("status_tdata"),
-        s if s.starts_with("Спамблок по ГЕО") || s.starts_with("Geo spamblock") => t("status_geo_spam"),
+        s if s.starts_with("Спамблок по ГЕО") || s.starts_with("Geo spamblock") => {
+            t("status_geo_spam")
+        }
         s if s.starts_with("Проверка") || s.starts_with("Checking") => t("status_checking"),
         _ => stored.to_string(),
     }
@@ -973,7 +1071,17 @@ fn calc_aging_from_timestamp(register_time: i64) -> String {
     if days >= 365 {
         let years = days / 365;
         let months = (days % 365) / 30;
-        if months > 0 { t_with("acc_aging_years_months", &[("years", &years.to_string()), ("months", &months.to_string())]) } else { t_with("acc_aging_years", &[("years", &years.to_string())]) }
+        if months > 0 {
+            t_with(
+                "acc_aging_years_months",
+                &[
+                    ("years", &years.to_string()),
+                    ("months", &months.to_string()),
+                ],
+            )
+        } else {
+            t_with("acc_aging_years", &[("years", &years.to_string())])
+        }
     } else if days >= 30 {
         let months = days / 30;
         t_with("acc_aging_months", &[("months", &months.to_string())])
@@ -1001,7 +1109,13 @@ fn calc_aging(path: &std::path::Path) -> String {
         let years = days / 365;
         let months = (days % 365) / 30;
         if months > 0 {
-            t_with("acc_aging_years_months", &[("years", &years.to_string()), ("months", &months.to_string())])
+            t_with(
+                "acc_aging_years_months",
+                &[
+                    ("years", &years.to_string()),
+                    ("months", &months.to_string()),
+                ],
+            )
         } else {
             t_with("acc_aging_years", &[("years", &years.to_string())])
         }
@@ -1137,13 +1251,19 @@ pub async fn distribute_proxies(mode: String) -> Result<u32, String> {
             continue;
         };
 
-        if json.proxy.is_some() && mode != "redistribute" { continue; }
+        if json.proxy.is_some() && mode != "redistribute" {
+            continue;
+        }
 
         let proxy_idx = if mode == "reuse" || mode == "redistribute" {
             Some(unassigned_idx % proxy_count)
         } else {
             // "skip" mode
-            if unassigned_idx < proxy_count { Some(unassigned_idx) } else { None }
+            if unassigned_idx < proxy_count {
+                Some(unassigned_idx)
+            } else {
+                None
+            }
         };
 
         if let Some(idx) = proxy_idx {
@@ -1172,7 +1292,9 @@ pub async fn get_proxy_distribution_info() -> (u32, u32, u32) {
         let json_path = storage.json_path(&acc.id);
         if json_path.exists() {
             if let Ok(json) = AccountJson::from_file(&json_path) {
-                if json.proxy.is_none() { unassigned += 1; }
+                if json.proxy.is_none() {
+                    unassigned += 1;
+                }
             }
         }
     }
@@ -1188,7 +1310,9 @@ pub async fn check_accounts_have_proxy(ids: Vec<String>) -> bool {
         let json_path = storage.json_path(id);
         if json_path.exists() {
             if let Ok(json) = AccountJson::from_file(&json_path) {
-                if json.proxy.is_none() { return false; }
+                if json.proxy.is_none() {
+                    return false;
+                }
             } else {
                 return false;
             }
@@ -1209,7 +1333,8 @@ pub async fn set_account_two_fa(id: String, two_fa: String) -> Result<(), String
         return Err("account not found".into());
     };
     json.two_fa = two_fa;
-    json.to_file(&json_path).map_err(|e| format!("write json: {e}"))?;
+    json.to_file(&json_path)
+        .map_err(|e| format!("write json: {e}"))?;
     invalidate_accounts_cache();
     Ok(())
 }
@@ -1264,8 +1389,15 @@ pub fn dedup_sessions_by_auth_key() -> u32 {
     let mut removed = 0u32;
 
     let mut entries: Vec<_> = std::fs::read_dir(&dir)
-        .into_iter().flatten().flatten()
-        .filter(|e| e.path().extension().map(|x| x == "session").unwrap_or(false))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.path()
+                .extension()
+                .map(|x| x == "session")
+                .unwrap_or(false)
+        })
         .collect();
     entries.sort_by_key(|e| e.path());
 
@@ -1274,7 +1406,11 @@ pub fn dedup_sessions_by_auth_key() -> u32 {
         if let Ok(session) = super::session::TelethonSession::from_file(&path) {
             if !seen.insert(session.auth_key) {
                 // duplicate — remove session + json + tdata
-                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                let stem = path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 std::fs::remove_file(&path).ok();
                 std::fs::remove_file(storage.json_path(&stem)).ok();
                 std::fs::remove_dir_all(storage.tdata_dir(&stem)).ok();
@@ -1294,19 +1430,28 @@ pub fn dedup_sessions_by_auth_key() -> u32 {
 pub fn dedup_sessions_by_user_id() -> u32 {
     let storage = get_storage_pub();
     let dir = storage.session_json_dir();
-    let mut uid_map: std::collections::HashMap<i64, (String, std::time::SystemTime)> = std::collections::HashMap::new();
+    let mut uid_map: std::collections::HashMap<i64, (String, std::time::SystemTime)> =
+        std::collections::HashMap::new();
     let mut removed = 0u32;
 
     let entries: Vec<_> = std::fs::read_dir(&dir)
-        .into_iter().flatten().flatten()
+        .into_iter()
+        .flatten()
+        .flatten()
         .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
         .collect();
 
     for entry in entries {
         let path = entry.path();
-        let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
+        let stem = path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
         if let Ok(json) = super::session::AccountJson::from_file(&path) {
-            if json.user_id == 0 { continue; }
+            if json.user_id == 0 {
+                continue;
+            }
             let mtime = std::fs::metadata(&path)
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -1322,7 +1467,11 @@ pub fn dedup_sessions_by_user_id() -> u32 {
                 std::fs::remove_file(storage.json_path(&to_remove)).ok();
                 std::fs::remove_dir_all(storage.tdata_dir(&to_remove)).ok();
                 removed += 1;
-                dbg_log!("dedup_sessions_by_user_id: removed duplicate uid={} id={}", json.user_id, to_remove);
+                dbg_log!(
+                    "dedup_sessions_by_user_id: removed duplicate uid={} id={}",
+                    json.user_id,
+                    to_remove
+                );
                 uid_map.insert(json.user_id, (to_keep_stem, mtime.max(*existing_mtime)));
             } else {
                 uid_map.insert(json.user_id, (stem, mtime));
@@ -1408,14 +1557,20 @@ pub fn open_accounts_folder() {
     dbg_log!("open_accounts_folder {:?}", base);
     std::fs::create_dir_all(&base).ok();
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("explorer").arg(&base).spawn(); }
+    {
+        let _ = std::process::Command::new("explorer").arg(&base).spawn();
+    }
 }
 
 #[tauri::command]
 pub fn open_file_in_editor(path: String) {
     dbg_log!("open_file_in_editor {:?}", path);
     #[cfg(target_os = "windows")]
-    { let _ = std::process::Command::new("cmd").args(["/c", "start", "", &path]).spawn(); }
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/c", "start", "", &path])
+            .spawn();
+    }
 }
 
 #[tauri::command]
@@ -1443,7 +1598,8 @@ pub fn get_authkey_txt_path() -> Result<String, String> {
 pub fn read_authkey_txt(path: String) -> Result<Vec<String>, String> {
     let content = std::fs::read_to_string(&path)
         .map_err(|e| t_with("acc_read_file_error", &[("error", &e.to_string())]))?;
-    let keys: Vec<String> = content.lines()
+    let keys: Vec<String> = content
+        .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();

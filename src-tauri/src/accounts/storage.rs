@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 pub struct AccountStorage {
     base: PathBuf,
@@ -7,7 +7,9 @@ pub struct AccountStorage {
 
 impl AccountStorage {
     pub fn new(base: &Path) -> Self {
-        let storage = Self { base: base.to_path_buf() };
+        let storage = Self {
+            base: base.to_path_buf(),
+        };
         fs::create_dir_all(storage.session_json_dir()).ok();
         fs::create_dir_all(storage.tdatas_dir()).ok();
         storage

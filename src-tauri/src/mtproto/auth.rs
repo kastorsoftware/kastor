@@ -4,7 +4,7 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use num_bigint::BigUint;
 use rand::RngCore;
-use sha1::{Sha1, Digest as Sha1Digest};
+use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::Sha256;
 use std::io::{Cursor, Read};
 use std::sync::LazyLock;
@@ -33,7 +33,6 @@ e2iVNq8NZLYTzLp5YpOdO1doK+ttrltggTCy5SrKeLoCPPbOgGsdxJxyz5KKcZnS\n\
 Lj16yE5HvJQn0CNpRdENvRUXe6tBP78O39oJ8BTHp9oIjd6XWXAsp2CvK45Ol8wF\n\
 XGF710w9lwCGNbmNxNYhtIkdqfsEcwR5JwIDAQAB\n\
 -----END RSA PUBLIC KEY-----",
-
     "-----BEGIN RSA PUBLIC KEY-----\n\
 MIIBCgKCAQEAvfLHfYH2r9R70w8prHblWt/nDkh+XkgpflqQVcnAfSuTtO05lNPs\n\
 pQmL8Y2XjVT4t8cT6xAkdgfmmvnvRPOOKPi0OfJXoRVylFzAQG/j83u5K3kRLbae\n\
@@ -42,7 +41,6 @@ jgnIKNA0UMoP+KF03qzryqIt3oTvZq03DyWdGK+AZjgBLaDKSnC6qD2cFY81UryR\n\
 WOab8zKkWAnhw2kFpcqhI0jdV5QaSCExvnsjVaX0Y1N0870931/5Jb9ICe4nweZ9\n\
 kSDF/gip3kWLG0o8XQpChDfyvsqB9OLV/wIDAQAB\n\
 -----END RSA PUBLIC KEY-----",
-
     "-----BEGIN RSA PUBLIC KEY-----\n\
 MIIBCgKCAQEAs/ditzm+mPND6xkhzwFIz6J/968CtkcSE/7Z2qAJiXbmZ3UDJPGr\n\
 zqTDHkO30R8VeRM/Kz2f4nR05GIFiITl4bEjvpy7xqRDspJcCFIOcyXm8abVDhF+\n\
@@ -51,7 +49,6 @@ Uwwc+yi1/gGaybwlzZwqXYoPOhwMebzKUk0xW14htcJrRrq+PXXQbRzTMynseCoP\n\
 Ioke0dtCodbA3qQxQovE16q9zz4Otv2k4j63cz53J+mhkVWAeWxVGI0lltJmWtEY\n\
 K6er8VqqWot3nqmWMXogrgRLggv/NbbooQIDAQAB\n\
 -----END RSA PUBLIC KEY-----",
-
     "-----BEGIN RSA PUBLIC KEY-----\n\
 MIIBCgKCAQEAvmpxVY7ld/8DAjz6F6q05shjg8/4p6047bn6/m8yPy1RBsvIyvuD\n\
 uGnP/RzPEhzXQ9UJ5Ynmh2XJZgHoE9xbnfxL5BXHplJhMtADXKM9bWB11PU1Eioc\n\
@@ -63,15 +60,20 @@ PGHKSMeRFvp3IWcmdJqXahxLCUS1Eh6MAQIDAQAB\n\
 ];
 
 static RSA_KEYS: LazyLock<Vec<RsaKey>> = LazyLock::new(|| {
-    PEM_KEYS.iter().filter_map(|pem| parse_pem_rsa(pem)).collect()
+    PEM_KEYS
+        .iter()
+        .filter_map(|pem| parse_pem_rsa(pem))
+        .collect()
 });
 
 fn parse_pem_rsa(pem: &str) -> Option<RsaKey> {
-    let body: String = pem.lines()
+    let body: String = pem
+        .lines()
         .filter(|l| !l.starts_with("-----"))
         .collect::<Vec<_>>()
         .join("");
-    let der = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body.as_bytes()).ok()?;
+    let der =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, body.as_bytes()).ok()?;
     let (n_bytes, e_bytes) = parse_der_rsa_public(&der)?;
     let n = BigUint::from_bytes_be(&n_bytes);
     let e = BigUint::from_bytes_be(&e_bytes);
@@ -90,18 +92,24 @@ fn parse_der_rsa_public(der: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
 }
 
 fn expect_tag(data: &[u8], tag: u8) -> Option<&[u8]> {
-    if data.is_empty() || data[0] != tag { return None; }
+    if data.is_empty() || data[0] != tag {
+        return None;
+    }
     Some(&data[1..])
 }
 
 fn read_length(data: &[u8]) -> Option<(usize, &[u8])> {
-    if data.is_empty() { return None; }
+    if data.is_empty() {
+        return None;
+    }
     let first = data[0];
     if first & 0x80 == 0 {
         Some((first as usize, &data[1..]))
     } else {
         let n = (first & 0x7f) as usize;
-        if data.len() < 1 + n { return None; }
+        if data.len() < 1 + n {
+            return None;
+        }
         let mut len = 0usize;
         for i in 0..n {
             len = (len << 8) | data[1 + i] as usize;
@@ -111,10 +119,14 @@ fn read_length(data: &[u8]) -> Option<(usize, &[u8])> {
 }
 
 fn read_integer(data: &mut &[u8]) -> Option<Vec<u8>> {
-    if data.is_empty() || data[0] != 0x02 { return None; }
+    if data.is_empty() || data[0] != 0x02 {
+        return None;
+    }
     let after_tag = &data[1..];
     let (len, body) = read_length(after_tag)?;
-    if body.len() < len { return None; }
+    if body.len() < len {
+        return None;
+    }
     let int = body[..len].to_vec();
     *data = &body[len..];
     Some(int)
@@ -166,13 +178,17 @@ fn rsa_encrypt(key: &RsaKey, data: &[u8]) -> Vec<u8> {
     let payload = BigUint::from_bytes_be(&to_encrypt);
     let encrypted = payload.modpow(&key.e, &key.n);
     let mut out = encrypted.to_bytes_be();
-    while out.len() < 256 { out.insert(0, 0); }
+    while out.len() < 256 {
+        out.insert(0, 0);
+    }
     out
 }
 
 // pollard's rho factorization for pq < 2^63
 fn factorize(pq: u64) -> (u64, u64) {
-    if pq % 2 == 0 { return (2, pq / 2); }
+    if pq % 2 == 0 {
+        return (2, pq / 2);
+    }
     use rand::Rng;
     let mut rng = rand::thread_rng();
 
@@ -212,7 +228,9 @@ fn factorize(pq: u64) -> (u64, u64) {
                 ys = (mulmod(ys, ys, pq) + c) % pq;
                 let diff = if x > ys { x - ys } else { ys - x };
                 g = gcd(diff, pq);
-                if g > 1 { break; }
+                if g > 1 {
+                    break;
+                }
             }
         }
 
@@ -253,7 +271,9 @@ fn build_unencrypted(body: &[u8]) -> Vec<u8> {
 }
 
 fn parse_unencrypted(data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() < 20 { return Err("unencrypted frame too short".into()); }
+    if data.len() < 20 {
+        return Err("unencrypted frame too short".into());
+    }
     let auth_key_id = u64::from_le_bytes(data[0..8].try_into().unwrap());
     if auth_key_id != 0 {
         return Err(format!("expected auth_key_id=0, got {:#x}", auth_key_id));
@@ -309,33 +329,56 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let resp = recv_unencrypted(transport).await?;
     let mut cur = Cursor::new(&resp[..]);
 
-    let ctor = cur.read_u32::<LittleEndian>().map_err(|e| format!("read ctor: {e}"))?;
-    if ctor != RES_PQ { return Err(format!("expected resPQ, got {:#x}", ctor)); }
+    let ctor = cur
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read ctor: {e}"))?;
+    if ctor != RES_PQ {
+        return Err(format!("expected resPQ, got {:#x}", ctor));
+    }
 
     let mut srv_nonce_buf = [0u8; 16];
     let mut resp_nonce = [0u8; 16];
-    cur.read_exact(&mut resp_nonce).map_err(|e| format!("read nonce: {e}"))?;
-    if resp_nonce != nonce { return Err("nonce mismatch in resPQ".into()); }
-    cur.read_exact(&mut srv_nonce_buf).map_err(|e| format!("read server_nonce: {e}"))?;
+    cur.read_exact(&mut resp_nonce)
+        .map_err(|e| format!("read nonce: {e}"))?;
+    if resp_nonce != nonce {
+        return Err("nonce mismatch in resPQ".into());
+    }
+    cur.read_exact(&mut srv_nonce_buf)
+        .map_err(|e| format!("read server_nonce: {e}"))?;
 
     let pq_bytes = tl::deserialize_bytes(&mut cur)?;
-    if pq_bytes.len() > 8 { return Err("pq too large".into()); }
+    if pq_bytes.len() > 8 {
+        return Err("pq too large".into());
+    }
     let mut pq_arr = [0u8; 8];
     pq_arr[8 - pq_bytes.len()..].copy_from_slice(&pq_bytes);
     let pq = u64::from_be_bytes(pq_arr);
 
     // fingerprints vector
-    let vec_ctor = cur.read_u32::<LittleEndian>().map_err(|e| format!("read fp vec ctor: {e}"))?;
-    if vec_ctor != tl::VECTOR { return Err("fingerprints not a vector".into()); }
-    let fp_count = cur.read_u32::<LittleEndian>().map_err(|e| format!("read fp count: {e}"))?;
+    let vec_ctor = cur
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read fp vec ctor: {e}"))?;
+    if vec_ctor != tl::VECTOR {
+        return Err("fingerprints not a vector".into());
+    }
+    let fp_count = cur
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read fp count: {e}"))?;
     let mut fingerprints = Vec::with_capacity(fp_count as usize);
     for _ in 0..fp_count {
-        fingerprints.push(cur.read_u64::<LittleEndian>().map_err(|e| format!("read fp: {e}"))?);
+        fingerprints.push(
+            cur.read_u64::<LittleEndian>()
+                .map_err(|e| format!("read fp: {e}"))?,
+        );
     }
 
-    let key = find_key(&fingerprints)
-        .ok_or_else(|| "no matching RSA fingerprint found".to_string())?;
-    dbg_log!("auth::perform_dh got pq={} fingerprint={:#x}", pq, key.fingerprint);
+    let key =
+        find_key(&fingerprints).ok_or_else(|| "no matching RSA fingerprint found".to_string())?;
+    dbg_log!(
+        "auth::perform_dh got pq={} fingerprint={:#x}",
+        pq,
+        key.fingerprint
+    );
 
     // step 2: factorize
     let (p, q) = factorize(pq);
@@ -373,7 +416,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let resp2 = recv_unencrypted(transport).await?;
     let mut cur2 = Cursor::new(&resp2[..]);
 
-    let ctor2 = cur2.read_u32::<LittleEndian>().map_err(|e| format!("read DH ctor: {e}"))?;
+    let ctor2 = cur2
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read DH ctor: {e}"))?;
     if ctor2 == SERVER_DH_PARAMS_FAIL {
         return Err("server_DH_params_fail".into());
     }
@@ -383,8 +428,10 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
 
     let mut n2 = [0u8; 16];
     let mut sn2 = [0u8; 16];
-    cur2.read_exact(&mut n2).map_err(|e| format!("read DH nonce: {e}"))?;
-    cur2.read_exact(&mut sn2).map_err(|e| format!("read DH server_nonce: {e}"))?;
+    cur2.read_exact(&mut n2)
+        .map_err(|e| format!("read DH nonce: {e}"))?;
+    cur2.read_exact(&mut sn2)
+        .map_err(|e| format!("read DH server_nonce: {e}"))?;
     if n2 != nonce || sn2 != srv_nonce_buf {
         return Err("nonce mismatch in server_DH_params_ok".into());
     }
@@ -395,7 +442,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let (tmp_key, tmp_iv) = derive_tmp_aes(&new_nonce, &srv_nonce_buf);
 
     let answer_with_hash = ige_decrypt(&encrypted_answer, &tmp_key, &tmp_iv);
-    if answer_with_hash.len() < 20 { return Err("DH answer too short".into()); }
+    if answer_with_hash.len() < 20 {
+        return Err("DH answer too short".into());
+    }
     let answer = &answer_with_hash[20..];
     let answer_hash = Sha1::digest(answer);
     if answer_with_hash[..20] != answer_hash[..] {
@@ -403,23 +452,34 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     }
 
     let mut cur3 = Cursor::new(answer);
-    let inner_ctor = cur3.read_u32::<LittleEndian>().map_err(|e| format!("read inner ctor: {e}"))?;
+    let inner_ctor = cur3
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read inner ctor: {e}"))?;
     if inner_ctor != SERVER_DH_INNER_DATA {
-        return Err(format!("expected server_DH_inner_data, got {:#x}", inner_ctor));
+        return Err(format!(
+            "expected server_DH_inner_data, got {:#x}",
+            inner_ctor
+        ));
     }
 
     let mut n3 = [0u8; 16];
     let mut sn3 = [0u8; 16];
-    cur3.read_exact(&mut n3).map_err(|e| format!("read DH inner nonce: {e}"))?;
-    cur3.read_exact(&mut sn3).map_err(|e| format!("read DH inner server_nonce: {e}"))?;
+    cur3.read_exact(&mut n3)
+        .map_err(|e| format!("read DH inner nonce: {e}"))?;
+    cur3.read_exact(&mut sn3)
+        .map_err(|e| format!("read DH inner server_nonce: {e}"))?;
     if n3 != nonce || sn3 != srv_nonce_buf {
         return Err("nonce mismatch in server_DH_inner_data".into());
     }
 
-    let g_int = cur3.read_i32::<LittleEndian>().map_err(|e| format!("read g: {e}"))?;
+    let g_int = cur3
+        .read_i32::<LittleEndian>()
+        .map_err(|e| format!("read g: {e}"))?;
     let dh_prime_bytes = tl::deserialize_bytes(&mut cur3)?;
     let g_a_bytes = tl::deserialize_bytes(&mut cur3)?;
-    let server_time = cur3.read_i32::<LittleEndian>().map_err(|e| format!("read server_time: {e}"))?;
+    let server_time = cur3
+        .read_i32::<LittleEndian>()
+        .map_err(|e| format!("read server_time: {e}"))?;
 
     let dh_prime = BigUint::from_bytes_be(&dh_prime_bytes);
     let g_a = BigUint::from_bytes_be(&g_a_bytes);
@@ -449,7 +509,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     }
 
     let mut auth_key_bytes = auth_key_int.to_bytes_be();
-    while auth_key_bytes.len() < 256 { auth_key_bytes.insert(0, 0); }
+    while auth_key_bytes.len() < 256 {
+        auth_key_bytes.insert(0, 0);
+    }
     if auth_key_bytes.len() > 256 {
         auth_key_bytes = auth_key_bytes[auth_key_bytes.len() - 256..].to_vec();
     }
@@ -460,7 +522,9 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
 
     // step 7: build client_DH_inner_data, encrypt with tmp_aes
     let mut client_inner = Vec::new();
-    client_inner.write_u32::<LittleEndian>(CLIENT_DH_INNER_DATA).unwrap();
+    client_inner
+        .write_u32::<LittleEndian>(CLIENT_DH_INNER_DATA)
+        .unwrap();
     client_inner.extend_from_slice(&nonce);
     client_inner.extend_from_slice(&srv_nonce_buf);
     client_inner.write_u64::<LittleEndian>(0).unwrap(); // retry_id = 0
@@ -483,7 +547,8 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
 
     // step 8: set_client_DH_params
     let mut req3 = Vec::new();
-    req3.write_u32::<LittleEndian>(SET_CLIENT_DH_PARAMS).unwrap();
+    req3.write_u32::<LittleEndian>(SET_CLIENT_DH_PARAMS)
+        .unwrap();
     req3.extend_from_slice(&nonce);
     req3.extend_from_slice(&srv_nonce_buf);
     req3.extend(tl::serialize_bytes(&encrypted));
@@ -492,11 +557,15 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     let resp3 = recv_unencrypted(transport).await?;
     let mut cur4 = Cursor::new(&resp3[..]);
 
-    let final_ctor = cur4.read_u32::<LittleEndian>().map_err(|e| format!("read final ctor: {e}"))?;
+    let final_ctor = cur4
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read final ctor: {e}"))?;
     let mut final_nonce = [0u8; 16];
     let mut final_server_nonce = [0u8; 16];
-    cur4.read_exact(&mut final_nonce).map_err(|e| format!("read final nonce: {e}"))?;
-    cur4.read_exact(&mut final_server_nonce).map_err(|e| format!("read final server_nonce: {e}"))?;
+    cur4.read_exact(&mut final_nonce)
+        .map_err(|e| format!("read final nonce: {e}"))?;
+    cur4.read_exact(&mut final_server_nonce)
+        .map_err(|e| format!("read final server_nonce: {e}"))?;
     if final_nonce != nonce || final_server_nonce != srv_nonce_buf {
         return Err("nonce mismatch in dh_gen response".into());
     }
@@ -547,10 +616,16 @@ pub async fn perform_dh(transport: &mut MtpTransport) -> Result<DhResult, String
     }
     let server_salt = u64::from_le_bytes(salt_bytes);
 
-    dbg_log!("auth::perform_dh DONE auth_key_id={:#x} salt={:#x}",
-        super::crypto::auth_key_id(&auth_key), server_salt);
+    dbg_log!(
+        "auth::perform_dh DONE auth_key_id={:#x} salt={:#x}",
+        super::crypto::auth_key_id(&auth_key),
+        server_salt
+    );
 
-    Ok(DhResult { auth_key, server_salt })
+    Ok(DhResult {
+        auth_key,
+        server_salt,
+    })
 }
 
 fn derive_tmp_aes(new_nonce: &[u8; 32], server_nonce: &[u8; 16]) -> ([u8; 32], [u8; 32]) {
@@ -574,7 +649,9 @@ fn derive_tmp_aes(new_nonce: &[u8; 32], server_nonce: &[u8; 16]) -> ([u8; 32], [
 
 fn sha1_concat(parts: &[&[u8]]) -> [u8; 20] {
     let mut hasher = Sha1::new();
-    for p in parts { hasher.update(p); }
+    for p in parts {
+        hasher.update(p);
+    }
     let r = hasher.finalize();
     let mut out = [0u8; 20];
     out.copy_from_slice(&r);
@@ -583,7 +660,9 @@ fn sha1_concat(parts: &[&[u8]]) -> [u8; 20] {
 
 fn trim_leading_zeros(b: &[u8]) -> Vec<u8> {
     let mut i = 0;
-    while i < b.len() - 1 && b[i] == 0 { i += 1; }
+    while i < b.len() - 1 && b[i] == 0 {
+        i += 1;
+    }
     b[i..].to_vec()
 }
 
@@ -696,7 +775,9 @@ pub fn compute_srp(srp: &Srp, password: &str) -> Result<SrpProof, String> {
     };
 
     let mut xored = [0u8; 32];
-    for i in 0..32 { xored[i] = h_p[i] ^ h_g[i]; }
+    for i in 0..32 {
+        xored[i] = h_p[i] ^ h_g[i];
+    }
 
     let mut h = Sha256::new();
     sha2::Digest::update(&mut h, &xored);
@@ -707,7 +788,10 @@ pub fn compute_srp(srp: &Srp, password: &str) -> Result<SrpProof, String> {
     sha2::Digest::update(&mut h, &k_a);
     let m1: [u8; 32] = h.finalize().into();
 
-    Ok(SrpProof { a: g_a_bytes, m1: m1.to_vec() })
+    Ok(SrpProof {
+        a: g_a_bytes,
+        m1: m1.to_vec(),
+    })
 }
 
 fn password_hash(srp: &Srp, password: &str) -> [u8; 32] {
@@ -758,7 +842,9 @@ fn pbkdf2_sha512(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8
             mac.update(&u_vec);
             let new_u = mac.finalize().into_bytes();
             u_vec = new_u.to_vec();
-            for i in 0..hlen { t[i] ^= u_vec[i]; }
+            for i in 0..hlen {
+                t[i] ^= u_vec[i];
+            }
         }
 
         let start = (block_num - 1) * hlen;
@@ -768,7 +854,9 @@ fn pbkdf2_sha512(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8
 }
 
 fn pad_left(b: &[u8], n: usize) -> Vec<u8> {
-    if b.len() >= n { return b[b.len() - n..].to_vec(); }
+    if b.len() >= n {
+        return b[b.len() - n..].to_vec();
+    }
     let mut out = vec![0u8; n];
     out[n - b.len()..].copy_from_slice(b);
     out
@@ -779,9 +867,19 @@ fn pad_left(b: &[u8], n: usize) -> Vec<u8> {
 // v = g^x mod p (256-byte big-endian), where x = PH2(password, salt1, salt2)
 // derived from the server-provided new_algo params (g, p, salt1, salt2).
 // salt1 must already include the 32 random bytes appended to new_algo.salt1.
-pub fn compute_new_password_verifier(g: u32, p: &[u8], salt1: &[u8], salt2: &[u8], password: &str) -> Result<Vec<u8>, String> {
-    if p.is_empty() { return Err("new 2FA: p is empty".into()); }
-    if g == 0 { return Err("new 2FA: g is zero".into()); }
+pub fn compute_new_password_verifier(
+    g: u32,
+    p: &[u8],
+    salt1: &[u8],
+    salt2: &[u8],
+    password: &str,
+) -> Result<Vec<u8>, String> {
+    if p.is_empty() {
+        return Err("new 2FA: p is empty".into());
+    }
+    if g == 0 {
+        return Err("new 2FA: g is zero".into());
+    }
 
     // reuse the canonical PH2 derivation via a throwaway Srp holding the new_algo salts
     let srp = Srp {

@@ -1,18 +1,18 @@
 // first_comment: monitors channels for new posts and leaves the first comment
 // supports static text or LLM-generated contextual replies
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Deserialize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
 
+use crate::accounts::connect::connect_account;
+use crate::i18n::{t, t_with};
 use crate::mtproto::client::MtpClient;
+use crate::mtproto::invite::resolve_channel_link;
 use crate::mtproto::tl;
 use crate::mtproto::tl_gen;
-use crate::mtproto::invite::resolve_channel_link;
-use crate::accounts::connect::connect_account;
 use crate::queue::TaskQueue;
-use crate::i18n::{t, t_with};
 
 const POLL_INTERVAL_MS: u64 = 1500;
 const LLM_MAX_CHARS: usize = 200;
@@ -20,7 +20,9 @@ const LLM_MAX_CHARS: usize = 200;
 async fn interruptible_sleep(ms: u64, token: &AtomicBool) {
     let mut remaining = ms;
     while remaining > 0 {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let chunk = remaining.min(200);
         tokio::time::sleep(std::time::Duration::from_millis(chunk)).await;
         remaining -= chunk;
@@ -29,7 +31,7 @@ async fn interruptible_sleep(ms: u64, token: &AtomicBool) {
 
 #[derive(Deserialize, Clone)]
 pub struct FirstCommentConfig {
-    pub target_mode: String, // "channels" | "subscribed"
+    pub target_mode: String,  // "channels" | "subscribed"
     pub targets: Vec<String>, // list of channel links (used when target_mode == "channels")
     pub delay_min: u32,
     pub delay_max: u32,
@@ -63,11 +65,16 @@ pub async fn first_comment_start(
     let tid = task_id.clone();
 
     let queue: tauri::State<'_, TaskQueue> = app.state();
-    let token = queue.register_task(
-        task_id.clone(),
-        "first_comment".to_string(),
-        t_with("first_comment_task_name", &[("count", &ids.len().to_string())]),
-    ).await;
+    let token = queue
+        .register_task(
+            task_id.clone(),
+            "first_comment".to_string(),
+            t_with(
+                "first_comment_task_name",
+                &[("count", &ids.len().to_string())],
+            ),
+        )
+        .await;
 
     let config = Arc::new(config);
 
@@ -75,7 +82,9 @@ pub async fn first_comment_start(
     // (round-robin): 5 channels / 5 accounts → 1 each; 5 channels / 4 accounts →
     // one account gets 2. for "subscribed" mode each account uses its own subs.
     let distribute = config.target_mode == "channels";
-    let cleaned_targets: Vec<String> = config.targets.iter()
+    let cleaned_targets: Vec<String> = config
+        .targets
+        .iter()
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
         .collect();
@@ -102,8 +111,10 @@ pub async fn first_comment_start(
                         } else {
                             // also check status field
                             let status = &json.status;
-                            let is_spamblocked = status.contains("спамблок") || status.contains("spamblock")
-                                || status.contains("Спамблок") || status.contains("Spamblock");
+                            let is_spamblocked = status.contains("спамблок")
+                                || status.contains("spamblock")
+                                || status.contains("Спамблок")
+                                || status.contains("Spamblock");
                             if is_spamblocked {
                                 spamblock_count += 1;
                             }
@@ -112,7 +123,13 @@ pub async fn first_comment_start(
                 }
             }
             if spamblock_count > 0 {
-                let _ = app.emit("first-comment-log", t_with("first_comment_spamblock_warning", &[("count", &spamblock_count.to_string())]));
+                let _ = app.emit(
+                    "first-comment-log",
+                    t_with(
+                        "first_comment_spamblock_warning",
+                        &[("count", &spamblock_count.to_string())],
+                    ),
+                );
             }
         }
 
@@ -121,32 +138,62 @@ pub async fn first_comment_start(
         let mut handles = Vec::new();
 
         for (i, id) in ids.into_iter().enumerate() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
             let sem = sem.clone();
             let config = config.clone();
             let app_clone = app.clone();
             let token_clone = token.clone();
-            let assigned = if distribute { buckets[i].clone() } else { Vec::new() };
+            let assigned = if distribute {
+                buckets[i].clone()
+            } else {
+                Vec::new()
+            };
 
             handles.push(tokio::spawn(async move {
                 let _permit = sem.acquire().await.unwrap();
-                if !token_clone.load(Ordering::Relaxed) { return; }
-
-                // skip accounts that received no channels in round-robin distribution
-                if distribute && assigned.is_empty() {
-                    let _ = app_clone.emit("first-comment-log", format!("[{}/{}] {}", i + 1, total, t("first_comment_no_channels_assigned")));
+                if !token_clone.load(Ordering::Relaxed) {
                     return;
                 }
 
-                let result = run_account(&id, i + 1, total, &config, &assigned, &app_clone, &token_clone).await;
+                // skip accounts that received no channels in round-robin distribution
+                if distribute && assigned.is_empty() {
+                    let _ = app_clone.emit(
+                        "first-comment-log",
+                        format!(
+                            "[{}/{}] {}",
+                            i + 1,
+                            total,
+                            t("first_comment_no_channels_assigned")
+                        ),
+                    );
+                    return;
+                }
+
+                let result = run_account(
+                    &id,
+                    i + 1,
+                    total,
+                    &config,
+                    &assigned,
+                    &app_clone,
+                    &token_clone,
+                )
+                .await;
                 if let Err(e) = result {
                     crate::accounts::commands::check_and_mark_dead_session(&e, &id);
-                    let _ = app_clone.emit("first-comment-log", format!("[{}/{}] {}: {}", i + 1, total, t("error"), e));
+                    let _ = app_clone.emit(
+                        "first-comment-log",
+                        format!("[{}/{}] {}: {}", i + 1, total, t("error"), e),
+                    );
                 }
             }));
         }
 
-        for h in handles { let _ = h.await; }
+        for h in handles {
+            let _ = h.await;
+        }
         let _ = app.emit("first-comment-log", t("done"));
 
         let queue: tauri::State<'_, TaskQueue> = app.state();
@@ -173,7 +220,9 @@ async fn run_account(
     token: &Arc<AtomicBool>,
 ) -> Result<(), String> {
     let prefix = format!("[{}/{}]", idx, total);
-    let emit = |msg: String| { let _ = app.emit("first-comment-log", format!("{} {}", prefix, msg)); };
+    let emit = |msg: String| {
+        let _ = app.emit("first-comment-log", format!("{} {}", prefix, msg));
+    };
 
     // Pre-check spamblock from json — warn but don't skip (user chose to include them)
     {
@@ -204,7 +253,10 @@ async fn run_account(
         }
         return Ok(());
     }
-    emit(t_with("first_comment_monitoring_count", &[("count", &channels.len().to_string())]));
+    emit(t_with(
+        "first_comment_monitoring_count",
+        &[("count", &channels.len().to_string())],
+    ));
 
     // initialize pts for each channel
     let filter_empty = tl_gen::CHANNEL_MESSAGES_FILTER_EMPTY.to_le_bytes().to_vec();
@@ -218,14 +270,31 @@ async fn run_account(
             _ => {
                 // fallback: probe via getChannelDifference with force to learn pts
                 let input_ch = tl_gen::serialize_inputChannel(ch.id, ch.access_hash);
-                let init_req = tl_gen::build_updates_getChannelDifference(true, &input_ch, &filter_empty, 1, 1);
+                let init_req = tl_gen::build_updates_getChannelDifference(
+                    true,
+                    &input_ch,
+                    &filter_empty,
+                    1,
+                    1,
+                );
                 match client.invoke(&init_req).await {
-                    Ok(data) => { let p = extract_channel_pts(&data); if p > 0 { p } else { 1 } }
+                    Ok(data) => {
+                        let p = extract_channel_pts(&data);
+                        if p > 0 {
+                            p
+                        } else {
+                            1
+                        }
+                    }
                     Err(_) => 1,
                 }
             }
         };
-        watchers.push(ChannelWatcher { id: ch.id, access_hash: ch.access_hash, pts });
+        watchers.push(ChannelWatcher {
+            id: ch.id,
+            access_hash: ch.access_hash,
+            pts,
+        });
     }
 
     // main poll loop — round-robin all channels
@@ -236,11 +305,17 @@ async fn run_account(
         }
 
         for watcher in watchers.iter_mut() {
-            if !token.load(Ordering::Relaxed) { break; }
+            if !token.load(Ordering::Relaxed) {
+                break;
+            }
 
             let input_ch = tl_gen::serialize_inputChannel(watcher.id, watcher.access_hash);
             let diff_req = tl_gen::build_updates_getChannelDifference(
-                false, &input_ch, &filter_empty, watcher.pts, 100,
+                false,
+                &input_ch,
+                &filter_empty,
+                watcher.pts,
+                100,
             );
             let diff_data = match client.invoke(&diff_req).await {
                 Ok(d) => d,
@@ -264,11 +339,17 @@ async fn run_account(
                 tl_gen::TlUpdatesChannelDifference::TooLong { .. } => {
                     // Message IDs and channel pts are unrelated counters. Re-read the
                     // authoritative channel pts instead of deriving it from messages.
-                    if let Ok(pts) = get_channel_pts(&mut client, watcher.id, watcher.access_hash).await {
+                    if let Ok(pts) =
+                        get_channel_pts(&mut client, watcher.id, watcher.access_hash).await
+                    {
                         watcher.pts = pts;
                     }
                 }
-                tl_gen::TlUpdatesChannelDifference::ChannelDifference { pts: new_pts, new_messages, .. } => {
+                tl_gen::TlUpdatesChannelDifference::ChannelDifference {
+                    pts: new_pts,
+                    new_messages,
+                    ..
+                } => {
                     let mut handled_all = true;
 
                     for msg_raw in &new_messages {
@@ -281,21 +362,35 @@ async fn run_account(
                             Some(p) => p,
                             None => continue,
                         };
-                        if post.text.is_empty() && !post.has_media { continue; }
+                        if post.text.is_empty() && !post.has_media {
+                            continue;
+                        }
 
-                        emit(t_with("first_comment_new_post_detail", &[("ch", &watcher.id.to_string()), ("id", &post.msg_id.to_string()), ("text", &truncate(&post.text, 60))]));
+                        emit(t_with(
+                            "first_comment_new_post_detail",
+                            &[
+                                ("ch", &watcher.id.to_string()),
+                                ("id", &post.msg_id.to_string()),
+                                ("text", &truncate(&post.text, 60)),
+                            ],
+                        ));
 
                         let delay_ms = compute_delay(config);
                         if delay_ms > 0 {
                             interruptible_sleep(delay_ms, token).await;
                         }
-                        if !token.load(Ordering::Relaxed) { break; }
+                        if !token.load(Ordering::Relaxed) {
+                            break;
+                        }
 
                         let comment = match config.reply_mode.as_str() {
                             "llm" => generate_llm_comment(&post.text, &config.llm_prompt),
                             _ => {
                                 if config.randomize_static {
-                                    crate::randomizer::randomize_text_internal(&config.static_text, 60)
+                                    crate::randomizer::randomize_text_internal(
+                                        &config.static_text,
+                                        60,
+                                    )
                                 } else {
                                     config.static_text.clone()
                                 }
@@ -303,25 +398,53 @@ async fn run_account(
                         };
                         // a media-only comment is valid (photo/video without text)
                         let has_media = config.reply_mode != "llm"
-                            && (!config.static_image_path.is_empty() || !config.static_video_path.is_empty());
-                        if comment.is_empty() && !has_media { continue; }
+                            && (!config.static_image_path.is_empty()
+                                || !config.static_video_path.is_empty());
+                        if comment.is_empty() && !has_media {
+                            continue;
+                        }
 
                         let (img, vid) = if config.reply_mode == "llm" {
                             ("", "")
                         } else {
-                            (config.static_image_path.as_str(), config.static_video_path.as_str())
+                            (
+                                config.static_image_path.as_str(),
+                                config.static_video_path.as_str(),
+                            )
                         };
 
-                        match send_comment(&mut client, watcher.id, watcher.access_hash, post.msg_id, &comment, img, vid, token).await {
-                            Ok(_) => emit(t_with("first_comment_comment_sent_post", &[("id", &post.msg_id.to_string())])),
+                        match send_comment(
+                            &mut client,
+                            watcher.id,
+                            watcher.access_hash,
+                            post.msg_id,
+                            &comment,
+                            img,
+                            vid,
+                            token,
+                        )
+                        .await
+                        {
+                            Ok(_) => emit(t_with(
+                                "first_comment_comment_sent_post",
+                                &[("id", &post.msg_id.to_string())],
+                            )),
                             Err(e) => {
-                                if crate::mtproto::is_fatal_session_error(&e) { return Err(e); }
+                                if crate::mtproto::is_fatal_session_error(&e) {
+                                    return Err(e);
+                                }
                                 // USER_BANNED_IN_CHANNEL = account has spamblock or is banned in this specific channel
                                 if e.contains("USER_BANNED_IN_CHANNEL") {
-                                    emit(t_with("first_comment_banned_in_channel", &[("ch", &watcher.id.to_string())]));
+                                    emit(t_with(
+                                        "first_comment_banned_in_channel",
+                                        &[("ch", &watcher.id.to_string())],
+                                    ));
                                     break; // skip remaining posts in this channel
                                 }
-                                emit(t_with("first_comment_comment_error", &[("id", &post.msg_id.to_string()), ("error", &e)]));
+                                emit(t_with(
+                                    "first_comment_comment_error",
+                                    &[("id", &post.msg_id.to_string()), ("error", &e)],
+                                ));
                             }
                         }
                     }
@@ -356,11 +479,16 @@ async fn resolve_targets(
     app: &tauri::AppHandle,
     prefix: &str,
 ) -> Result<Vec<ChannelInfo>, String> {
-    let emit = |msg: String| { let _ = app.emit("first-comment-log", format!("{} {}", prefix, msg)); };
+    let emit = |msg: String| {
+        let _ = app.emit("first-comment-log", format!("{} {}", prefix, msg));
+    };
 
     if config.target_mode == "subscribed" {
         let req = tl::build_get_dialogs_with_folder(0, 500);
-        let data = client.invoke(&req).await.map_err(|e| format!("getDialogs: {e}"))?;
+        let data = client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("getDialogs: {e}"))?;
         let peers = tl::parse_dialog_peers(&data).unwrap_or_default();
         let mut channels = Vec::new();
         for peer in peers {
@@ -368,19 +496,43 @@ async fn resolve_targets(
                 channels.push(ChannelInfo { id, access_hash });
             }
         }
-        emit(t_with("first_comment_channels_found", &[("count", &channels.len().to_string())]));
+        emit(t_with(
+            "first_comment_channels_found",
+            &[("count", &channels.len().to_string())],
+        ));
         Ok(channels)
     } else {
         let mut channels = Vec::new();
         for target in assigned_channels {
             let trimmed = target.trim();
-            if trimmed.is_empty() { continue; }
+            if trimmed.is_empty() {
+                continue;
+            }
             match resolve_channel_link(client, trimmed).await {
                 Ok(resolved) => {
-                    emit(t_with("first_comment_channel_resolved", &[("title", if resolved.title_hint.is_empty() { trimmed } else { &resolved.title_hint }), ("id", &resolved.channel_id.to_string())]));
-                    channels.push(ChannelInfo { id: resolved.channel_id, access_hash: resolved.access_hash });
+                    emit(t_with(
+                        "first_comment_channel_resolved",
+                        &[
+                            (
+                                "title",
+                                if resolved.title_hint.is_empty() {
+                                    trimmed
+                                } else {
+                                    &resolved.title_hint
+                                },
+                            ),
+                            ("id", &resolved.channel_id.to_string()),
+                        ],
+                    ));
+                    channels.push(ChannelInfo {
+                        id: resolved.channel_id,
+                        access_hash: resolved.access_hash,
+                    });
                 }
-                Err(e) => emit(t_with("first_comment_resolve_error", &[("target", trimmed), ("error", &e)])),
+                Err(e) => emit(t_with(
+                    "first_comment_resolve_error",
+                    &[("target", trimmed), ("error", &e)],
+                )),
             }
         }
         Ok(channels)
@@ -396,9 +548,13 @@ struct ChannelPost {
 fn parse_channel_post(data: &[u8]) -> Option<ChannelPost> {
     let msg = tl_gen::deserialize_tl_obj::<tl_gen::TlMessage>(data).ok()?;
     match msg {
-        tl_gen::TlMessage::Message { id, message, media, .. } => {
-            Some(ChannelPost { msg_id: id, text: message, has_media: media.is_some() })
-        }
+        tl_gen::TlMessage::Message {
+            id, message, media, ..
+        } => Some(ChannelPost {
+            msg_id: id,
+            text: message,
+            has_media: media.is_some(),
+        }),
         _ => None,
     }
 }
@@ -412,9 +568,16 @@ fn extract_channel_pts(data: &[u8]) -> i32 {
 }
 
 // read the current per-channel pts via channels.getFullChannel → channelFull.pts
-async fn get_channel_pts(client: &mut MtpClient, channel_id: i64, access_hash: i64) -> Result<i32, String> {
+async fn get_channel_pts(
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+) -> Result<i32, String> {
     let req = tl::build_get_full_channel(channel_id, access_hash);
-    let data = client.invoke(&req).await.map_err(|e| format!("getFullChannel: {e}"))?;
+    let data = client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("getFullChannel: {e}"))?;
     let inner = tl_gen::unwrap_rpc(&data).map_err(|e| format!("unwrap: {e}"))?;
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlMessagesChatFull>(&inner)
         .map_err(|e| format!("chatFull: {e}"))?;
@@ -430,7 +593,11 @@ fn compute_delay(config: &FirstCommentConfig) -> u64 {
     }
     let min = config.delay_min as u64;
     let max = config.delay_max.max(config.delay_min) as u64;
-    let value = if min == max { min } else { min + (rand::random::<u64>() % (max - min + 1)) };
+    let value = if min == max {
+        min
+    } else {
+        min + (rand::random::<u64>() % (max - min + 1))
+    };
     match config.delay_unit.as_str() {
         "minutes" => value * 60 * 1000,
         _ => value * 1000,
@@ -461,7 +628,7 @@ fn generate_llm_comment(post_text: &str, promo_link: &str) -> String {
             }
             // remove wrapping quotes if LLM added them
             if reply.starts_with('"') && reply.ends_with('"') {
-                reply = reply[1..reply.len()-1].to_string();
+                reply = reply[1..reply.len() - 1].to_string();
             }
             reply
         }
@@ -480,7 +647,17 @@ pub async fn send_comment_pub(
     text: &str,
 ) -> Result<(), String> {
     let token = Arc::new(AtomicBool::new(true));
-    send_comment(client, channel_id, access_hash, msg_id, text, "", "", &token).await
+    send_comment(
+        client,
+        channel_id,
+        access_hash,
+        msg_id,
+        text,
+        "",
+        "",
+        &token,
+    )
+    .await
 }
 
 async fn send_comment(
@@ -496,7 +673,9 @@ async fn send_comment(
     // get discussion message to find the linked group
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     let disc_req = tl_gen::build_messages_getDiscussionMessage(&peer, msg_id);
-    let disc_data = client.invoke(&disc_req).await
+    let disc_data = client
+        .invoke(&disc_req)
+        .await
         .map_err(|e| format!("getDiscussionMessage: {e}"))?;
 
     let disc = tl_gen::parse_messages_getDiscussionMessage(&disc_data)
@@ -509,7 +688,15 @@ async fn send_comment(
 
     // build reply_to pointing to the discussion message
     let reply_to = tl_gen::serialize_inputReplyToMessage(
-        disc_msg_id, None, None, None, None, None, None, None, None,
+        disc_msg_id,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
     let disc_peer = tl_gen::serialize_input_peer_channel(disc_channel_id, disc_access_hash);
 
@@ -520,23 +707,56 @@ async fn send_comment(
     // media comment: upload then sendMedia with reply_to
     if !image_path.is_empty() {
         let media = upload_photo_media(client, image_path, token).await?;
-        return send_media_comment(client, &disc_peer, &reply_to, &media, &plain, &entities, random_id).await;
+        return send_media_comment(
+            client, &disc_peer, &reply_to, &media, &plain, &entities, random_id,
+        )
+        .await;
     }
     if !video_path.is_empty() {
         let media = upload_video_media(client, video_path, token).await?;
-        return send_media_comment(client, &disc_peer, &reply_to, &media, &plain, &entities, random_id).await;
+        return send_media_comment(
+            client, &disc_peer, &reply_to, &media, &plain, &entities, random_id,
+        )
+        .await;
     }
 
     // text comment with optional entities
     let entity_bufs: Vec<Vec<u8>> = entities.iter().map(|e| e.serialize()).collect();
     let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|b| b.as_slice()).collect();
-    let entities_opt = if entity_refs.is_empty() { None } else { Some(entity_refs.as_slice()) };
+    let entities_opt = if entity_refs.is_empty() {
+        None
+    } else {
+        Some(entity_refs.as_slice())
+    };
 
     let req = tl_gen::build_messages_sendMessage(
-        true, false, false, false, false, false, false, false,
-        &disc_peer, Some(&reply_to), &plain, random_id, None, entities_opt, None, None, None, None, None, None, None, None,
+        true,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        &disc_peer,
+        Some(&reply_to),
+        &plain,
+        random_id,
+        None,
+        entities_opt,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
-    client.invoke(&req).await.map_err(|e| format!("sendMessage: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("sendMessage: {e}"))?;
     Ok(())
 }
 
@@ -551,43 +771,98 @@ async fn send_media_comment(
 ) -> Result<(), String> {
     let entity_bufs: Vec<Vec<u8>> = entities.iter().map(|e| e.serialize()).collect();
     let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|b| b.as_slice()).collect();
-    let entities_opt = if entity_refs.is_empty() { None } else { Some(entity_refs.as_slice()) };
+    let entities_opt = if entity_refs.is_empty() {
+        None
+    } else {
+        Some(entity_refs.as_slice())
+    };
 
     let req = tl_gen::build_messages_sendMedia(
-        false, false, false, false, false, false, false,
-        peer, Some(reply_to), media, caption, random_id, None, entities_opt, None, None, None, None, None, None, None,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        peer,
+        Some(reply_to),
+        media,
+        caption,
+        random_id,
+        None,
+        entities_opt,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     );
-    client.invoke(&req).await.map_err(|e| format!("sendMedia: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("sendMedia: {e}"))?;
     Ok(())
 }
 
 const UPLOAD_CHUNK: usize = 512 * 1024;
 
-async fn upload_photo_media(client: &mut MtpClient, path: &str, token: &Arc<AtomicBool>) -> Result<Vec<u8>, String> {
-    let data = tokio::fs::read(path).await.map_err(|e| format!("read photo: {e}"))?;
+async fn upload_photo_media(
+    client: &mut MtpClient,
+    path: &str,
+    token: &Arc<AtomicBool>,
+) -> Result<Vec<u8>, String> {
+    let data = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("read photo: {e}"))?;
     let file_id: i64 = rand::random();
     let total_parts = ((data.len() + UPLOAD_CHUNK - 1) / UPLOAD_CHUNK) as i32;
     for part in 0..total_parts {
-        if !token.load(Ordering::Relaxed) { return Ok(Vec::new()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
         let offset = part as usize * UPLOAD_CHUNK;
         let end = (offset + UPLOAD_CHUNK).min(data.len());
         let req = tl_gen::build_upload_saveFilePart(file_id, part, &data[offset..end]);
-        client.invoke(&req).await.map_err(|e| format!("upload photo part {part}: {e}"))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload photo part {part}: {e}"))?;
         let jitter = rand::random::<u64>() % 500;
         tokio::time::sleep(std::time::Duration::from_millis(500 + jitter)).await;
     }
-    let filename = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("photo.jpg");
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("photo.jpg");
     let input_file = tl_gen::serialize_inputFile(file_id, total_parts, filename, "");
-    Ok(tl_gen::serialize_inputMediaUploadedPhoto(false, false, &input_file, None, None, None))
+    Ok(tl_gen::serialize_inputMediaUploadedPhoto(
+        false,
+        false,
+        &input_file,
+        None,
+        None,
+        None,
+    ))
 }
 
-async fn upload_video_media(client: &mut MtpClient, path: &str, token: &Arc<AtomicBool>) -> Result<Vec<u8>, String> {
-    let data = tokio::fs::read(path).await.map_err(|e| format!("read video: {e}"))?;
+async fn upload_video_media(
+    client: &mut MtpClient,
+    path: &str,
+    token: &Arc<AtomicBool>,
+) -> Result<Vec<u8>, String> {
+    let data = tokio::fs::read(path)
+        .await
+        .map_err(|e| format!("read video: {e}"))?;
     let file_id: i64 = rand::random();
     let total_parts = ((data.len() + UPLOAD_CHUNK - 1) / UPLOAD_CHUNK) as i32;
     let is_big = data.len() >= 10 * 1024 * 1024;
     for part in 0..total_parts {
-        if !token.load(Ordering::Relaxed) { return Ok(Vec::new()); }
+        if !token.load(Ordering::Relaxed) {
+            return Ok(Vec::new());
+        }
         let offset = part as usize * UPLOAD_CHUNK;
         let end = (offset + UPLOAD_CHUNK).min(data.len());
         let chunk = &data[offset..end];
@@ -596,36 +871,60 @@ async fn upload_video_media(client: &mut MtpClient, path: &str, token: &Arc<Atom
         } else {
             tl_gen::build_upload_saveFilePart(file_id, part, chunk)
         };
-        client.invoke(&req).await.map_err(|e| format!("upload video part {part}: {e}"))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload video part {part}: {e}"))?;
         let jitter = rand::random::<u64>() % 500;
         tokio::time::sleep(std::time::Duration::from_millis(500 + jitter)).await;
     }
-    let filename = std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("video.mp4");
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("video.mp4");
     let input_file = if is_big {
         tl_gen::serialize_inputFileBig(file_id, total_parts, filename)
     } else {
         tl_gen::serialize_inputFile(file_id, total_parts, filename, "")
     };
-    let video_attr = tl_gen::serialize_documentAttributeVideo(false, true, false, 0.0, 0, 0, None, None, None);
+    let video_attr =
+        tl_gen::serialize_documentAttributeVideo(false, true, false, 0.0, 0, 0, None, None, None);
     let filename_attr = tl_gen::serialize_documentAttributeFilename(filename);
     let attrs: &[&[u8]] = &[&video_attr, &filename_attr];
     Ok(tl_gen::serialize_inputMediaUploadedDocument(
-        false, false, false, &input_file, None, "video/mp4", attrs, None, None, None, None,
+        false,
+        false,
+        false,
+        &input_file,
+        None,
+        "video/mp4",
+        attrs,
+        None,
+        None,
+        None,
+        None,
     ))
 }
 
-fn extract_discussion_channel(chats: &[Vec<u8>], source_channel_id: i64) -> Result<(i64, i64), String> {
+fn extract_discussion_channel(
+    chats: &[Vec<u8>],
+    source_channel_id: i64,
+) -> Result<(i64, i64), String> {
     // find the linked discussion group: a channel in `chats` that isn't the source.
     // use the generated deserializer — channel#1c32b11c has two flag words and a
     // conditional access_hash, too fragile to parse by hand.
     for chat_raw in chats {
         match tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(chat_raw) {
-            Ok(tl_gen::TlChat::Channel { id, access_hash, .. }) => {
+            Ok(tl_gen::TlChat::Channel {
+                id, access_hash, ..
+            }) => {
                 if id != 0 && id != source_channel_id {
                     return Ok((id, access_hash.unwrap_or(0)));
                 }
             }
-            Ok(tl_gen::TlChat::ChannelForbidden { id, access_hash, .. }) => {
+            Ok(tl_gen::TlChat::ChannelForbidden {
+                id, access_hash, ..
+            }) => {
                 if id != 0 && id != source_channel_id {
                     return Ok((id, access_hash));
                 }
@@ -638,7 +937,9 @@ fn extract_discussion_channel(chats: &[Vec<u8>], source_channel_id: i64) -> Resu
 
 fn extract_first_msg_id(messages: &[Vec<u8>]) -> Result<i32, String> {
     for msg_raw in messages {
-        if let Ok(tl_gen::TlMessage::Message { id, .. }) = tl_gen::deserialize_tl_obj::<tl_gen::TlMessage>(msg_raw) {
+        if let Ok(tl_gen::TlMessage::Message { id, .. }) =
+            tl_gen::deserialize_tl_obj::<tl_gen::TlMessage>(msg_raw)
+        {
             if id > 0 {
                 return Ok(id);
             }
@@ -650,6 +951,9 @@ fn extract_first_msg_id(messages: &[Vec<u8>]) -> Result<i32, String> {
 fn truncate(s: &str, max: usize) -> String {
     let mut chars = s.chars();
     let shortened: String = chars.by_ref().take(max).collect();
-    if chars.next().is_some() { format!("{shortened}...") }
-    else { shortened }
+    if chars.next().is_some() {
+        format!("{shortened}...")
+    } else {
+        shortened
+    }
 }

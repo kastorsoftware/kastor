@@ -39,8 +39,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::Manager;
 
-use queue::TaskQueue;
 use crate::i18n::t;
+use queue::TaskQueue;
 
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
@@ -105,7 +105,11 @@ pub fn update_app_config(app_id: i32, app_hash: String, dc_addresses: HashMap<i3
     if !dc_addresses.is_empty() {
         c.dc_addresses = dc_addresses;
     }
-    dbg_log!("app_config updated: app_id={}, dc_count={}", c.app_id, c.dc_addresses.len());
+    dbg_log!(
+        "app_config updated: app_id={}, dc_count={}",
+        c.app_id,
+        c.dc_addresses.len()
+    );
 }
 
 pub fn check_and_mark_dead_session(error: &str, id: &str) -> bool {
@@ -163,8 +167,8 @@ fn get_version() -> String {
 
 #[tauri::command]
 async fn check_telegram_connectivity() -> bool {
-    use tokio::net::TcpStream;
     use std::time::Duration;
+    use tokio::net::TcpStream;
 
     let targets: &[(&str, u16)] = &[
         // Telegram DC IPs (DC1-DC5)
@@ -223,30 +227,54 @@ struct InstalledTools {
 fn check_installed_tools() -> InstalledTools {
     let beekeeper = is_installed_beekeeper();
     let notepadpp = is_installed_notepadpp();
-    dbg_log!("check_installed_tools: beekeeper={}, notepadpp={}", beekeeper, notepadpp);
-    InstalledTools { beekeeper, notepadpp }
+    dbg_log!(
+        "check_installed_tools: beekeeper={}, notepadpp={}",
+        beekeeper,
+        notepadpp
+    );
+    InstalledTools {
+        beekeeper,
+        notepadpp,
+    }
 }
 
 fn is_installed_beekeeper() -> bool {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let p = std::path::PathBuf::from(local).join("Programs").join("beekeeper-studio").join("Beekeeper Studio.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(local)
+            .join("Programs")
+            .join("beekeeper-studio")
+            .join("Beekeeper Studio.exe");
+        if p.exists() {
+            return true;
+        }
     }
     if let Some(pf) = std::env::var_os("PROGRAMFILES") {
-        let p = std::path::PathBuf::from(pf).join("Beekeeper Studio").join("Beekeeper Studio.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Beekeeper Studio")
+            .join("Beekeeper Studio.exe");
+        if p.exists() {
+            return true;
+        }
     }
     false
 }
 
 fn is_installed_notepadpp() -> bool {
     if let Some(pf) = std::env::var_os("PROGRAMFILES") {
-        let p = std::path::PathBuf::from(pf).join("Notepad++").join("notepad++.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Notepad++")
+            .join("notepad++.exe");
+        if p.exists() {
+            return true;
+        }
     }
     if let Some(pf) = std::env::var_os("PROGRAMFILES(X86)") {
-        let p = std::path::PathBuf::from(pf).join("Notepad++").join("notepad++.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Notepad++")
+            .join("notepad++.exe");
+        if p.exists() {
+            return true;
+        }
     }
     false
 }
@@ -256,26 +284,46 @@ fn get_stats() -> DashboardStats {
     dbg_log!("get_stats called");
     let storage = accounts::commands::get_storage_pub();
     let accounts = std::fs::read_dir(storage.session_json_dir())
-        .map(|e| e.flatten().filter(|f| {
-            f.path().extension().map(|x| x == "session").unwrap_or(false)
-        }).count())
+        .map(|e| {
+            e.flatten()
+                .filter(|f| {
+                    f.path()
+                        .extension()
+                        .map(|x| x == "session")
+                        .unwrap_or(false)
+                })
+                .count()
+        })
         .unwrap_or(0) as u32;
     let proxies = proxy::ProxyList::load().proxies.len() as u32;
 
     dbg_log!("get_stats accounts={} proxies={}", accounts, proxies);
-    DashboardStats {
-        accounts,
-        proxies,
-    }
+    DashboardStats { accounts, proxies }
 }
 
 #[tauri::command]
 fn get_quick_actions() -> Vec<QuickAction> {
     vec![
-        QuickAction { id: "mailing".into(), label: t("quick_mailing"), icon: "Send".into() },
-        QuickAction { id: "checker".into(), label: t("quick_checker"), icon: "ShieldCheck".into() },
-        QuickAction { id: "inviter".into(), label: t("quick_inviter"), icon: "UserPlus".into() },
-        QuickAction { id: "parser".into(), label: t("quick_parser"), icon: "Database".into() },
+        QuickAction {
+            id: "mailing".into(),
+            label: t("quick_mailing"),
+            icon: "Send".into(),
+        },
+        QuickAction {
+            id: "checker".into(),
+            label: t("quick_checker"),
+            icon: "ShieldCheck".into(),
+        },
+        QuickAction {
+            id: "inviter".into(),
+            label: t("quick_inviter"),
+            icon: "UserPlus".into(),
+        },
+        QuickAction {
+            id: "parser".into(),
+            label: t("quick_parser"),
+            icon: "Database".into(),
+        },
     ]
 }
 
@@ -289,7 +337,9 @@ fn show_window(window: tauri::Window) {
 }
 
 #[tauri::command]
-async fn get_task_queue(queue: tauri::State<'_, TaskQueue>) -> Result<Vec<queue::TaskInfo>, String> {
+async fn get_task_queue(
+    queue: tauri::State<'_, TaskQueue>,
+) -> Result<Vec<queue::TaskInfo>, String> {
     Ok(queue.get_tasks().await)
 }
 
@@ -319,7 +369,10 @@ fn main() {
     // startup dedup: remove sessions with duplicate auth_keys
     let removed = accounts::commands::dedup_sessions_by_auth_key();
     if removed > 0 {
-        dbg_log!("startup: removed {} duplicate sessions (by auth_key)", removed);
+        dbg_log!(
+            "startup: removed {} duplicate sessions (by auth_key)",
+            removed
+        );
     }
 
     dbg_log!("main: initializing tauri...");
@@ -446,7 +499,10 @@ fn main() {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     let removed = accounts::commands::dedup_sessions_by_user_id();
                     if removed > 0 {
-                        dbg_log!("periodic dedup: removed {} duplicate sessions (by user_id)", removed);
+                        dbg_log!(
+                            "periodic dedup: removed {} duplicate sessions (by user_id)",
+                            removed
+                        );
                     }
                 }
             });
