@@ -51,9 +51,13 @@ pub fn is_network_error(err: &str) -> bool {
     NETWORK_ERRORS.iter().any(|m| lower.contains(&m.to_lowercase()))
 }
 
-// global salt cache per server address - avoids BAD_SERVER_SALT on first request
+// Salts are tied to an authorization key, not merely a DC address.
 static SALT_CACHE: std::sync::LazyLock<Mutex<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn salt_cache_key(addr: &str, auth_key: &[u8; 256]) -> String {
+    format!("{addr}:{:016x}", crypto::auth_key_id(auth_key))
+}
 
 pub struct MtpClient {
     transport: MtpTransport,
@@ -92,7 +96,7 @@ impl MtpClient {
 
         // use cached salt for this DC if available (avoids BAD_SERVER_SALT round-trip)
         let cached_salt = SALT_CACHE.lock().ok()
-            .and_then(|cache| cache.get(addr).copied())
+            .and_then(|cache| cache.get(&salt_cache_key(addr, auth_key)).copied())
             .unwrap_or(0);
 
         Ok(Self {
@@ -122,7 +126,7 @@ impl MtpClient {
     ) -> Self {
         let session_id: u64 = rand::thread_rng().gen();
         if let Ok(mut cache) = SALT_CACHE.lock() {
-            cache.insert(addr.to_string(), server_salt);
+            cache.insert(salt_cache_key(addr, &auth_key), server_salt);
         }
         Self {
             transport,
@@ -201,7 +205,7 @@ impl MtpClient {
 
         // restore cached salt
         if let Ok(cache) = SALT_CACHE.lock() {
-            if let Some(&salt) = cache.get(&self.addr) {
+            if let Some(&salt) = cache.get(&salt_cache_key(&self.addr, &self.auth_key)) {
                 self.server_salt = salt;
             }
         }
@@ -310,7 +314,7 @@ impl MtpClient {
                 self.server_salt = new_salt;
                 // cache salt for future connections to this DC
                 if let Ok(mut cache) = SALT_CACHE.lock() {
-                    cache.insert(self.addr.clone(), new_salt);
+                    cache.insert(salt_cache_key(&self.addr, &self.auth_key), new_salt);
                 }
                 return self.invoke_inner(request).await;
             }
