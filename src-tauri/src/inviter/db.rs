@@ -156,10 +156,20 @@ pub fn mark_taken(conn: &Connection, user_id: i64) {
 
 /// Update user after resolve (set real user_id, access_hash, names)
 pub fn update_resolved(conn: &Connection, old_id: i64, user_id: i64, access_hash: i64, first_name: &str, last_name: &str) {
-    conn.execute(
-        "UPDATE users SET user_id = ?1, access_hash = ?2, first_name = ?3, last_name = ?4 WHERE user_id = ?5",
+    let Ok(tx) = conn.unchecked_transaction() else { return; };
+    let result = tx.execute(
+        "INSERT INTO users (user_id, access_hash, username, first_name, last_name, status)
+         SELECT ?1, ?2, username, ?3, ?4, 'taken' FROM users WHERE user_id = ?5
+         ON CONFLICT(user_id) DO UPDATE SET
+             access_hash = excluded.access_hash,
+             first_name = CASE WHEN excluded.first_name != '' THEN excluded.first_name ELSE users.first_name END,
+             last_name = CASE WHEN excluded.last_name != '' THEN excluded.last_name ELSE users.last_name END",
         params![user_id, access_hash, first_name, last_name, old_id],
-    ).ok();
+    );
+    if result.is_ok() {
+        let _ = tx.execute("DELETE FROM users WHERE user_id = ?1", params![old_id]);
+        let _ = tx.commit();
+    }
 }
 
 /// Update user status
