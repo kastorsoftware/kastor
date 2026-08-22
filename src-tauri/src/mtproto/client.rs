@@ -42,6 +42,8 @@ const NETWORK_ERRORS: &[&str] = &[
     "transport error",
 ];
 
+const RETRY_AFTER_PROTOCOL_SYNC: &str = "retry after MTProto synchronization";
+
 pub fn is_fatal_session_error(err: &str) -> bool {
     FATAL_SESSION_ERRORS.iter().any(|m| err.contains(m))
 }
@@ -231,6 +233,13 @@ impl MtpClient {
             match result {
                 Ok(data) => return Ok(data),
                 Err(e) => {
+                    if e == RETRY_AFTER_PROTOCOL_SYNC {
+                        if attempt < 4 {
+                            dbg_log!("MtpClient::invoke retrying after protocol synchronization");
+                            continue;
+                        }
+                        return Err("MTProto synchronization retries exhausted".into());
+                    }
                     if is_fatal_session_error(&e) {
                         // remember the first fatal error so workers that
                         // log-and-continue still mark the account afterwards
@@ -342,7 +351,7 @@ impl MtpClient {
                 if let Ok(mut cache) = SALT_CACHE.lock() {
                     cache.insert(salt_cache_key(&self.addr, &self.auth_key), new_salt);
                 }
-                return self.invoke_inner(request).await;
+                return Err(RETRY_AFTER_PROTOCOL_SYNC.into());
             }
 
             // bad_msg_notification - adjust time if needed
@@ -364,7 +373,7 @@ impl MtpClient {
                         "MtpClient::invoke adjusted time_offset={}",
                         self.time_offset
                     );
-                    return self.invoke_inner(request).await;
+                    return Err(RETRY_AFTER_PROTOCOL_SYNC.into());
                 }
                 return Err(format!("bad_msg_notification error_code={}", error_code));
             }
