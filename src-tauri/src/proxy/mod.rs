@@ -552,8 +552,12 @@ async fn https_connect(
     }
 
     let response = String::from_utf8_lossy(&buf);
-    if !response.contains("200") {
-        return Err(format!("https connect failed: {}", response.lines().next().unwrap_or("")));
+    let status_line = response.lines().next().unwrap_or("");
+    let mut parts = status_line.split_whitespace();
+    let protocol = parts.next().unwrap_or("");
+    let status = parts.next().unwrap_or("");
+    if !protocol.starts_with("HTTP/") || status != "200" {
+        return Err(format!("https connect failed: {status_line}"));
     }
 
     Ok(())
