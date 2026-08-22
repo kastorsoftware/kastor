@@ -522,7 +522,7 @@ async fn run_participants_mode(
                     if cfg.exclude_admins && u.is_admin { continue; }
                     if cfg.exclude_no_username && u.username.is_empty() { continue; }
                     if !passes_filters(&u, cfg) { continue; }
-                    insert_user_participant(db, &u);
+                    insert_user_participant(db, &u, resolved.channel_id);
                     collected += 1;
                     char_collected += 1;
                 }
@@ -562,7 +562,7 @@ async fn run_participants_mode(
                 if cfg.exclude_admins && u.is_admin { continue; }
                 if cfg.exclude_no_username && u.username.is_empty() { continue; }
                 if !passes_filters(&u, cfg) { continue; }
-                insert_user_participant(db, &u);
+                insert_user_participant(db, &u, resolved.channel_id);
                 collected += 1;
                 if collected % 100 == 0 { emit(app, t_with("parser_collected_progress", &[("count", &collected.to_string())])); }
             }
@@ -647,7 +647,9 @@ async fn run_messages_mode(
         };
 
         // parse the messages response to extract senders
-        let (messages_batch, reached_cutoff) = parse_messages_senders(&data, cutoff_ts, cfg, &mut seen, db, &mut collected);
+        let (messages_batch, reached_cutoff) = parse_messages_senders(
+            &data, cutoff_ts, cfg, &mut seen, db, &mut collected, resolved.channel_id,
+        );
         total_messages += messages_batch.message_count;
 
         if messages_batch.message_count == 0 {
@@ -785,14 +787,14 @@ async fn run_comments_mode(
 
                             let db = db.lock().unwrap();
                             db.execute(
-                                "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, status, source, msg_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'unknown','comment',?10)",
-                                params![u.id, u.access_hash, u.username, u.phone, u.first_name, u.last_name, u.bot as i32, u.deleted as i32, u.premium as i32, reply.id],
+                                "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, status, source, source_group, msg_id) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'unknown','comment',?10,?11)",
+                                params![u.id, u.access_hash, u.username, u.phone, u.first_name, u.last_name, u.bot as i32, u.deleted as i32, u.premium as i32, resolved.channel_id, reply.id],
                             ).ok();
                         } else {
                             let db = db.lock().unwrap();
                             db.execute(
-                                "INSERT OR IGNORE INTO users (user_id, source, msg_id) VALUES (?1, 'comment', ?2)",
-                                params![user_id, reply.id],
+                                "INSERT OR IGNORE INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'comment', ?2, ?3)",
+                                params![user_id, resolved.channel_id, reply.id],
                             ).ok();
                         }
                         collected += 1;
@@ -922,6 +924,7 @@ fn parse_messages_senders(
     seen: &mut std::collections::HashSet<i64>,
     db: &std::sync::Mutex<rusqlite::Connection>,
     collected: &mut u32,
+    source_group: i64,
 ) -> (MessagesBatchResult, bool) {
     let empty = (MessagesBatchResult { message_count: 0, last_msg_id: 0 }, false);
 
@@ -994,14 +997,14 @@ fn parse_messages_senders(
                                 if cfg.exclude_no_username && u.username.is_empty() { continue; }
                                 if cfg.premium_only && !u.premium { continue; }
 
-                                insert_user_from_msg(db, u, id);
+                                insert_user_from_msg(db, u, id, source_group);
                                 *collected += 1;
                             } else {
                                 // user not in users vector — insert minimal record
                                 let db = db.lock().unwrap();
                                 db.execute(
-                                    "INSERT OR IGNORE INTO users (user_id, source, msg_id) VALUES (?1, 'message', ?2)",
-                                    params![user_id, id],
+                                    "INSERT OR IGNORE INTO users (user_id, source, source_group, msg_id) VALUES (?1, 'message', ?2, ?3)",
+                                    params![user_id, source_group, id],
                                 ).ok();
                                 *collected += 1;
                             }
@@ -1047,28 +1050,28 @@ fn extract_user_id_from_peer(peer_bytes: &[u8]) -> Option<i64> {
     }
 }
 
-fn insert_user_from_msg(db: &std::sync::Mutex<rusqlite::Connection>, u: &UserFromMsg, msg_id: i32) {
+fn insert_user_from_msg(db: &std::sync::Mutex<rusqlite::Connection>, u: &UserFromMsg, msg_id: i32, source_group: i64) {
     let db = db.lock().unwrap();
     db.execute(
-        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, source, msg_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'message', ?10)",
+        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_deleted, premium, source, source_group, msg_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'message', ?10, ?11)",
         params![
             u.id, u.access_hash, u.username, u.phone,
             u.first_name, u.last_name,
             u.bot as i32, u.deleted as i32, u.premium as i32,
-            msg_id,
+            source_group, msg_id,
         ],
     ).ok();
 }
 
-fn insert_user_participant(db: &std::sync::Mutex<rusqlite::Connection>, u: &ParticipantUser) {
+fn insert_user_participant(db: &std::sync::Mutex<rusqlite::Connection>, u: &ParticipantUser, source_group: i64) {
     let db = db.lock().unwrap();
     db.execute(
-        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_admin, is_deleted, premium, status, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'participants')",
+        "INSERT OR IGNORE INTO users (user_id, access_hash, username, phone, first_name, last_name, is_bot, is_admin, is_deleted, premium, status, source, source_group) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'participants', ?12)",
         params![
             u.id, u.access_hash, u.username, u.phone,
             u.first_name, u.last_name,
             u.is_bot as i32, u.is_admin as i32, u.is_deleted as i32, u.premium as i32,
-            bucket_label(u.bucket),
+            bucket_label(u.bucket), source_group,
         ],
     ).ok();
 }
