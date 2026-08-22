@@ -447,20 +447,18 @@ fn generate_llm_comment(post_text: &str, promo_link: &str) -> String {
          Do NOT start with \"Yes,\" or \"I agree\". Be varied and natural.",
         promo_link, LLM_MAX_CHARS
     );
-    let user_msg = if post_text.len() > 300 {
-        format!("{}", t_with("first_comment_post_prefix", &[("text", &post_text[..300])]))
-    } else {
-        format!("{}", t_with("first_comment_post_prefix", &[("text", post_text)]))
-    };
+    let post_excerpt = truncate(post_text, 300);
+    let user_msg = t_with("first_comment_post_prefix", &[("text", &post_excerpt)]);
 
     match crate::llm::complete(&system, &user_msg) {
         Ok(mut reply) => {
             // trim to max length
             reply = reply.trim().replace('\n', " ");
-            if reply.len() > LLM_MAX_CHARS {
+            if reply.chars().count() > LLM_MAX_CHARS {
                 // cut at last space before limit
-                let cut = reply[..LLM_MAX_CHARS].rfind(' ').unwrap_or(LLM_MAX_CHARS);
-                reply = reply[..cut].to_string();
+                let shortened: String = reply.chars().take(LLM_MAX_CHARS).collect();
+                let cut = shortened.rfind(' ').unwrap_or(shortened.len());
+                reply = shortened[..cut].to_string();
             }
             // remove wrapping quotes if LLM added them
             if reply.starts_with('"') && reply.ends_with('"') {
@@ -651,6 +649,8 @@ fn extract_first_msg_id(messages: &[Vec<u8>]) -> Result<i32, String> {
 }
 
 fn truncate(s: &str, max: usize) -> String {
-    if s.len() <= max { s.to_string() }
-    else { format!("{}...", &s[..max]) }
+    let mut chars = s.chars();
+    let shortened: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() { format!("{shortened}...") }
+    else { shortened }
 }
