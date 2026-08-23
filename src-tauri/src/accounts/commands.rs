@@ -682,6 +682,88 @@ pub async fn delete_accounts(ids: Vec<String>) -> Result<u32, String> {
     Ok(deleted)
 }
 
+#[tauri::command]
+pub fn export_account(account_id: String) -> Result<String, String> {
+    export_accounts_to_folder(&[account_id], false)
+}
+
+#[tauri::command]
+pub fn export_accounts(ids: Vec<String>) -> Result<String, String> {
+    export_accounts_to_folder(&ids, true)
+}
+
+fn export_accounts_to_folder(ids: &[String], separate_folders: bool) -> Result<String, String> {
+    if ids.is_empty() {
+        return Err("no accounts selected for export".to_string());
+    }
+    if ids.iter().any(|id| uuid::Uuid::parse_str(id).is_err()) {
+        return Err("invalid account id".to_string());
+    }
+
+    let storage = get_storage_pub();
+    let export_dir = storage.export_dir();
+    if export_dir.exists() {
+        std::fs::remove_dir_all(&export_dir).map_err(|e| format!("clear export directory: {e}"))?;
+    }
+    std::fs::create_dir_all(&export_dir).map_err(|e| format!("create export directory: {e}"))?;
+
+    let mut used_names = std::collections::HashSet::new();
+    for (index, id) in ids.iter().enumerate() {
+        let account_dir = if separate_folders {
+            let phone = AccountJson::from_file(&storage.json_path(id))
+                .map(|account| {
+                    account
+                        .phone
+                        .chars()
+                        .filter(char::is_ascii_digit)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            let base_name = if phone.is_empty() {
+                format!("account-{}", index + 1)
+            } else {
+                phone
+            };
+            let mut name = base_name.clone();
+            let mut duplicate = 2usize;
+            while !used_names.insert(name.clone()) {
+                name = format!("{base_name}_{duplicate}");
+                duplicate += 1;
+            }
+            export_dir.join(name)
+        } else {
+            export_dir.clone()
+        };
+        std::fs::create_dir_all(&account_dir)
+            .map_err(|e| format!("create account export directory: {e}"))?;
+
+        let session = storage.session_path(id);
+        let json = storage.json_path(id);
+        let tdata = storage.tdata_dir(id);
+        let mut copied = false;
+        if session.is_file() {
+            std::fs::copy(&session, account_dir.join(format!("{id}.session")))
+                .map_err(|e| format!("copy session: {e}"))?;
+            copied = true;
+        }
+        if json.is_file() {
+            std::fs::copy(&json, account_dir.join(format!("{id}.json")))
+                .map_err(|e| format!("copy account json: {e}"))?;
+            copied = true;
+        }
+        if tdata.is_dir() {
+            copy_dir_recursive(&tdata, &account_dir.join("tdata"))
+                .map_err(|e| format!("copy tdata: {e}"))?;
+            copied = true;
+        }
+        if !copied {
+            return Err(format!("account {id} has no files to export"));
+        }
+    }
+
+    Ok(export_dir.display().to_string())
+}
+
 // proxy management commands
 #[tauri::command]
 pub async fn get_proxies() -> Vec<crate::proxy::ProxyConfig> {

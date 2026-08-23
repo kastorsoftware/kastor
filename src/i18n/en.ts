@@ -178,6 +178,8 @@ export const en = {
     reauthRunning: "Re-authorizing...",
     terminateOthers: "Terminate all other sessions",
     distribute: "Distribute proxies",
+    export: "Export",
+    exportAccount: "Export account",
     role: "Role",
     geo: "Geo",
     aging: "Age",

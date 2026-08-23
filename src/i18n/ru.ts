@@ -178,6 +178,8 @@ export const ru = {
     reauthRunning: "Переавторизация...",
     terminateOthers: "Завершить все прочие сессии",
     distribute: "Распределить прокси",
+    export: "Экспорт",
+    exportAccount: "Экспортировать аккаунт",
     role: "Роль",
     geo: "Гео",
     aging: "Отлежка",

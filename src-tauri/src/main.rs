@@ -440,6 +440,8 @@ fn main() {
             accounts::commands::delete_role,
             accounts::commands::assign_role,
             accounts::commands::delete_accounts,
+            accounts::commands::export_account,
+            accounts::commands::export_accounts,
             accounts::commands::distribute_proxies,
             accounts::commands::get_proxy_distribution_info,
             accounts::commands::check_accounts_have_proxy,

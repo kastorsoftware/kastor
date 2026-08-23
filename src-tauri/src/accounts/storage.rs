@@ -34,4 +34,8 @@ impl AccountStorage {
     pub fn tdata_dir(&self, id: &str) -> PathBuf {
         self.tdatas_dir().join(id)
     }
+
+    pub fn export_dir(&self) -> PathBuf {
+        self.base.parent().unwrap_or(&self.base).join("export")
+    }
 }
