@@ -111,9 +111,10 @@ pub async fn download_and_apply_update(
         .ok_or_else(|| "no checked update is available".to_string())?;
     let current_exe = std::env::current_exe().map_err(|e| format!("current exe path: {e}"))?;
     let download_target = current_exe.clone();
-    let new_exe = tokio::task::spawn_blocking(move || download_update(&update, &download_target, &app))
-        .await
-        .map_err(|e| format!("update download task failed: {e}"))??;
+    let new_exe =
+        tokio::task::spawn_blocking(move || download_update(&update, &download_target, &app))
+            .await
+            .map_err(|e| format!("update download task failed: {e}"))??;
 
     std::process::Command::new(&new_exe)
         .arg("--replace-previous")
