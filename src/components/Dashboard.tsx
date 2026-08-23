@@ -573,7 +573,7 @@ function LanguageToggle() {
       className="flex h-9 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground transition"
       title={locale === "ru" ? "Switch to English" : "Переключить на русский"}
     >
-      {locale === "ru" ? "Ru" : "En"}
+      {locale === "ru" ? "RU" : "EN"}
     </button>
   );
 }
