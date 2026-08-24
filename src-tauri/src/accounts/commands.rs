@@ -761,7 +761,15 @@ fn export_accounts_to_folder(ids: &[String], separate_folders: bool) -> Result<S
         }
     }
 
+    open_folder(&export_dir);
     Ok(export_dir.display().to_string())
+}
+
+fn open_folder(path: &std::path::Path) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer").arg(path).spawn();
+    }
 }
 
 // proxy management commands
