@@ -459,7 +459,7 @@ export function BoostPage() {
 
                 {/* Post links */}
                 <div>
-                  <label className="text-sm font-medium text-foreground">{t("boost.postLinksLabel")}</label>
+                  <label className="block text-sm font-medium text-foreground">{t("boost.postLinksLabel")}</label>
                   <textarea
                     value={config.reactionsPostLinks}
                     onChange={(e) => set("reactionsPostLinks", e.target.value)}

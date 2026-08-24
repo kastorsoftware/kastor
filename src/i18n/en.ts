@@ -323,6 +323,7 @@ export const en = {
     sourceUsernames: "Usernames",
     sourcePhones: "Phones",
     target: "Target (link/username)",
+    addTarget: "Add target",
     maxPerAccount: "Max per account",
     batchSize: "Batch size",
     onlineFilter: "Online filter",
@@ -849,7 +850,7 @@ export const en = {
   warmer: {
     title: "Warmer",
     doAll: "Enable all",
-    searchRandomWords: "Search random words",
+    searchRandomWords: "Search random words in global search",
     readRandomChannels: "Read channels",
     readChannelsReact: "React to posts",
     subscribeChannels: "Subscribe to channels",

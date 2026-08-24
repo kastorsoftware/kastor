@@ -258,8 +258,9 @@ export function InviterPage() {
                   )}
                 </div>
               ))}
-              <button onClick={addTarget} className="flex items-center gap-1.5 text-xs text-primary hover:text-primary/80 transition mt-1">
+              <button onClick={addTarget} className="flex w-fit items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-muted-foreground hover:border-primary/50 hover:text-primary transition">
                 <Plus className="h-3.5 w-3.5" />
+                {t("inviter.addTarget")}
               </button>
             </div>
             {config.targets.length > 1 && (
@@ -325,7 +326,7 @@ export function InviterPage() {
           )}
 
           {/* max per account + batch size */}
-          <div className="flex items-center gap-6">
+          <div className="flex items-start gap-6">
             <div>
               <label className="block text-sm font-medium text-foreground mb-1">{t("inviter.maxInvitesLabel")}</label>
               <input type="number" min={1} max={9999} value={config.maxPerAccount} onChange={(e) => set("maxPerAccount", Math.max(1, Number(e.target.value)))} className="w-28 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-primary/50" />

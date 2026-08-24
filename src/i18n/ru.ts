@@ -323,6 +323,7 @@ export const ru = {
     sourceUsernames: "Юзернеймы",
     sourcePhones: "Телефоны",
     target: "Цель (ссылка/юзернейм)",
+    addTarget: "Добавить цель",
     maxPerAccount: "Макс. на аккаунт",
     batchSize: "Размер пачки",
     onlineFilter: "Фильтр онлайна",
@@ -849,7 +850,7 @@ export const ru = {
   warmer: {
     title: "Прогрев",
     doAll: "Всё включено",
-    searchRandomWords: "Поиск случайных слов",
+    searchRandomWords: "Поиск случайных слов в глобальном поиске",
     readRandomChannels: "Чтение каналов",
     readChannelsReact: "Реакции на посты",
     subscribeChannels: "Подписка на каналы",

@@ -222,14 +222,14 @@ export function ClonerPage() {
 
           {/* source */}
           <Section title={t("cloner.sourceChannel")}>
-            <Field label={t("cloner.sourceChannel")}>
+            <div>
               <input
                 value={config.sourceChannel}
                 onChange={(e) => set("sourceChannel", e.target.value)}
                 placeholder="@channel, https://t.me/channel"
-                className="mt-1.5 w-full max-w-md rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
+                className="w-full max-w-md rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50"
               />
-            </Field>
+            </div>
 
             <Field label={t("cloner.fromId") + " — " + t("cloner.toId")}>
               <div className="flex items-center gap-2 mt-1.5">
@@ -324,15 +324,15 @@ export function ClonerPage() {
 
           {/* replacements */}
           <Section title={t("cloner.replacements")}>
-            <Field label={t("cloner.replacements")}>
+            <div>
               <textarea
                 value={config.replacements}
                 onChange={(e) => set("replacements", e.target.value)}
                 placeholder={"old_word:new_word\n@oldchannel:@newchannel"}
                 rows={4}
-                className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 font-mono resize-y block"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 font-mono resize-y block"
               />
-            </Field>
+            </div>
 
             <details className="text-xs">
               <summary className="cursor-pointer text-muted-foreground hover:text-foreground transition">{t("cloner.altInputTitle")}</summary>
@@ -360,21 +360,20 @@ export function ClonerPage() {
 
           {/* skip keywords */}
           <Section title={t("cloner.skipKeywords")}>
-            <Field label={t("cloner.skipKeywords")}>
+            <div>
               <textarea
                 value={config.skipKeywords}
                 onChange={(e) => set("skipKeywords", e.target.value)}
                 placeholder={"реклама\n#реклама\nspam"}
                 rows={3}
-                className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 font-mono resize-y block"
+                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50 font-mono resize-y block"
               />
-            </Field>
+            </div>
           </Section>
 
           {/* pacing */}
           <Section title={t("common.delay")}>
-            <Field label={t("common.delay")}>
-              <div className="flex items-center gap-2 mt-1.5">
+            <div className="flex items-center gap-2">
                 <input
                   type="number"
                   min={3}
@@ -393,8 +392,7 @@ export function ClonerPage() {
                   className="w-20 rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-primary/50"
                 />
                 <span className="text-xs text-muted-foreground">{t("cloner.delayHint")}</span>
-              </div>
-            </Field>
+            </div>
             <Field label={t("common.maxFloodWait")}>
               <div className="flex items-center gap-2 mt-1.5">
                 <input
