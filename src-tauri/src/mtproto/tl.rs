@@ -1069,6 +1069,30 @@ pub fn build_auth_sign_in(phone: &str, phone_code_hash: &str, code: &str) -> Vec
     tl_gen::build_auth_signIn(phone, phone_code_hash, Some(code), None)
 }
 
+pub fn build_auth_sign_up(
+    phone: &str,
+    phone_code_hash: &str,
+    first_name: &str,
+    last_name: &str,
+    no_joined_notifications: bool,
+) -> Vec<u8> {
+    tl_gen::build_auth_signUp(
+        no_joined_notifications,
+        phone,
+        phone_code_hash,
+        first_name,
+        last_name,
+    )
+}
+
+pub fn build_auth_resend_code(phone: &str, phone_code_hash: &str, reason: Option<&str>) -> Vec<u8> {
+    tl_gen::build_auth_resendCode(phone, phone_code_hash, reason)
+}
+
+pub fn build_auth_cancel_code(phone: &str, phone_code_hash: &str) -> Vec<u8> {
+    tl_gen::build_auth_cancelCode(phone, phone_code_hash)
+}
+
 pub fn build_account_get_password() -> Vec<u8> {
     tl_gen::build_account_getPassword()
 }
