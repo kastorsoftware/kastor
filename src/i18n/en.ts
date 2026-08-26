@@ -51,6 +51,7 @@ export const en = {
   nav: {
     dashboard: "Dashboard",
     accounts: "Accounts",
+    registrar: "Auto Registrar",
     checker: "Checker",
     mailing: "Mailing",
     inviter: "Inviter",
@@ -907,6 +908,7 @@ export const en = {
     invalid: "Invalid",
     unchecked: "Unchecked",
     catAccounts: "Account Management",
+    catRegistrar: "Registrar",
     catMailing: "Mailing",
     catParser: "Parser",
     catPromo: "Promotion",

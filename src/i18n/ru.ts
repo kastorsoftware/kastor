@@ -51,6 +51,7 @@ export const ru = {
   nav: {
     dashboard: "Панель",
     accounts: "Аккаунты",
+    registrar: "Авторегистратор",
     checker: "Чекер",
     mailing: "Рассылка",
     inviter: "Инвайтер",
@@ -907,6 +908,7 @@ export const ru = {
     invalid: "Невалид",
     unchecked: "Не проверен",
     catAccounts: "Работа с аккаунтами",
+    catRegistrar: "Регистратор",
     catMailing: "Рассылка",
     catParser: "Парсер",
     catPromo: "Продвижение",
