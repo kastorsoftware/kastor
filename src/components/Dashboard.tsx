@@ -46,7 +46,7 @@ type NavKey =
   | "warmer" | "mailing" | "inviter" | "interceptor" | "auto-reply"
   | "reporter" | "create-bots" | "create-channels" | "boost" | "cloner" | "parser"
   | "randomizer" | "username-checker" | "link-checker" | "global-search" | "forwarder" | "masslooking" | "stories" | "bot-parser"
-  | "firstnakh" | "registrar"
+  | "firstnakh" | "registrar" | "manual-registrar"
   | "settings";
 
 export function Dashboard() {
@@ -61,6 +61,7 @@ export function Dashboard() {
     { key: "proxies", label: t("nav.proxy"), icon: Wifi },
     { key: "accounts", label: t("nav.accounts"), icon: Users },
     { key: "registrar", label: t("nav.registrar"), icon: Smartphone },
+    { key: "manual-registrar", label: t("nav.manualRegistrar"), icon: UserPlus },
     { key: "checker", label: t("nav.checker"), icon: ShieldCheck },
     { key: "account-actions", label: t("nav.accountActions"), icon: UserCog },
     { key: "converter", label: t("nav.converter"), icon: Repeat },
@@ -92,7 +93,7 @@ export function Dashboard() {
   // Category definitions
   const categories: { id: string; label: string; icon: typeof Send; items: NavKey[] }[] = [
     { id: "accounts-cat", label: t("filters.catAccounts"), icon: UserCog, items: ["checker", "account-actions", "converter"] },
-    { id: "registrar-cat", label: t("filters.catRegistrar"), icon: Smartphone, items: ["registrar"] },
+    { id: "registrar-cat", label: t("filters.catRegistrar"), icon: Smartphone, items: ["registrar", "manual-registrar"] },
     { id: "mailing-cat", label: t("filters.catMailing"), icon: Send, items: ["mailing", "auto-reply", "firstnakh"] },
     { id: "promo-cat", label: t("filters.catPromo"), icon: TrendingUp, items: ["inviter", "boost", "masslooking", "stories"] },
     { id: "parser-cat", label: t("filters.catParser"), icon: Download, items: ["parser", "global-search", "username-checker", "link-checker"] },

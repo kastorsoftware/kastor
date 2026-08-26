@@ -52,6 +52,7 @@ export const en = {
     dashboard: "Dashboard",
     accounts: "Accounts",
     registrar: "Auto Registrar",
+    manualRegistrar: "Manual Registrar",
     checker: "Checker",
     mailing: "Mailing",
     inviter: "Inviter",

@@ -52,6 +52,7 @@ export const ru = {
     dashboard: "Панель",
     accounts: "Аккаунты",
     registrar: "Авторегистратор",
+    manualRegistrar: "Ручной регистратор",
     checker: "Чекер",
     mailing: "Рассылка",
     inviter: "Инвайтер",
