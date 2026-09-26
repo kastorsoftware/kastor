@@ -275,13 +275,27 @@ fn compatible_service_name(service: &str) -> &str {
 
 fn parse_balance(provider: &str, body: &str) -> Result<f64, SmsError> {
     if let Some(value) = body.strip_prefix("ACCESS_BALANCE:") {
-        return value.trim().parse().map_err(|_| {
+        let invalid = || {
             SmsError::new(
                 provider,
                 SmsErrorKind::InvalidResponse,
                 "invalid balance response",
             )
-        });
+        };
+        // Compatible providers can append a second amount after the balance.
+        let mut amounts = value.split(':');
+        let balance: f64 = amounts.next().ok_or_else(invalid)?.trim().parse()
+            .map_err(|_| invalid())?;
+        if !balance.is_finite() || balance < 0.0 {
+            return Err(invalid());
+        }
+        if let Some(extra) = amounts.next() {
+            let extra: f64 = extra.trim().parse().map_err(|_| invalid())?;
+            if !extra.is_finite() || extra < 0.0 || amounts.next().is_some() {
+                return Err(invalid());
+            }
+        }
+        return Ok(balance);
     }
     Err(parse_provider_error(provider, body))
 }
@@ -440,6 +454,25 @@ fn parse_prices(provider: &str, service: &str, body: &str) -> Result<Vec<SmsPric
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_standard_and_extended_balances() {
+        assert_eq!(parse_balance("test", "ACCESS_BALANCE:12.34").unwrap(), 12.34);
+        assert_eq!(parse_balance("BRINGSMS", "ACCESS_BALANCE:12.34:0.00").unwrap(), 12.34);
+        assert_eq!(parse_balance("test", "ACCESS_BALANCE:0:1.25").unwrap(), 0.0);
+    }
+
+    #[test]
+    fn rejects_malformed_balances() {
+        for body in [
+            "ACCESS_BALANCE:", "ACCESS_BALANCE:NaN", "ACCESS_BALANCE:inf",
+            "ACCESS_BALANCE:-1", "ACCESS_BALANCE:12:", "ACCESS_BALANCE:12:NaN",
+            "ACCESS_BALANCE:12:-1", "ACCESS_BALANCE:12:0:1",
+        ] {
+            assert_eq!(parse_balance("test", body).unwrap_err().kind, SmsErrorKind::InvalidResponse);
+        }
+        assert_eq!(parse_balance("test", "BAD_KEY").unwrap_err().kind, SmsErrorKind::Authentication);
+    }
 
     #[test]
     fn parses_number() {
