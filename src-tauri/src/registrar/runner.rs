@@ -488,7 +488,7 @@ async fn checked_request(
     let operator = request.operator.clone();
     let min = config.min_price.unwrap_or(0.0);
     let max = request.max_price.unwrap_or(f64::INFINITY);
-    let prices = provider_call(config.sms_provider.clone(), move |provider| {
+    let prices = provider_call(config.sms_provider.clone(), "prices", move |provider| {
         provider.prices(&service, Some(&country))
     })
     .await?;
@@ -522,8 +522,10 @@ async fn checked_request(
         request.operator = price.operator.clone();
     }
     if config.use_full_balance {
-        let balance =
-            provider_call(config.sms_provider.clone(), |provider| provider.balance()).await?;
+        let balance = provider_call(config.sms_provider.clone(), "balance", |provider| {
+            provider.balance()
+        })
+        .await?;
         if !balance.is_finite() || balance < price.price {
             return Ok(None);
         }
@@ -554,9 +556,11 @@ async fn process_attempt(
     };
     let record_id = context.database.lock().await.insert(&record)?;
     context.log(index, "buying_number");
-    let activation = match provider_call(config.sms_provider.clone(), move |provider| {
-        provider.acquire_number(&request)
-    })
+    let activation = match provider_call(
+        config.sms_provider.clone(),
+        "acquire_number",
+        move |provider| provider.acquire_number(&request),
+    )
     .await
     {
         Ok(value) => value,
@@ -610,6 +614,16 @@ async fn process_attempt(
     match outcome {
         Ok(success) => Ok(success),
         Err(error) => {
+            dbg_log!(
+                "registrar::attempt task={} attempt={} failed {}",
+                context
+                    .output
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy(),
+                index,
+                super::diagnostics::error_summary(&error)
+            );
             if record.status != "registration_storage_failed" {
                 record.status = if record.account_id.is_some() {
                     "registered_with_warnings"
@@ -688,14 +702,17 @@ async fn register_number(
         return Err("unsupported_verification_type".into());
     }
     let id = activation.id.clone();
-    let ready = provider_call(config.sms_provider.clone(), move |provider| match provider
-        .update_activation(&id, ActivationAction::MarkReady)
-    {
-        Ok(_) => Ok(()),
-        Err(error) if error.kind == SmsErrorKind::Unsupported => Ok(()),
-        Err(error) => Err(error),
-    })
-    .await;
+    let ready =
+        provider_call(
+            config.sms_provider.clone(),
+            "mark_ready",
+            move |provider| match provider.update_activation(&id, ActivationAction::MarkReady) {
+                Ok(_) => Ok(()),
+                Err(error) if error.kind == SmsErrorKind::Unsupported => Ok(()),
+                Err(error) => Err(error),
+            },
+        )
+        .await;
     if let Err(error) = ready {
         let _ = session.cancel().await;
         return Err(error);
@@ -717,9 +734,11 @@ async fn register_number(
             return Err("sms_timeout".into());
         }
         let id = activation.id.clone();
-        let status = match provider_call(config.sms_provider.clone(), move |provider| {
-            provider.activation_status(&id)
-        })
+        let status = match provider_call(
+            config.sms_provider.clone(),
+            "activation_status",
+            move |provider| provider.activation_status(&id),
+        )
         .await
         {
             Ok(status) => status,
@@ -763,7 +782,7 @@ async fn register_number(
             if session.is_registered() {
                 record.status = "registration_storage_failed".into();
                 let id = activation.id.clone();
-                if provider_call(config.sms_provider.clone(), move |provider| {
+                if provider_call(config.sms_provider.clone(), "finish", move |provider| {
                     provider.update_activation(&id, ActivationAction::Finish)
                 })
                 .await
@@ -790,7 +809,7 @@ async fn register_number(
     record.status = "registered".into();
     let mut warnings = Vec::new();
     let id = activation.id.clone();
-    if provider_call(config.sms_provider.clone(), move |provider| {
+    if provider_call(config.sms_provider.clone(), "finish", move |provider| {
         provider.update_activation(&id, ActivationAction::Finish)
     })
     .await
@@ -946,7 +965,11 @@ fn publish_account(
     result
 }
 
-async fn provider_call<T, F>(config: SmsProviderConfig, operation: F) -> Result<T, String>
+async fn provider_call<T, F>(
+    config: SmsProviderConfig,
+    operation_name: &'static str,
+    operation: F,
+) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce(
@@ -956,21 +979,32 @@ where
         + 'static,
 {
     tokio::task::spawn_blocking(move || {
-        let provider = create_provider(config).map_err(|error| error.to_string())?;
-        operation(provider.as_ref()).map_err(|error| format!("sms_{:?}", error.kind).to_lowercase())
+        let kind = config.kind;
+        let started = std::time::Instant::now();
+        dbg_log!("registrar::sms provider={:?} operation={} started", kind, operation_name);
+        let result = create_provider(config).and_then(|provider| operation(provider.as_ref()));
+        match &result {
+            Ok(_) => dbg_log!("registrar::sms provider={:?} operation={} completed duration_ms={}", kind, operation_name, started.elapsed().as_millis()),
+            Err(error) => dbg_log!("registrar::sms provider={:?} operation={} failed kind={:?} code={} {} duration_ms={}",
+                kind, operation_name, error.kind, super::diagnostics::remote_code(&error.message),
+                super::diagnostics::error_summary(&error.message), started.elapsed().as_millis()),
+        }
+        result.map_err(|error| format!("sms_{:?}", error.kind).to_lowercase())
     })
     .await
     .map_err(|_| "SMS worker failed".to_string())?
 }
 
 async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
-    if provider_call(config, move |provider| {
+    if let Err(error) = provider_call(config, "cancel", move |provider| {
         provider.update_activation(&activation_id, ActivationAction::Cancel)
     })
     .await
-    .is_err()
     {
-        dbg_log!("registrar::activation cancellation failed");
+        dbg_log!(
+            "registrar::activation cancellation failed category={}",
+            error
+        );
     }
 }
 

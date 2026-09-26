@@ -88,8 +88,17 @@ impl RegistrationSession {
                     ));
                 }
                 Err(error) => {
-                    dbg_log!("registrar::send_code dc={} failed", dc_id);
+                    dbg_log!(
+                        "registrar::send_code dc={} failed {}",
+                        dc_id,
+                        super::diagnostics::error_summary(&error)
+                    );
                     if let Some(migrated_dc) = phone_migrate_dc(&error) {
+                        dbg_log!(
+                            "registrar::send_code migrating from_dc={} to_dc={}",
+                            dc_id,
+                            migrated_dc
+                        );
                         dc_id = migrated_dc;
                         continue;
                     }
@@ -149,8 +158,11 @@ impl RegistrationSession {
         validate_code(code)?;
         identity.validate()?;
         let sign_in = tl::build_auth_sign_in(&self.phone, &self.phone_code_hash, code);
-        match self.client.invoke(&sign_in).await {
-            Ok(response) => match tl::parse_auth_authorization(&response) {
+        match super::diagnostics::observe("sign_in_invoke", self.client.invoke(&sign_in).await) {
+            Ok(response) => match super::diagnostics::observe(
+                "sign_in_parse",
+                tl::parse_auth_authorization(&response),
+            ) {
                 Ok(_) => Ok(RegistrationOutcome::AlreadyRegistered),
                 Err(error) if is_unoccupied(&error) => self.sign_up(identity).await,
                 Err(error) => Err(error),
@@ -162,13 +174,33 @@ impl RegistrationSession {
 
     pub async fn cancel(&mut self) -> Result<(), String> {
         let request = tl::build_auth_cancel_code(&self.phone, &self.phone_code_hash);
-        self.client.invoke(&request).await.map(|_| ())
+        let result = super::diagnostics::observe("cancel_code", self.client.invoke(&request).await);
+        if let Ok(response) = &result {
+            if let Ok(accepted) = super::diagnostics::observe(
+                "cancel_code_parse",
+                crate::mtproto::tl_gen::parse_auth_cancelCode(response),
+            ) {
+                dbg_log!(
+                    "registrar::telegram stage=cancel_code dc={} accepted={}",
+                    self.dc_id,
+                    accepted
+                );
+            }
+        }
+        dbg_log!(
+            "registrar::telegram stage=cancel_code dc={} transport_success={}",
+            self.dc_id,
+            result.is_ok()
+        );
+        result.map(|_| ())
     }
 
     pub async fn resend(&mut self) -> Result<SentCode, String> {
         let request = tl::build_auth_resend_code(&self.phone, &self.phone_code_hash);
-        let response = self.client.invoke(&request).await?;
-        let sent_code = tl::parse_auth_sent_code(&response)?;
+        let response =
+            super::diagnostics::observe("resend_code_invoke", self.client.invoke(&request).await)?;
+        let sent_code =
+            super::diagnostics::observe("resend_code_parse", tl::parse_auth_sent_code(&response))?;
         self.phone_code_hash = sent_code.phone_code_hash.clone();
         Ok(sent_code)
     }
@@ -183,10 +215,12 @@ impl RegistrationSession {
             &identity.first_name,
             &identity.last_name,
         );
-        let response = self.client.invoke(&request).await?;
-        let user = tl::parse_auth_authorization(&response)?;
+        let response =
+            super::diagnostics::observe("sign_up_invoke", self.client.invoke(&request).await)?;
+        let user =
+            super::diagnostics::observe("sign_up_parse", tl::parse_auth_authorization(&response))?;
         self.server_registered = true;
-        self.save(&user)
+        super::diagnostics::observe("save_account", self.save(&user))
             .map(|account_id| RegistrationOutcome::Registered { account_id })
     }
 
@@ -226,10 +260,21 @@ async fn start_on_dc(
     settings: &AuthCodeSettings,
 ) -> Result<(MtpClient, SentCode), String> {
     let address = dc_address(dc_id)?;
-    let mut transport = MtpTransport::connect(address, proxy).await?;
-    let dh = perform_dh(&mut transport)
-        .await
-        .map_err(|error| error.to_string())?;
+    dbg_log!(
+        "registrar::send_code dc={} api_id={} proxy={} started",
+        dc_id,
+        profile.api_id,
+        proxy.is_some()
+    );
+    dbg_log!("registrar::send_code settings allow_app_hash={} allow_missed_call={} firebase_token_present={} sandbox={:?}", settings.allow_app_hash, settings.allow_missed_call, settings.firebase_token.as_ref().is_some_and(|token| !token.is_empty()), settings.firebase_app_sandbox);
+    let mut transport =
+        super::diagnostics::observe("connect", MtpTransport::connect(address, proxy).await)?;
+    let dh = super::diagnostics::observe(
+        "dh",
+        perform_dh(&mut transport)
+            .await
+            .map_err(|error| error.to_string()),
+    )?;
     let mut client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, address);
     let inner =
         tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
@@ -242,8 +287,22 @@ async fn start_on_dc(
         &profile.system_lang_code,
         &profile.lang_code,
     );
-    let response = client.invoke(&request).await?;
-    let sent_code = tl::parse_auth_sent_code(&response)?;
+    let response = super::diagnostics::observe("send_code_invoke", client.invoke(&request).await)?;
+    if let Some(bytes) = response.get(..4) {
+        dbg_log!(
+            "registrar::send_code dc={} response_bytes={} constructor={:#x}",
+            dc_id,
+            response.len(),
+            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+        );
+    }
+    let sent_code =
+        super::diagnostics::observe("send_code_parse", tl::parse_auth_sent_code(&response))?;
+    dbg_log!(
+        "registrar::send_code dc={} completed delivery={}",
+        dc_id,
+        sent_code.code_type
+    );
     Ok((client, sent_code))
 }
 

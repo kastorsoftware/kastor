@@ -6,3 +6,4 @@ pub mod flow;
 pub mod manual;
 pub mod profile;
 pub mod runner;
+pub(crate) mod diagnostics;
