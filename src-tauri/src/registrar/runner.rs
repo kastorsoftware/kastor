@@ -443,7 +443,12 @@ mod tests {
                 api_key: "key".to_string(),
                 endpoint: None,
             },
-            number_request: NumberRequest::telegram("russia"),
+            number_request: NumberRequest {
+                country: "russia".to_string(),
+                service: "telegram".to_string(),
+                operator: None,
+                max_price: None,
+            },
             attempts: Vec::new(),
             code_settings: AuthCodeSettings::default(),
             concurrency: 1,

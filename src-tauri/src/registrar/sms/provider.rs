@@ -32,17 +32,6 @@ pub struct SmsPrice {
     pub available: Option<u64>,
 }
 
-impl NumberRequest {
-    pub fn telegram(country: impl Into<String>) -> Self {
-        Self {
-            country: country.into(),
-            service: "telegram".to_string(),
-            operator: None,
-            max_price: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
     pub id: String,
