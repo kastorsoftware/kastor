@@ -64,7 +64,7 @@ pub struct RegistrarTaskConfig {
     pub two_fa_password: Option<String>,
     #[serde(default)]
     pub antisafety: Option<AntiSafetyConfig>,
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub send_push: bool,
     #[serde(default = "yes")]
     pub add_to_panel: bool,
@@ -131,13 +131,7 @@ impl RegistrarTaskConfig {
         {
             return Err("2FA password must contain from 1 to 256 bytes".into());
         }
-        if self.send_push {
-            AntiSafetyClient::new(
-                self.antisafety
-                    .clone()
-                    .ok_or("AntiSafety credentials are required for Push")?,
-            )?;
-        }
+        validate_required_push(self.send_push, self.antisafety.as_ref())?;
         for attempt in &self.attempts {
             attempt.profile.validate()?;
             attempt.identity.validate()?;
@@ -145,6 +139,14 @@ impl RegistrarTaskConfig {
         create_provider(self.sms_provider.clone()).map_err(|error| error.to_string())?;
         Ok(())
     }
+}
+
+fn validate_required_push(enabled: bool, config: Option<&AntiSafetyConfig>) -> Result<(), String> {
+    if !enabled {
+        return Err("Push is required for registration".into());
+    }
+    let config = config.ok_or("AntiSafety credentials are required for Push")?;
+    AntiSafetyClient::new(config.clone()).map(|_| ())
 }
 
 fn validate_prices(
@@ -1038,6 +1040,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_requires_push_and_antisafety_credentials() {
+        let config = AntiSafetyConfig {
+            api_key: "test-key".into(),
+            aid: "test-aid".into(),
+        };
+        assert!(validate_required_push(false, Some(&config)).is_err());
+        assert!(validate_required_push(true, None).is_err());
+        assert!(validate_required_push(
+            true,
+            Some(&AntiSafetyConfig {
+                api_key: "".into(),
+                ..config.clone()
+            })
+        )
+        .is_err());
+        assert!(validate_required_push(true, Some(&config)).is_ok());
+    }
 
     #[tokio::test]
     async fn early_cancellation_waits_and_retries_once() {

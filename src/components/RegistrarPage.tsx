@@ -31,8 +31,6 @@ export function RegistrarPage() {
   const [count, setCount] = useState("10");
   const [setTwoFa, setSetTwoFa] = useState(false);
   const [twoFaPassword, setTwoFaPassword] = useState("");
-  const [sendPush, setSendPush] = useState(false);
-  const [useAntiSafety, setUseAntiSafety] = useState(false);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("308aba4e-5680-466b-81a5-477ac6befa95");
   const [addToPanel, setAddToPanel] = useState(true);
@@ -216,7 +214,7 @@ export function RegistrarPage() {
       if (countMode === "count" && (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000)) throw new Error("registrar.invalidCount");
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
-      if (sendPush && (!useAntiSafety || !antiSafetyKey.trim() || !antiSafetyAid.trim())) throw new Error("registrar.pushCredentialsRequired");
+      if (!antiSafetyKey.trim() || !antiSafetyAid.trim()) throw new Error("registrar.pushCredentialsRequired");
       if (useSmsProxy && !smsProxy.trim()) throw new Error("registrar.proxyRequired");
       const identities: Identity[] = nameMode === "file"
         ? await invoke<Identity[]>("registrar_read_names", { path: namesFile })
@@ -247,8 +245,8 @@ export function RegistrarPage() {
         attempts, attempt_count: countMode === "count" ? quantity : null, random_names: nameMode === "random",
         countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
         min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
-        two_fa_password: setTwoFa ? twoFaPassword : null, send_push: sendPush,
-        antisafety: useAntiSafety ? { api_key: antiSafetyKey, aid: antiSafetyAid } : null,
+        two_fa_password: setTwoFa ? twoFaPassword : null, send_push: true,
+        antisafety: { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() },
         add_to_panel: addToPanel, open_results: openResults, concurrency: Number(concurrency),
         poll_interval_secs: Number(pollInterval), code_timeout_secs: Number(smsTimeout),
       } });
@@ -358,7 +356,7 @@ export function RegistrarPage() {
           <div className="space-y-4">
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
-            <ToggleRow checked={sendPush} onChange={setSendPush} label={t("registrar.sendPush")} hint={t("registrar.pushHint")} />
+            <div><p className="text-sm font-medium">{t("registrar.sendPush")}</p><p className="mt-1 text-xs text-muted-foreground">{t("registrar.pushHint")}</p></div>
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
             <ToggleRow checked={openResults} onChange={setOpenResults} label={t("registrar.openResults")} />
             <ToggleRow checked={rejectAppCode} onChange={setRejectAppCode} label={t("registrar.rejectAppCode")} />
@@ -366,16 +364,14 @@ export function RegistrarPage() {
         </Section>
 
         <Section icon={Smartphone} title={t("registrar.antiSafety")}>
-          <ToggleRow checked={useAntiSafety} onChange={setUseAntiSafety} label={t("registrar.useAntiSafety")} hint={t("registrar.antiSafetyHint")} />
-          {useAntiSafety && (
-            <div className="mt-4 grid gap-4">
-              <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
-              <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
-              <p className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground">
-                {t("registrar.challengeHint")}
-              </p>
-            </div>
-          )}
+          <p className="text-xs text-muted-foreground">{t("registrar.antiSafetyHint")}</p>
+          <div className="mt-4 grid gap-4">
+            <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
+            <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
+            <p className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground">
+              {t("registrar.challengeHint")}
+            </p>
+          </div>
         </Section>
       </div>
 
