@@ -186,14 +186,33 @@ impl SmsProvider for OnlineSimProvider {
         let response: BuyResponse = parse_json(&body)?;
         ensure_response_success(&response.response)?;
         let id = response.tzid.to_string();
-        let operation = self.state(&id)?;
-        let phone = operation.number.ok_or_else(|| {
-            SmsError::new(
-                PROVIDER_NAME,
-                SmsErrorKind::InvalidResponse,
-                "number is missing from getState response",
-            )
-        })?;
+        let operation = match self.state(&id) {
+            Ok(operation)
+                if operation
+                    .number
+                    .as_ref()
+                    .is_some_and(|number| !number.trim().is_empty()) =>
+            {
+                operation
+            }
+            result => {
+                // The reservation already exists even if the follow-up lookup fails.
+                if self
+                    .update_activation(&id, ActivationAction::Cancel)
+                    .is_err()
+                {
+                    dbg_log!("registrar::onlinesim incomplete reservation cancellation failed");
+                }
+                return Err(result.err().unwrap_or_else(|| {
+                    SmsError::new(
+                        PROVIDER_NAME,
+                        SmsErrorKind::InvalidResponse,
+                        "number is missing from getState response",
+                    )
+                }));
+            }
+        };
+        let phone = operation.number.unwrap_or_default();
         Ok(Activation {
             id,
             phone,
