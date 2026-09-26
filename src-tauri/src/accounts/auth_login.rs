@@ -284,6 +284,31 @@ fn save_account(
     auth_key: &[u8; 256],
     two_fa_password: &str,
 ) -> Result<String, String> {
+    let config = crate::get_app_config();
+    save_authorized_account(
+        user,
+        state.dc_id,
+        &state.phone,
+        state.proxy.as_ref(),
+        &state.device,
+        config.app_id,
+        &config.app_hash,
+        auth_key,
+        two_fa_password,
+    )
+}
+
+pub(crate) fn save_authorized_account(
+    user: &tl::AuthorizedUser,
+    dc_id: i32,
+    phone: &str,
+    proxy: Option<&ProxyConfig>,
+    device: &devices::DeviceInfo,
+    app_id: i32,
+    app_hash: &str,
+    auth_key: &[u8; 256],
+    two_fa_password: &str,
+) -> Result<String, String> {
     let storage = super::commands::get_storage_pub();
 
     // dedup by auth_key
@@ -304,22 +329,21 @@ fn save_account(
     let id = uuid::Uuid::new_v4().to_string();
 
     let session = TelethonSession {
-        dc_id: state.dc_id,
-        server_address: dc_ip(state.dc_id),
+        dc_id,
+        server_address: dc_ip(dc_id),
         port: DC2_PORT,
         auth_key: new_key_vec.clone(),
     };
     session.to_file(&storage.session_path(&id))
         .map_err(|e| crate::i18n::t_with("auth_session_write_error", &[("error", &e.to_string())]))?;
 
-    let proxy_repr = state.proxy.as_ref().map(|p| p.to_string_repr());
-    let config = crate::get_app_config();
+    let proxy_repr = proxy.map(|p| p.to_string_repr());
     let json = AccountJson {
-        app_id: config.app_id,
-        app_hash: config.app_hash.clone(),
-        sdk: state.device.sdk.clone(),
-        device: state.device.device.clone(),
-        app_version: state.device.app_version.clone(),
+        app_id,
+        app_hash: app_hash.to_string(),
+        sdk: device.sdk.clone(),
+        device: device.device.clone(),
+        app_version: device.app_version.clone(),
         lang_pack: "en".to_string(),
         system_lang_pack: "en-US".to_string(),
         proxy: proxy_repr,
@@ -327,7 +351,7 @@ fn save_account(
         phone: if !user.phone.is_empty() {
             user.phone.clone()
         } else {
-            state.phone.clone()
+            phone.to_string()
         },
         first_name: user.first_name.clone(),
         last_name: user.last_name.clone(),
@@ -347,7 +371,7 @@ fn save_account(
 
     // generate tdata for telegram desktop launch
     let tdata = crate::converter::tdata::TDataAccount {
-        dc_id: state.dc_id,
+        dc_id,
         user_id: user.user_id,
         auth_key: new_key_vec,
     };
