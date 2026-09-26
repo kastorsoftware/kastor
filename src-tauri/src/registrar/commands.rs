@@ -1,8 +1,29 @@
 use crate::registrar::sms::{
-    create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig,
+    create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig, SmsProviderKind,
 };
 use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
 use crate::registrar::db::{RegistrarDatabase, StoredRegistrationRecord};
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SmsProviderDescriptor {
+    pub kind: SmsProviderKind,
+    pub label: String,
+    pub requires_endpoint: bool,
+}
+
+#[tauri::command]
+pub fn registrar_sms_providers() -> Vec<SmsProviderDescriptor> {
+    SmsProviderKind::all()
+        .iter()
+        .copied()
+        .map(|kind| SmsProviderDescriptor {
+            kind,
+            label: kind.label().to_string(),
+            requires_endpoint: kind.requires_endpoint(),
+        })
+        .collect()
+}
 
 #[tauri::command]
 pub fn registrar_generate_profiles(

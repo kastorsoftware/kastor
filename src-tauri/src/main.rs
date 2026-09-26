@@ -351,6 +351,7 @@ fn main() {
             settings::get_settings,
             settings::save_settings,
             settings::patch_settings,
+            registrar::commands::registrar_sms_providers,
             registrar::commands::registrar_sms_balance,
             registrar::commands::registrar_sms_countries,
             registrar::commands::registrar_sms_operators,

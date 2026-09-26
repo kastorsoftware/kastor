@@ -18,6 +18,44 @@ pub enum SmsProviderKind {
     CustomSmsActivate,
 }
 
+impl SmsProviderKind {
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::GrizzlySms,
+            Self::SmsBower,
+            Self::SmsMan,
+            Self::Sms365,
+            Self::Sms24_7,
+            Self::GreedySms,
+            Self::BringSms,
+            Self::FiveSim,
+            Self::VakSms,
+            Self::OnlineSim,
+            Self::CustomSmsActivate,
+        ]
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::GrizzlySms => "Grizzly SMS",
+            Self::SmsBower => "SMS Bower",
+            Self::SmsMan => "SMS-Man",
+            Self::Sms365 => "365SMS",
+            Self::Sms24_7 => "24SMS7",
+            Self::GreedySms => "Greedy SMS",
+            Self::BringSms => "BRINGSMS",
+            Self::FiveSim => "5SIM",
+            Self::VakSms => "Vak-SMS",
+            Self::OnlineSim => "OnlineSIM",
+            Self::CustomSmsActivate => "Custom SMS-Activate",
+        }
+    }
+
+    pub const fn requires_endpoint(self) -> bool {
+        matches!(self, Self::CustomSmsActivate)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmsProviderConfig {
     pub kind: SmsProviderKind,
