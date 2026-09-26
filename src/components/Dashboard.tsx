@@ -4,7 +4,7 @@ import {
   Send, ShieldCheck, Users, UserPlus, MessageSquare,
   Activity, Settings as SettingsIcon,
   Cpu, Wifi, Construction, Repeat, UserCog, Flag, PlusCircle, Radio, TrendingUp, Copy, Download, Shuffle, AtSign,
-  Eye, Upload, Zap, Link2, Search, Forward, ChevronDown, Bot, Github,
+  Eye, Upload, Zap, Link2, Search, Forward, ChevronDown, Bot, Github, ClipboardPlus,
 } from "lucide-react";
 import { useI18n, useT } from "@/i18n";
 
@@ -35,6 +35,7 @@ const InviterPage = lazy(() => import("@/components/InviterPage").then(m => ({ d
 const InterceptorPage = lazy(() => import("@/components/InterceptorPage").then(m => ({ default: m.InterceptorPage })));
 const MasslookingPage = lazy(() => import("@/components/MasslookingPage").then(m => ({ default: m.MasslookingPage })));
 const MailingPage = lazy(() => import("@/components/MailingPage").then(m => ({ default: m.MailingPage })));
+const RegistrarPage = lazy(() => import("@/components/RegistrarPage").then(m => ({ default: m.RegistrarPage })));
 
 interface DashboardStats {
   accounts: number;
@@ -49,6 +50,7 @@ type NavKey =
   | "reporter" | "create-bots" | "create-channels" | "boost" | "cloner" | "parser"
   | "randomizer" | "username-checker" | "link-checker" | "global-search" | "forwarder" | "masslooking" | "stories" | "bot-parser"
   | "firstnakh"
+  | "registrar"
   | "settings";
 
 export function Dashboard() {
@@ -85,6 +87,7 @@ export function Dashboard() {
     { key: "global-search", label: t("nav.globalSearch"), icon: Search },
     { key: "forwarder", label: t("nav.forwarder"), icon: Forward },
     { key: "firstnakh", label: t("nav.firstComment"), icon: Zap },
+    { key: "registrar", label: t("nav.registrar"), icon: ClipboardPlus },
   ];
 
   // Top-level items (always visible, not in any category)
@@ -97,6 +100,7 @@ export function Dashboard() {
     { id: "promo-cat", label: t("filters.catPromo"), icon: TrendingUp, items: ["inviter", "boost", "masslooking", "stories"] },
     { id: "parser-cat", label: t("filters.catParser"), icon: Download, items: ["parser", "global-search", "username-checker", "link-checker"] },
     { id: "tools-cat", label: t("filters.catTools"), icon: Construction, items: ["warmer", "bot-parser", "cloner", "create-bots", "create-channels", "randomizer", "interceptor", "forwarder", "reporter"] },
+    { id: "registrar-cat", label: t("filters.catRegistrar"), icon: ClipboardPlus, items: ["registrar"] },
   ];
 
   // Determine which category contains the active item (for auto-expand)
@@ -298,8 +302,13 @@ export function Dashboard() {
             <BotParserPage />
           </div>
         )}
+        {visited.has("registrar") && (
+          <div style={{ display: active === "registrar" ? "block" : "none" }}>
+            <RegistrarPage />
+          </div>
+        )}
         {active === "settings" && <SettingsPage />}
-        {active !== "dashboard" && active !== "proxies" && active !== "accounts" && active !== "checker" && active !== "account-actions" && active !== "converter" && active !== "reporter" && active !== "create-bots" && active !== "create-channels" && active !== "boost" && active !== "cloner" && active !== "parser" && active !== "randomizer" && active !== "username-checker" && active !== "link-checker" && active !== "global-search" && active !== "forwarder" && active !== "warmer" && active !== "bot-parser" && active !== "settings" && active !== "stories" && active !== "auto-reply" && active !== "firstnakh" && active !== "inviter" && active !== "interceptor" && active !== "masslooking" && active !== "mailing" && (
+        {active !== "dashboard" && active !== "proxies" && active !== "accounts" && active !== "checker" && active !== "account-actions" && active !== "converter" && active !== "reporter" && active !== "create-bots" && active !== "create-channels" && active !== "boost" && active !== "cloner" && active !== "parser" && active !== "randomizer" && active !== "username-checker" && active !== "link-checker" && active !== "global-search" && active !== "forwarder" && active !== "warmer" && active !== "bot-parser" && active !== "registrar" && active !== "settings" && active !== "stories" && active !== "auto-reply" && active !== "firstnakh" && active !== "inviter" && active !== "interceptor" && active !== "masslooking" && active !== "mailing" && (
           <Placeholder section={navItems.find((n) => n.key === active)?.label || ""} />
         )}
       </Suspense>

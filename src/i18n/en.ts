@@ -76,6 +76,7 @@ export const en = {
     proxy: "Proxies",
     settings: "Settings",
     linkChecker: "Link Checker",
+    registrar: "Auto registrar",
     documentation: "Documentation",
   },
   botParser: {
@@ -904,6 +905,7 @@ export const en = {
     catParser: "Parser",
     catPromo: "Promotion",
     catTools: "Tools",
+    catRegistrar: "Registrar",
   },
   accountActions: {
     title: "Account Actions",

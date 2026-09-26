@@ -76,6 +76,7 @@ export const ru = {
     proxy: "Прокси",
     settings: "Настройки",
     linkChecker: "Проверка ссылок",
+    registrar: "Авторегистратор",
     documentation: "Документация",
   },
   botParser: {
@@ -904,6 +905,7 @@ export const ru = {
     catParser: "Парсер",
     catPromo: "Продвижение",
     catTools: "Инструменты",
+    catRegistrar: "Регистратор",
   },
   accountActions: {
     title: "Действия с аккаунтами",
