@@ -67,6 +67,11 @@ impl RegistrarTaskConfig {
         if self.number_request.country.trim().is_empty() || self.number_request.service.trim().is_empty() {
             return Err("SMS country and service are required".to_string());
         }
+        if !self.number_request.service.eq_ignore_ascii_case("telegram")
+            && !self.number_request.service.eq_ignore_ascii_case("tg")
+        {
+            return Err("registrar supports only Telegram SMS activations".to_string());
+        }
         if self.attempts.is_empty() || self.attempts.len() > 100_000 {
             return Err("registration task must contain from 1 to 100000 attempts".to_string());
         }
