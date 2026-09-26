@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { CircleHelp, FolderOpen, Play, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { CircleHelp, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
+import { optionalPrice, parseApiPairs } from "@/lib/registrarSettings";
 
 type NameMode = "same" | "file" | "random";
 
 type Provider = { kind: string; label: string; requires_endpoint: boolean };
 type Country = { id: string; name: string };
 type Price = { country: Country; price: number; available: number | null; operator: string | null };
+type Progress = { task_id: string; total: number | null; processed: number; registered: number; failed: number; finished: boolean; reason: string; results_directory: string };
+type Identity = { first_name: string; last_name: string };
 
 export function RegistrarPage() {
   const t = useT();
@@ -30,7 +34,7 @@ export function RegistrarPage() {
   const [sendPush, setSendPush] = useState(false);
   const [useAntiSafety, setUseAntiSafety] = useState(false);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
-  const [antiSafetyAid, setAntiSafetyAid] = useState("");
+  const [antiSafetyAid, setAntiSafetyAid] = useState("308aba4e-5680-466b-81a5-477ac6befa95");
   const [addToPanel, setAddToPanel] = useState(true);
   const [openResults, setOpenResults] = useState(false);
   const [apiPairs, setApiPairs] = useState("");
@@ -45,6 +49,81 @@ export function RegistrarPage() {
   const [useSmsProxy, setUseSmsProxy] = useState(false);
   const [smsProxy, setSmsProxy] = useState("");
   const [rejectAppCode, setRejectAppCode] = useState(true);
+  const [telegramProxies, setTelegramProxies] = useState("");
+  const [deviceModel, setDeviceModel] = useState("Desktop");
+  const [systemVersion, setSystemVersion] = useState("Windows");
+  const [appVersion, setAppVersion] = useState("");
+  const [concurrency, setConcurrency] = useState("1");
+  const [pollInterval, setPollInterval] = useState("5");
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [launching, setLaunching] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [listenersReady, setListenersReady] = useState(false);
+  const taskId = useRef<string | null>(sessionStorage.getItem("registrar_task_id"));
+  const lastEvent = useRef<Progress | null>(null);
+  const running = progress !== null && !progress.finished;
+
+  useEffect(() => {
+    let disposed = false;
+    const cleanups: UnlistenFn[] = [];
+    const accept = (value: Progress) => {
+      if (disposed) return;
+      lastEvent.current = value;
+      if (value.task_id === taskId.current) {
+        setProgress((current) => current?.task_id === value.task_id
+          && (current.processed > value.processed || current.finished)
+          ? current : { ...value, total: value.total ?? current?.total ?? null });
+        if (value.finished) setStopping(false);
+      }
+    };
+    const setup = async () => {
+      for (const subscribe of [
+        () => listen<Progress>("registrar-progress", ({ payload }) => accept(payload)),
+        () => listen<string>("registrar-log", ({ payload }) => {
+          if (!disposed && taskId.current && payload.startsWith(`[${taskId.current}]`)) {
+            setLogs((current) => [...current.slice(-499), payload]);
+          }
+        }),
+      ]) {
+        const unlisten = await subscribe();
+        if (disposed) unlisten(); else cleanups.push(unlisten);
+      }
+      if (taskId.current) {
+        try { accept(await invoke<Progress>("registrar_status", { taskId: taskId.current })); }
+        catch {
+          if (!disposed) {
+            taskId.current = null;
+            sessionStorage.removeItem("registrar_task_id");
+          }
+        }
+      }
+      if (!disposed) setListenersReady(true);
+    };
+    void setup().catch(() => { if (!disposed) setRequestError("registrar.eventsError"); });
+    void invoke<string>("get_version").then((version) => { if (!disposed) setAppVersion(version); })
+      .catch(() => { if (!disposed) setRequestError("registrar.versionUnavailable"); });
+    return () => { disposed = true; cleanups.forEach((cleanup) => cleanup()); };
+  }, []);
+
+  useEffect(() => {
+    if (!running || !progress) return;
+    let disposed = false;
+    const id = progress.task_id;
+    let pending = false;
+    const timer = window.setInterval(() => {
+      if (pending) return;
+      pending = true;
+      void invoke<Progress>("registrar_status", { taskId: id }).then((value) => {
+        if (!disposed && taskId.current === id) {
+          setProgress((current) => current && (current.processed > value.processed || current.finished)
+            ? current : { ...value, total: value.total ?? current?.total ?? null });
+        }
+      }).catch(() => { if (!disposed) setRequestError("registrar.statusFailed"); })
+        .finally(() => { pending = false; });
+    }, 3000);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [running, progress?.task_id]);
 
   useEffect(() => {
     let disposed = false;
@@ -66,13 +145,13 @@ export function RegistrarPage() {
     setSelectedCountries([]);
     setRequestError("");
     setPending(false);
-  }, [provider, apiKey, customEndpoint]);
+  }, [provider, apiKey, customEndpoint, useSmsProxy, smsProxy]);
 
   const requestProviderData = async (catalog: boolean) => {
     const generation = ++requestGeneration.current;
     setPending(true);
     setRequestError("");
-    const config = { kind: provider, api_key: apiKey, endpoint: customEndpoint || null };
+    const config = { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: useSmsProxy ? smsProxy.trim() : null };
     try {
       if (catalog) {
         const [loadedCountries, loadedPrices] = await Promise.all([
@@ -125,6 +204,73 @@ export function RegistrarPage() {
     if (typeof path === "string") setNamesFile(path);
   };
 
+  const startTask = async () => {
+    setLaunching(true);
+    setRequestError("");
+    try {
+      const pairs = parseApiPairs(apiPairs);
+      const minimum = optionalPrice(minPrice);
+      const maximum = optionalPrice(maxPrice);
+      if (minimum !== null && maximum !== null && minimum > maximum) throw new Error("registrar.invalidPrice");
+      const quantity = Number(count);
+      if (countMode === "count" && (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000)) throw new Error("registrar.invalidCount");
+      if (!selectedCountries.length) throw new Error("registrar.selectCountries");
+      if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
+      if (sendPush && (!useAntiSafety || !antiSafetyKey.trim() || !antiSafetyAid.trim())) throw new Error("registrar.pushCredentialsRequired");
+      if (useSmsProxy && !smsProxy.trim()) throw new Error("registrar.proxyRequired");
+      const identities: Identity[] = nameMode === "file"
+        ? await invoke<Identity[]>("registrar_read_names", { path: namesFile })
+        : [{ first_name: nameMode === "random" ? crypto.randomUUID().replace(/-/g, "").slice(0, 10) : firstName.trim(), last_name: lastName.trim() }];
+      if (!identities.length || identities.some((identity) => !identity.first_name)) throw new Error("registrar.namesRequired");
+      const proxies = await invoke<unknown[]>("registrar_parse_proxies", { proxies: telegramProxies });
+      const attempts = Array.from({ length: Math.max(pairs.length, identities.length, proxies.length, 1) }, (_, index) => ({
+        profile: {
+          ...pairs[index % pairs.length], device_model: deviceModel, system_version: systemVersion,
+          app_version: appVersion, system_lang_code: navigator.language, lang_code: navigator.language.split("-")[0],
+          timezone_offset_seconds: -new Date().getTimezoneOffset() * 60,
+        },
+        identity: identities[index % identities.length], proxy: proxies.length ? proxies[index % proxies.length] : null,
+      }));
+      const expectedPrices: Record<string, number> = {};
+      for (const price of prices) {
+        if (!selectedCountries.includes(price.country.id) || price.available === 0 || !Number.isFinite(price.price)
+          || price.price < (minimum ?? 0) || price.price > (maximum ?? Infinity)) continue;
+        expectedPrices[price.country.id] = Math.min(expectedPrices[price.country.id] ?? Infinity, price.price);
+      }
+      if (stopOnPriceChange && selectedCountries.some((country) => expectedPrices[country] === undefined)) {
+        throw new Error("registrar.noEligiblePrices");
+      }
+      setLogs([]);
+      const id = await invoke<string>("registrar_start", { config: {
+        sms_provider: { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: useSmsProxy ? smsProxy.trim() : null },
+        number_request: { country: selectedCountries[0], service: "telegram", operator: null, max_price: maximum },
+        attempts, attempt_count: countMode === "count" ? quantity : null, random_names: nameMode === "random",
+        countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
+        min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
+        two_fa_password: setTwoFa ? twoFaPassword : null, send_push: sendPush,
+        antisafety: useAntiSafety ? { api_key: antiSafetyKey, aid: antiSafetyAid } : null,
+        add_to_panel: addToPanel, open_results: openResults, concurrency: Number(concurrency),
+        poll_interval_secs: Number(pollInterval), code_timeout_secs: Number(smsTimeout),
+      } });
+      taskId.current = id;
+      sessionStorage.setItem("registrar_task_id", id);
+      setProgress(lastEvent.current?.task_id === id ? lastEvent.current : {
+        task_id: id, total: countMode === "count" ? quantity : null, processed: 0, registered: 0,
+        failed: 0, finished: false, reason: "running", results_directory: "",
+      });
+    } catch (error) {
+      const key = error instanceof Error && error.message.startsWith("registrar.") ? error.message : "registrar.startFailed";
+      setRequestError(key);
+    } finally { setLaunching(false); }
+  };
+
+  const stopTask = async () => {
+    if (!taskId.current) return;
+    setStopping(true);
+    try { await invoke("registrar_stop", { taskId: taskId.current }); }
+    catch { setStopping(false); setRequestError("registrar.stopFailed"); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -138,6 +284,7 @@ export function RegistrarPage() {
         </div>
       </div>
 
+      <fieldset disabled={running || launching} className="space-y-6 disabled:opacity-70">
       <Section icon={WalletCards} title={t("registrar.smsSection")}>
         <div className="grid gap-5 lg:grid-cols-2">
           <Field label={t("registrar.provider")}>
@@ -197,6 +344,8 @@ export function RegistrarPage() {
               </select>
               {countMode === "count" && <input value={count} onChange={(event) => setCount(event.target.value)} min="1" type="number" className={inputClass} />}
             </div>
+            {countMode === "budget" && <p className="mt-2 text-xs text-muted-foreground">{t("registrar.budgetHint")}</p>}
+            {countMode === "count" && <p className="mt-2 text-xs text-muted-foreground">{t("registrar.countHint")}</p>}
           </Field>
           <Field label={t("registrar.smsTimeout")}>
             <input value={smsTimeout} onChange={(event) => setSmsTimeout(event.target.value)} min="30" type="number" className={inputClass} />
@@ -243,9 +392,14 @@ export function RegistrarPage() {
               <Choice active={nameMode === "random"} onClick={() => setNameMode("random")} label={t("registrar.randomNames")}/>
             </div>
             {nameMode === "same" && <div className="mt-3 grid grid-cols-2 gap-3"><input value={firstName} onChange={(event) => setFirstName(event.target.value)} className={inputClass} placeholder={t("registrar.firstName")} /><input value={lastName} onChange={(event) => setLastName(event.target.value)} className={inputClass} placeholder={t("registrar.lastName")} /></div>}
-            {nameMode === "file" && <div className="mt-3 flex items-center gap-2"><button type="button" onClick={selectNamesFile} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:border-primary/50"><FolderOpen className="h-4 w-4" />{t("registrar.chooseFile")}</button><span className="truncate text-xs text-muted-foreground">{namesFile || t("registrar.noFile")}</span></div>}
+            {nameMode === "file" && <><div className="mt-3 flex items-center gap-2"><button type="button" onClick={selectNamesFile} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:border-primary/50"><FolderOpen className="h-4 w-4" />{t("registrar.chooseFile")}</button><span className="truncate text-xs text-muted-foreground">{namesFile || t("registrar.noFile")}</span></div><p className="mt-2 text-xs text-muted-foreground">{t("registrar.namesFileHint")}</p></>}
             {nameMode === "random" && <p className="mt-3 text-xs text-muted-foreground">{t("registrar.randomNamesHint")}</p>}
           </div>
+        </div>
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <Field label={t("registrar.deviceModel")}><input value={deviceModel} onChange={(event) => setDeviceModel(event.target.value)} className={inputClass}/></Field>
+          <Field label={t("registrar.systemVersion")}><input value={systemVersion} onChange={(event) => setSystemVersion(event.target.value)} className={inputClass}/></Field>
+          <Field label={t("registrar.appVersion")}><input value={appVersion} onChange={(event) => setAppVersion(event.target.value)} className={inputClass}/></Field>
         </div>
       </Section>
 
@@ -261,18 +415,34 @@ export function RegistrarPage() {
         <Section icon={Smartphone} title={t("registrar.proxySection")}>
           <ToggleRow checked={useSmsProxy} onChange={setUseSmsProxy} label={t("registrar.useSmsProxy")} />
           {useSmsProxy && <Field label={t("registrar.proxy")} hint="socks5://user:password@host:port"><textarea value={smsProxy} onChange={(event) => setSmsProxy(event.target.value)} rows={3} className={`${textareaClass} mt-3`} placeholder="socks5://127.0.0.1:1080" /></Field>}
+          <div className="mt-4"><Field label={t("registrar.telegramProxies")} hint={t("registrar.telegramProxiesHint")}><textarea value={telegramProxies} onChange={(event) => setTelegramProxies(event.target.value)} rows={3} className={textareaClass}/></Field></div>
         </Section>
       </div>
+      <Section icon={CircleHelp} title={t("registrar.execution")}>
+        <div className="grid gap-4 md:grid-cols-2">
+          <Field label={t("common.threads")} hint={t("registrar.concurrencyHint")}><input type="number" min="1" max="20" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className={inputClass}/></Field>
+          <Field label={t("registrar.pollInterval")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
+        </div>
+      </Section>
+      </fieldset>
 
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-border bg-card px-5 py-4">
         <div className="text-sm">
-          <div className="font-medium">{t("registrar.taskStatus")}</div>
-          <div className="mt-0.5 text-xs text-muted-foreground">{t("registrar.taskHint")}</div>
+          <div className="font-medium">{t(progress ? `registrar.reasons.${progress.reason}` : "registrar.ready")}</div>
+          {progress && <div className="mt-1 text-xs text-muted-foreground">{t("registrar.processed")}: {progress.processed} · {t("registrar.registered")}: {progress.registered}{progress.total !== null ? ` / ${progress.total}` : ""} · {t("registrar.failed")}: {progress.failed}</div>}
+          {progress?.finished && <p className="mt-1 break-all text-xs text-muted-foreground">{progress.results_directory}</p>}
+          {requestError && <p role="alert" className="mt-2 text-sm text-destructive">{t(requestError)}</p>}
         </div>
-        <button disabled className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary opacity-50" title={t("registrar.startHint")}>
-          <Play className="h-4 w-4" />{t("registrar.start")}
-        </button>
+        {running ? <button type="button" disabled={stopping} onClick={() => void stopTask()} className="flex items-center gap-2 rounded-md border border-destructive/50 px-4 py-2 text-sm disabled:opacity-50"><Square className="h-4 w-4"/>{t(stopping ? "registrar.stopping" : "common.stop")}</button>
+          : <button type="button" disabled={launching || pending || !listenersReady || !provider || !apiKey.trim()} onClick={() => void startTask()} className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"><Play className="h-4 w-4" />{t(launching ? "registrar.launching" : "registrar.start")}</button>}
       </div>
+      {logs.length > 0 && <pre aria-live="polite" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-xs">{logs.map((line) => {
+        const split = line.indexOf("] ");
+        const message = line.slice(split + 2);
+        const key = `registrar.stages.${message}`;
+        const translated = t(key);
+        return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
+      }).join("\n")}</pre>}
     </div>
   );
 }
