@@ -1,29 +1,27 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { CircleHelp, FolderOpen, Play, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
 
 type NameMode = "same" | "file" | "random";
 
-const providers = [
-  "Grizzly SMS", "SMS Bower", "SMS-Man", "365SMS", "24SMS7", "Greedy SMS",
-  "BRINGSMS", "5SIM", "Vak-SMS", "OnlineSIM", "Custom SMS-Activate",
-];
-
-const countries = [
-  { id: "russia" },
-  { id: "ukraine" },
-  { id: "kazakhstan" },
-  { id: "indonesia" },
-  { id: "philippines" },
-  { id: "brazil" },
-];
+type Provider = { kind: string; label: string; requires_endpoint: boolean };
+type Country = { id: string; name: string };
+type Price = { country: Country; price: number; available: number | null; operator: string | null };
 
 export function RegistrarPage() {
   const t = useT();
-  const [provider, setProvider] = useState(providers[0]);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [provider, setProvider] = useState("");
+  const [countries, setCountries] = useState<Country[]>([]);
+  const [prices, setPrices] = useState<Price[]>([]);
+  const [balance, setBalance] = useState<number | null>(null);
+  const [pending, setPending] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const requestGeneration = useRef(0);
   const [apiKey, setApiKey] = useState("");
   const [customEndpoint, setCustomEndpoint] = useState("");
-  const [selectedCountries, setSelectedCountries] = useState<string[]>(["russia"]);
+  const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [countMode, setCountMode] = useState<"count" | "budget">("count");
   const [count, setCount] = useState("10");
   const [setTwoFa, setSetTwoFa] = useState(false);
@@ -47,10 +45,69 @@ export function RegistrarPage() {
   const [smsProxy, setSmsProxy] = useState("");
   const [rejectAppCode, setRejectAppCode] = useState(true);
 
+  useEffect(() => {
+    let disposed = false;
+    invoke<Provider[]>("registrar_sms_providers").then((items) => {
+      if (disposed) return;
+      setProviders(items);
+      setProvider(items[0]?.kind ?? "");
+    }).catch(() => {
+      if (!disposed) setRequestError("registrar.providersError");
+    });
+    return () => { disposed = true; requestGeneration.current++; };
+  }, []);
+
+  useEffect(() => {
+    requestGeneration.current++;
+    setCountries([]);
+    setPrices([]);
+    setBalance(null);
+    setSelectedCountries([]);
+    setRequestError("");
+    setPending(false);
+  }, [provider, apiKey, customEndpoint]);
+
+  const requestProviderData = async (catalog: boolean) => {
+    const generation = ++requestGeneration.current;
+    setPending(true);
+    setRequestError("");
+    const config = { kind: provider, api_key: apiKey, endpoint: customEndpoint || null };
+    try {
+      if (catalog) {
+        const [loadedCountries, loadedPrices] = await Promise.all([
+          invoke<Country[]>("registrar_sms_countries", { config }),
+          invoke<Price[]>("registrar_sms_prices", { config, service: "telegram", country: null }),
+        ]);
+        if (generation !== requestGeneration.current) return;
+        const telegramCountries = new Set(loadedPrices.map((price) => price.country.id));
+        setCountries(loadedCountries.filter((country) => telegramCountries.has(country.id)));
+        setPrices(loadedPrices);
+        setSelectedCountries([]);
+      } else {
+        const value = await invoke<number>("registrar_sms_balance", { config });
+        if (generation === requestGeneration.current) setBalance(value);
+      }
+    } catch {
+      if (generation === requestGeneration.current) setRequestError(catalog ? "registrar.catalogError" : "registrar.balanceError");
+    } finally {
+      if (generation === requestGeneration.current) setPending(false);
+    }
+  };
+
   const selectedCountryNames = useMemo(
-    () => countries.filter((country) => selectedCountries.includes(country.id)).map((country) => t(`registrar.countryNames.${country.id}`)),
-    [selectedCountries, t],
+    () => countries.filter((country) => selectedCountries.includes(country.id)).map((country) => country.name),
+    [selectedCountries, countries],
   );
+
+  const pricesByCountry = useMemo(() => {
+    const grouped = new Map<string, Price[]>();
+    for (const price of prices) {
+      const group = grouped.get(price.country.id) ?? [];
+      group.push(price);
+      grouped.set(price.country.id, group);
+    }
+    return grouped;
+  }, [prices]);
 
   const toggleCountry = (id: string) => {
     setSelectedCountries((current) => current.includes(id)
@@ -82,14 +139,14 @@ export function RegistrarPage() {
         <div className="grid gap-5 lg:grid-cols-2">
           <Field label={t("registrar.provider")}>
             <select value={provider} onChange={(event) => setProvider(event.target.value)} className={selectClass}>
-              {providers.map((item) => <option key={item}>{item}</option>)}
+              {providers.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}
             </select>
           </Field>
           <Field label={t("registrar.apiKey")} hint={t("registrar.keyHint")}>
             <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" className={inputClass} placeholder="••••••••••••" />
           </Field>
         </div>
-        {provider === "Custom SMS-Activate" && (
+        {providers.find((item) => item.kind === provider)?.requires_endpoint && (
           <div className="mt-5 max-w-xl">
             <Field label={t("registrar.endpoint")} hint={t("registrar.endpointHint")}>
               <input value={customEndpoint} onChange={(event) => setCustomEndpoint(event.target.value)} className={inputClass} placeholder="https://example.com/stubs/handler_api.php" />
@@ -97,9 +154,12 @@ export function RegistrarPage() {
           </div>
         )}
         <div className="mt-4 flex flex-wrap gap-2">
-          <PendingButton icon={RefreshCw} label={t("registrar.balance")} />
-          <PendingButton icon={RefreshCw} label={t("registrar.loadCountries")} />
+          <ProviderButton disabled={pending || !apiKey.trim() || !provider} onClick={() => void requestProviderData(false)} label={t("registrar.balance")} />
+          <ProviderButton disabled={pending || !apiKey.trim() || !provider} onClick={() => void requestProviderData(true)} label={t("registrar.loadCountries")} />
         </div>
+        {balance !== null && <p className="mt-2 text-sm">{t("registrar.balanceValue")}: {balance}</p>}
+        {pending && <p role="status" className="mt-2 text-xs text-muted-foreground">{t("registrar.loading")}</p>}
+        {requestError && <p role="alert" className="mt-2 text-sm text-destructive">{t(requestError)}</p>}
         <p className="mt-2 text-xs text-muted-foreground">
           {t("registrar.catalogHint")}
         </p>
@@ -109,7 +169,14 @@ export function RegistrarPage() {
           <p className="mb-3 text-xs text-muted-foreground">{t("registrar.countriesHint")}</p>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {countries.map((country) => (
-              <CheckRow key={country.id} checked={selectedCountries.includes(country.id)} onChange={() => toggleCountry(country.id)} label={t(`registrar.countryNames.${country.id}`)} />
+              <div key={country.id}>
+                <CheckRow checked={selectedCountries.includes(country.id)} onChange={() => toggleCountry(country.id)} label={country.name} />
+                {(pricesByCountry.get(country.id) ?? []).map((price, index) => (
+                  <p key={index} className="mt-1 text-xs text-muted-foreground">
+                    {price.operator ? `${price.operator}: ` : ""}{price.price} · {t("registrar.available")}: {price.available ?? t("registrar.unknown")}
+                  </p>
+                ))}
+              </div>
             ))}
           </div>
           <div className="mt-3 text-xs text-muted-foreground">
@@ -230,6 +297,6 @@ function Choice({ active, onClick, label }: { active: boolean; onClick: () => vo
   return <button type="button" onClick={onClick} className={`rounded-md border px-3 py-1.5 text-sm transition ${active ? "border-primary/50 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>{label}</button>;
 }
 
-function PendingButton({ icon: Icon, label }: { icon: typeof RefreshCw; label: string }) {
-  return <button type="button" className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground"><Icon className="h-4 w-4" />{label}</button>;
+function ProviderButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
+  return <button type="button" disabled={disabled} onClick={onClick} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground disabled:opacity-50"><RefreshCw className="h-4 w-4" />{label}</button>;
 }
