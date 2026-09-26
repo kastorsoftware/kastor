@@ -1,4 +1,3 @@
-use crate::accounts::auth_login::save_authorized_account;
 use crate::accounts::devices::DeviceInfo;
 use crate::mtproto::auth::perform_dh;
 use crate::mtproto::client::MtpClient;
@@ -7,6 +6,9 @@ use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
 use serde::{Deserialize, Serialize};
+use crate::accounts::storage::AccountStorage;
+use crate::accounts::session::AccountJson;
+use base64::Engine;
 
 pub struct RegistrationSession {
     client: MtpClient,
@@ -15,6 +17,8 @@ pub struct RegistrationSession {
     phone_code_hash: String,
     profile: RegistrationProfile,
     proxy: Option<ProxyConfig>,
+    output_directory: Option<std::path::PathBuf>,
+    server_registered: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,7 +61,7 @@ impl RegistrationSession {
         let phone = normalize_phone(&request.phone)?;
         request.profile.validate()?;
         let mut dc_id = 2;
-        let mut last_error = String::new();
+        let mut last_error = "Telegram data center migration limit exceeded".to_string();
 
         for _ in 0..=4 {
             match start_on_dc(dc_id, &phone, &request.profile, request.proxy.as_ref(), &request.code_settings).await {
@@ -70,11 +74,14 @@ impl RegistrationSession {
                             phone_code_hash: sent_code.phone_code_hash.clone(),
                             profile: request.profile,
                             proxy: request.proxy,
+                            output_directory: None,
+                            server_registered: false,
                         },
                         sent_code,
                     ));
                 }
                 Err(error) => {
+                    dbg_log!("registrar::send_code dc={} failed", dc_id);
                     if let Some(migrated_dc) = phone_migrate_dc(&error) {
                         dc_id = migrated_dc;
                         continue;
@@ -85,6 +92,47 @@ impl RegistrationSession {
             }
         }
         Err(last_error)
+    }
+
+    pub fn set_output_directory(&mut self, directory: std::path::PathBuf) {
+        self.output_directory = Some(directory);
+    }
+
+    pub fn is_registered(&self) -> bool {
+        self.server_registered
+    }
+
+    fn storage(&self) -> AccountStorage {
+        self.output_directory.as_ref().map(|path| AccountStorage::new(path))
+            .unwrap_or_else(crate::accounts::commands::get_storage_pub)
+    }
+
+    pub async fn set_two_fa(&mut self, account_id: &str, password: &str) -> Result<(), String> {
+        dbg_log!("registrar::post_registration 2fa started");
+        crate::accounts::actions::set_2fa_password(&mut self.client, password).await?;
+        let path = self.storage().json_path(account_id);
+        let mut json = AccountJson::from_file(&path)?;
+        json.two_fa = password.to_string();
+        json.to_file(&path)?;
+        dbg_log!("registrar::post_registration 2fa completed");
+        Ok(())
+    }
+
+    pub async fn register_push(&mut self, token: &str, secret: &str) -> Result<(), String> {
+        let secret = base64::engine::general_purpose::STANDARD.decode(secret)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(secret))
+            .map_err(|_| "invalid Push token secret encoding".to_string())?;
+        if token.is_empty() || secret.len() != 256 {
+            return Err("invalid Push token or encryption secret".to_string());
+        }
+        let request = crate::mtproto::tl_gen::build_account_registerDevice(
+            false, 2, token, false, &secret, &[],
+        );
+        let response = self.client.invoke(&request).await?;
+        if !crate::mtproto::tl_gen::parse_account_registerDevice(&response)? {
+            return Err("Telegram rejected Push registration".to_string());
+        }
+        Ok(())
     }
 
     pub async fn complete(
@@ -131,6 +179,7 @@ impl RegistrationSession {
         );
         let response = self.client.invoke(&request).await?;
         let user = tl::parse_auth_authorization(&response)?;
+        self.server_registered = true;
         self.save(&user)
             .map(|account_id| RegistrationOutcome::Registered { account_id })
     }
@@ -141,7 +190,9 @@ impl RegistrationSession {
             sdk: self.profile.system_version.clone(),
             app_version: self.profile.app_version.clone(),
         };
-        save_authorized_account(
+        let storage = self.storage();
+        let account_id = crate::accounts::auth_login::save_authorized_account_to(
+            &storage,
             user,
             self.dc_id,
             &self.phone,
@@ -151,7 +202,13 @@ impl RegistrationSession {
             &self.profile.api_hash,
             self.client.auth_key(),
             "",
-        )
+        )?;
+        let path = storage.json_path(&account_id);
+        let mut json = AccountJson::from_file(&path)?;
+        json.lang_pack = self.profile.lang_code.clone();
+        json.system_lang_pack = self.profile.system_lang_code.clone();
+        json.to_file(&path)?;
+        Ok(account_id)
     }
 }
 
@@ -193,7 +250,7 @@ fn dc_address(dc_id: i32) -> Result<&'static str, String> {
 }
 
 fn phone_migrate_dc(error: &str) -> Option<i32> {
-    let marker = "PHONE_MIGRATE_";
+    let marker = if error.contains("PHONE_MIGRATE_") { "PHONE_MIGRATE_" } else { "NETWORK_MIGRATE_" };
     let start = error.find(marker)? + marker.len();
     let dc_id: i32 = error[start..]
         .chars()
@@ -213,14 +270,14 @@ fn normalize_phone(phone: &str) -> Result<String, String> {
 }
 
 fn validate_code(code: &str) -> Result<(), String> {
-    if code.is_empty() || code.len() > 32 || !code.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
-        return Err("verification code must contain up to 32 letters or digits".to_string());
+    if code.trim().is_empty() || code.len() > 256 || code.chars().any(char::is_control) {
+        return Err("invalid verification code".to_string());
     }
     Ok(())
 }
 
 fn is_unoccupied(error: &str) -> bool {
-    error.contains("PHONE_NUMBER_UNOCCUPIED")
+    error.contains("PHONE_NUMBER_UNOCCUPIED") || error == "SIGN_UP_REQUIRED"
 }
 
 #[cfg(test)]
@@ -236,6 +293,13 @@ mod tests {
     #[test]
     fn validates_phone_and_code() {
         assert_eq!(normalize_phone("+1 (202) 555-0100").unwrap(), "12025550100");
-        assert!(validate_code("12 34").is_err());
+        assert!(validate_code("12\n34").is_err());
+    }
+
+    #[test]
+    fn accepts_signup_required_and_network_migration() {
+        assert!(is_unoccupied("SIGN_UP_REQUIRED"));
+        assert!(!is_unoccupied("PHONE_CODE_INVALID"));
+        assert_eq!(phone_migrate_dc("NETWORK_MIGRATE_3"), Some(3));
     }
 }

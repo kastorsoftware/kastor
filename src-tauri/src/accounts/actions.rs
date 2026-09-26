@@ -1159,7 +1159,7 @@ async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), 
     Ok(())
 }
 
-async fn set_2fa_password(client: &mut MtpClient, password: &str) -> Result<(), String> {
+pub(crate) async fn set_2fa_password(client: &mut MtpClient, password: &str) -> Result<(), String> {
     use crate::mtproto::auth::compute_new_password_verifier;
 
     let pw_req = tl::build_account_get_password();

@@ -310,7 +310,24 @@ pub(crate) fn save_authorized_account(
     two_fa_password: &str,
 ) -> Result<String, String> {
     let storage = super::commands::get_storage_pub();
+    save_authorized_account_to(
+        &storage, user, dc_id, phone, proxy, device, app_id, app_hash, auth_key, two_fa_password,
+    )
+}
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn save_authorized_account_to(
+    storage: &super::storage::AccountStorage,
+    user: &tl::AuthorizedUser,
+    dc_id: i32,
+    phone: &str,
+    proxy: Option<&ProxyConfig>,
+    device: &devices::DeviceInfo,
+    app_id: i32,
+    app_hash: &str,
+    auth_key: &[u8; 256],
+    two_fa_password: &str,
+) -> Result<String, String> {
     // dedup by auth_key
     let new_key_vec = auth_key.to_vec();
     if let Ok(entries) = std::fs::read_dir(storage.session_json_dir()) {
@@ -375,7 +392,8 @@ pub(crate) fn save_authorized_account(
         user_id: user.user_id,
         auth_key: new_key_vec,
     };
-    let _ = crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata);
+    crate::converter::tdata::write_tdata(&storage.tdata_dir(&id), &tdata)
+        .map_err(|error| format!("write account TData: {error}"))?;
 
     super::commands::invalidate_accounts_cache();
     Ok(id)
