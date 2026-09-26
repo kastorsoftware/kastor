@@ -144,26 +144,12 @@ where
 
 #[tauri::command]
 pub async fn registrar_sms_balance(config: SmsProviderConfig) -> Result<f64, String> {
-    tokio::task::spawn_blocking(move || {
-        create_provider(config)
-            .map_err(|error| error.to_string())?
-            .balance()
-            .map_err(|error| error.to_string())
-    })
-        .await
-        .map_err(|error| format!("SMS provider task failed: {error}"))?
+    sms_catalog_call(config, "balance", |provider| provider.balance()).await
 }
 
 #[tauri::command]
 pub async fn registrar_sms_countries(config: SmsProviderConfig) -> Result<Vec<SmsCountry>, String> {
-    tokio::task::spawn_blocking(move || {
-        create_provider(config)
-            .map_err(|error| error.to_string())?
-            .countries()
-            .map_err(|error| error.to_string())
-    })
-        .await
-        .map_err(|error| format!("SMS provider task failed: {error}"))?
+    sms_catalog_call(config, "countries", |provider| provider.countries()).await
 }
 
 #[tauri::command]
@@ -171,14 +157,7 @@ pub async fn registrar_sms_operators(
     config: SmsProviderConfig,
     country: String,
 ) -> Result<Vec<SmsOperator>, String> {
-    tokio::task::spawn_blocking(move || {
-        create_provider(config)
-            .map_err(|error| error.to_string())?
-            .operators(&country)
-            .map_err(|error| error.to_string())
-    })
-        .await
-        .map_err(|error| format!("SMS provider task failed: {error}"))?
+    sms_catalog_call(config, "operators", move |provider| provider.operators(&country)).await
 }
 
 #[tauri::command]
@@ -187,12 +166,71 @@ pub async fn registrar_sms_prices(
     service: String,
     country: Option<String>,
 ) -> Result<Vec<SmsPrice>, String> {
+    sms_catalog_call(config, "prices", move |provider| {
+        provider.prices(&service, country.as_deref())
+    }).await
+}
+
+async fn sms_catalog_call<T, F>(
+    config: SmsProviderConfig,
+    operation_name: &'static str,
+    operation: F,
+) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(&dyn crate::registrar::sms::SmsProvider)
+            -> Result<T, crate::registrar::sms::SmsError>
+        + Send + 'static,
+{
+    let kind = config.kind;
+    dbg_log!("registrar::catalog provider={:?} operation={} started", kind, operation_name);
     tokio::task::spawn_blocking(move || {
-        create_provider(config)
-            .map_err(|error| error.to_string())?
-            .prices(&service, country.as_deref())
-            .map_err(|error| error.to_string())
+        let started = std::time::Instant::now();
+        let result = create_provider(config).and_then(|provider| operation(provider.as_ref()));
+        // Provider errors may contain request URLs, so only their category is logged.
+        match &result {
+            Ok(_) => dbg_log!(
+                "registrar::catalog provider={:?} operation={} completed duration_ms={}",
+                kind, operation_name, started.elapsed().as_millis()
+            ),
+            Err(error) => dbg_log!(
+                "registrar::catalog provider={:?} operation={} failed kind={:?} duration_ms={}",
+                kind, operation_name, error.kind, started.elapsed().as_millis()
+            ),
+        }
+        result.map_err(|error| error.to_string())
     })
     .await
-    .map_err(|error| format!("SMS provider task failed: {error}"))?
+    .map_err(|_| "SMS catalog worker failed".to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config() -> SmsProviderConfig {
+        SmsProviderConfig {
+            kind: SmsProviderKind::CustomSmsActivate,
+            api_key: "test-key".to_string(),
+            endpoint: Some("https://example.com/stubs/handler_api.php".to_string()),
+        }
+    }
+
+    #[tokio::test]
+    async fn catalog_worker_returns_operation_result_without_network() {
+        let result = sms_catalog_call(config(), "test", |_| Ok(42_u32)).await;
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[tokio::test]
+    async fn catalog_worker_preserves_operation_error() {
+        let result = sms_catalog_call::<(), _>(config(), "test", |provider| {
+            Err(crate::registrar::sms::SmsError::new(
+                provider.name(),
+                crate::registrar::sms::SmsErrorKind::Unsupported,
+                "unsupported test operation",
+            ))
+        }).await;
+        assert!(result.unwrap_err().contains("unsupported test operation"));
+    }
 }
