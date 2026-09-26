@@ -10,6 +10,7 @@ pub const SMS_BOWER_ENDPOINT: &str = "https://smsbower.page/stubs/handler_api.ph
 pub const SMS_MAN_ENDPOINT: &str = "https://api.sms-man.com/stubs/handler_api.php";
 pub const SMS_365_ENDPOINT: &str = "https://365api.net/stubs/handler_api.php";
 pub const SMS_24_7_ENDPOINT: &str = "https://24sms7.com/stubs/handler_api.php";
+pub const GREEDY_SMS_ENDPOINT: &str = "https://api.greedy-sms.com/stubs/handler_api.php";
 
 #[derive(Clone)]
 pub struct SmsActivateProvider {
@@ -62,6 +63,10 @@ impl SmsActivateProvider {
 
     pub fn sms_24_7(api_key: impl Into<String>) -> Result<Self, SmsError> {
         Self::new("24SMS7", SMS_24_7_ENDPOINT, api_key)
+    }
+
+    pub fn greedy_sms(api_key: impl Into<String>) -> Result<Self, SmsError> {
+        Self::new("Greedy-SMS", GREEDY_SMS_ENDPOINT, api_key)
     }
 
     fn request(&self, params: &[(&str, String)]) -> Result<String, SmsError> {
