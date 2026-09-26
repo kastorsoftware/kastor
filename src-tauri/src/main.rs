@@ -28,6 +28,7 @@ mod parser;
 mod proxy;
 mod queue;
 mod randomizer;
+mod registrar;
 mod reporter;
 mod settings;
 mod stories;
