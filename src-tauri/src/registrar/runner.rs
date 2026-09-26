@@ -869,11 +869,7 @@ async fn register_push(
             .await
             .map_err(|_| "Push worker failed")?;
         match result {
-            Ok(token) => {
-                return session
-                    .register_push(&token.token, &token.token_secret)
-                    .await
-            }
+            Ok(token) => return session.register_push(&token.token).await,
             Err(_) if tokio::time::Instant::now() < deadline => {
                 for _ in 0..5 {
                     if !token.load(Ordering::Relaxed) {

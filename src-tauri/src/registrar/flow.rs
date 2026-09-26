@@ -7,7 +7,6 @@ use crate::mtproto::tl::{self, AuthCodeSettings, AuthorizedUser, SentCode};
 use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
-use base64::Engine;
 use serde::{Deserialize, Serialize};
 
 pub struct RegistrationSession {
@@ -128,22 +127,13 @@ impl RegistrationSession {
         Ok(())
     }
 
-    pub async fn register_push(&mut self, token: &str, secret: &str) -> Result<(), String> {
-        let secret = base64::engine::general_purpose::STANDARD
-            .decode(secret)
-            .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(secret))
-            .map_err(|_| "invalid Push token secret encoding".to_string())?;
-        if token.is_empty() || secret.len() != 256 {
-            return Err("invalid Push token or encryption secret".to_string());
+    pub async fn register_push(&mut self, token: &str) -> Result<(), String> {
+        if token.trim().is_empty() {
+            return Err("invalid Push token".to_string());
         }
-        let request = crate::mtproto::tl_gen::build_account_registerDevice(
-            false,
-            2,
-            token,
-            false,
-            &secret,
-            &[],
-        );
+        // AntiSafety's token_secret is not documented as an MTProto encryption key.
+        let request =
+            crate::mtproto::tl_gen::build_account_registerDevice(false, 2, token, false, &[], &[]);
         let response = self.client.invoke(&request).await?;
         if !crate::mtproto::tl_gen::parse_account_registerDevice(&response)? {
             return Err("Telegram rejected Push registration".to_string());
