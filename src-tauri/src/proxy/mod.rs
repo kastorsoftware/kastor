@@ -59,7 +59,7 @@ impl ProxyConfig {
     // host:port (default socks5)
     pub fn from_string(s: &str) -> Result<Self, String> {
         let s = s.trim();
-        dbg_log!("proxy::from_string input: '{}'", s);
+        dbg_log!("proxy::from_string parsing proxy configuration");
 
         let id = uuid::Uuid::new_v4().to_string();
 

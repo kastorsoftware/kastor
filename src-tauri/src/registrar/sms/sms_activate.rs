@@ -107,6 +107,10 @@ impl SmsActivateProvider {
 }
 
 impl SmsProvider for SmsActivateProvider {
+    fn set_http_proxy(&mut self, proxy: &str) -> Result<(), SmsError> {
+        self.agent = super::provider::proxy_agent(&self.name, proxy)?;
+        Ok(())
+    }
     fn name(&self) -> &str {
         &self.name
     }

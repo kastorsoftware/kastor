@@ -8,7 +8,7 @@ mod vak_sms;
 pub use five_sim::FiveSimProvider;
 pub use online_sim::OnlineSimProvider;
 pub use provider::{
-    ActivationAction, ActivationStatus, NumberRequest, SmsError, SmsCountry, SmsErrorKind,
+    Activation, ActivationAction, ActivationStatus, NumberRequest, SmsError, SmsCountry, SmsErrorKind,
     SmsOperator, SmsPrice, SmsProvider,
 };
 pub use registry::{create_provider, SmsProviderConfig, SmsProviderKind};

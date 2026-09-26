@@ -64,8 +64,44 @@ impl VakSmsProvider {
 }
 
 impl SmsProvider for VakSmsProvider {
+    fn set_http_proxy(&mut self, proxy: &str) -> Result<(), SmsError> {
+        self.agent = super::provider::proxy_agent(PROVIDER_NAME, proxy)?;
+        Ok(())
+    }
     fn name(&self) -> &str {
         PROVIDER_NAME
+    }
+
+    fn countries(&self) -> Result<Vec<super::SmsCountry>, SmsError> {
+        let countries: Vec<VakCountry> = parse_json(&self.request("getCountryList", &[])?)?;
+        Ok(countries.into_iter().map(|country| super::SmsCountry {
+            id: country.country_code, name: country.country_name,
+        }).collect())
+    }
+
+    fn prices(&self, service: &str, country: Option<&str>) -> Result<Vec<super::SmsPrice>, SmsError> {
+        let countries = match country {
+            Some(country) => vec![super::SmsCountry { id: country.to_string(), name: country.to_string() }],
+            None => self.countries()?,
+        };
+        let mut result = Vec::new();
+        for country in countries {
+            let value: serde_json::Value = parse_json(&self.request("getCountNumber", &[
+                ("country", country.id.clone()), ("service", service_name(service).to_string()),
+            ])?)?;
+            if let Some(error) = value.get("error") {
+                if error == "noService" || error == "noCountry" { continue; }
+                return Err(SmsError::new(PROVIDER_NAME, SmsErrorKind::Provider, "catalog request rejected"));
+            }
+            let price = value.get("price").and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()));
+            if let Some(price) = price {
+                result.push(super::SmsPrice {
+                    country, service: service.into(), operator: None, price,
+                    available: value.get(service_name(service)).and_then(serde_json::Value::as_u64),
+                });
+            }
+        }
+        Ok(result)
     }
 
     fn balance(&self) -> Result<f64, SmsError> {
@@ -84,10 +120,13 @@ impl SmsProvider for VakSmsProvider {
         validate_request(request)?;
         let mut params = vec![
             ("service", service_name(&request.service).to_string()),
-            ("country", request.country.to_ascii_uppercase()),
+            ("country", request.country.clone()),
         ];
         if let Some(operator) = request.operator.as_deref() {
             params.push(("operator", operator.to_string()));
+        }
+        if let Some(max_price) = request.max_price {
+            params.push(("maxPrice", max_price.to_string()));
         }
         let response: VakResponse = parse_json(&self.request("getNumber", &params)?)?;
         ensure_success(&response)?;
@@ -109,7 +148,7 @@ impl SmsProvider for VakSmsProvider {
             parse_json(&self.request("getSmsCode", &[("idNum", activation_id.to_string())])?)?;
         ensure_success(&response)?;
         match response.status.as_deref() {
-            Some("WAIT_CODE") | Some("SMS_WAIT") => Ok(ActivationStatus::Waiting),
+            Some("WAIT_CODE") | Some("SMS_WAIT") | Some("ready") | Some("waitSMS") => Ok(ActivationStatus::Waiting),
             Some("SMS_CODE") => response
                 .sms_code
                 .filter(|code| !code.trim().is_empty())
@@ -117,7 +156,10 @@ impl SmsProvider for VakSmsProvider {
                 .ok_or_else(|| missing_field("smsCode")),
             Some("SMS_CANCEL") => Ok(ActivationStatus::Cancelled),
             Some(status) => Ok(ActivationStatus::Provider(status.to_string())),
-            None => Err(missing_field("status")),
+            None => Ok(match response.sms_code.filter(|code| !code.trim().is_empty()) {
+                Some(code) => ActivationStatus::CodeReceived { code, text: None },
+                None => ActivationStatus::Waiting,
+            }),
         }
     }
 
@@ -130,18 +172,10 @@ impl SmsProvider for VakSmsProvider {
         if action == ActivationAction::MarkReady {
             return Ok(ActionResult::Ready);
         }
-        if action == ActivationAction::RequestAnotherCode {
-            return Err(SmsError::new(
-                PROVIDER_NAME,
-                SmsErrorKind::Unsupported,
-                "VAK-SMS does not document requesting another SMS",
-            ));
-        }
-
-        let status = if action == ActivationAction::Finish {
-            "3"
-        } else {
-            "6"
+        let status = match action {
+            ActivationAction::RequestAnotherCode => "send",
+            ActivationAction::Finish => "end",
+            _ => "bad",
         };
         let response: VakResponse = parse_json(&self.request(
             "setStatus",
@@ -161,10 +195,18 @@ impl SmsProvider for VakSmsProvider {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct VakCountry {
+    country_name: String,
+    country_code: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct VakResponse {
     response: Option<serde_json::Value>,
     balance: Option<f64>,
     id_num: Option<String>,
+    #[serde(default, deserialize_with = "optional_phone")]
     tel: Option<String>,
     cost: Option<f64>,
     status: Option<String>,
@@ -173,9 +215,20 @@ struct VakResponse {
     error_msg: Option<String>,
     message: Option<String>,
     code: Option<String>,
+    error: Option<String>,
 }
 
-fn parse_json(body: &str) -> Result<VakResponse, SmsError> {
+fn optional_phone<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::String(value)) => Ok(Some(value)),
+        Some(serde_json::Value::Number(value)) if value.as_u64().is_some() => Ok(Some(value.to_string())),
+        _ => Err(serde::de::Error::custom("invalid phone number")),
+    }
+}
+
+fn parse_json<T: for<'de> Deserialize<'de>>(body: &str) -> Result<T, SmsError> {
     serde_json::from_str(body).map_err(|error| {
         SmsError::new(
             PROVIDER_NAME,
@@ -186,10 +239,10 @@ fn parse_json(body: &str) -> Result<VakResponse, SmsError> {
 }
 
 fn ensure_success(response: &VakResponse) -> Result<(), SmsError> {
-    if response
+    if response.error.is_none() && (response.response.is_none() || response
         .response
         .as_ref()
-        .is_some_and(|value| value == 1 || value == "1")
+        .is_some_and(|value| value == 1 || value == "1"))
     {
         return Ok(());
     }
@@ -199,6 +252,7 @@ fn ensure_success(response: &VakResponse) -> Result<(), SmsError> {
         response
             .error_msg
             .as_deref()
+            .or(response.error.as_deref())
             .or(response.message.as_deref())
             .or(response.code.as_deref())
             .unwrap_or("VAK-SMS rejected the request"),
@@ -207,7 +261,8 @@ fn ensure_success(response: &VakResponse) -> Result<(), SmsError> {
 
 fn parse_error(body: &str) -> SmsError {
     match parse_json(body) {
-        Ok(response) => ensure_success(&response).unwrap_err(),
+        Ok(response) => ensure_success(&response).err().unwrap_or_else(||
+            SmsError::new(PROVIDER_NAME, SmsErrorKind::Provider, "HTTP request failed")),
         Err(_) => SmsError::new(
             PROVIDER_NAME,
             SmsErrorKind::Provider,
@@ -220,6 +275,7 @@ fn error_kind(response: &VakResponse) -> SmsErrorKind {
     let text = response
         .error_msg
         .as_deref()
+        .or(response.error.as_deref())
         .or(response.message.as_deref())
         .or(response.code.as_deref())
         .unwrap_or_default()
@@ -248,11 +304,11 @@ fn validate_request(request: &NumberRequest) -> Result<(), SmsError> {
 }
 
 fn validate_id(activation_id: &str) -> Result<(), SmsError> {
-    if activation_id.is_empty() || !activation_id.bytes().all(|byte| byte.is_ascii_digit()) {
+    if activation_id.is_empty() || activation_id.len() > 128 || activation_id.chars().any(char::is_control) {
         return Err(SmsError::new(
             PROVIDER_NAME,
             SmsErrorKind::InvalidRequest,
-            "activation id must contain only digits",
+            "invalid activation id",
         ));
     }
     Ok(())
@@ -294,5 +350,16 @@ mod tests {
             ensure_success(&response).unwrap_err().kind,
             SmsErrorKind::Authentication
         );
+    }
+
+    #[test]
+    fn handles_official_number_shape_and_http_error_without_panic() {
+        let response: VakResponse = parse_json(r#"{"idNum":"abc-123","tel":79990001122}"#).unwrap();
+        ensure_success(&response).unwrap();
+        assert_eq!(response.tel.as_deref(), Some("79990001122"));
+        assert_eq!(parse_error(r#"{"balance":42}"#).kind, SmsErrorKind::Provider);
+        assert_eq!(parse_error(r#"{"error":"apiKeyNotFound"}"#).kind, SmsErrorKind::Authentication);
+        assert!(validate_id("abc-123").is_ok());
+        assert!(validate_id("abc\n").is_err());
     }
 }

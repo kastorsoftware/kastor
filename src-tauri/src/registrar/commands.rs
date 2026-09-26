@@ -46,6 +46,71 @@ pub async fn registrar_results(task_id: String) -> Result<Vec<StoredRegistration
 }
 
 #[tauri::command]
+pub async fn registrar_status(task_id: String, app: tauri::AppHandle) -> Result<crate::registrar::runner::RegistrarProgress, String> {
+    use tauri::Manager;
+    let queue: tauri::State<'_, crate::queue::TaskQueue> = app.state();
+    let tasks = queue.get_tasks().await;
+    let task = tasks.iter().find(|task| task.id == task_id);
+    let finished = !task.is_some_and(|task| task.status == crate::queue::TaskStatus::Running);
+    let stored_id = task_id.clone();
+    let stored = tokio::task::spawn_blocking(move || RegistrarDatabase::open_task(&stored_id)?.progress())
+        .await.map_err(|_| "registrar status worker failed")??;
+    if let Some(mut progress) = stored {
+        if finished && !progress.finished {
+            progress.finished = true;
+            progress.reason = "stopped".into();
+        }
+        return Ok(progress);
+    }
+    let records = registrar_results(task_id.clone()).await?;
+    let processed = records.iter().filter(|record| !matches!(record.status.as_str(), "buying_number" | "number_acquired" | "waiting_code")).count();
+    let registered = records.iter().filter(|record| record.account_id.is_some()).count();
+    Ok(crate::registrar::runner::RegistrarProgress {
+        task_id: task_id.clone(), total: None, processed, registered, failed: processed.saturating_sub(registered),
+        finished, reason: if !finished { "running" } else {
+            match task.map(|task| &task.status) {
+                Some(crate::queue::TaskStatus::Stopped) => "stopped",
+                Some(crate::queue::TaskStatus::Failed) => "failed",
+                _ => "completed",
+            }
+        }.into(),
+        results_directory: crate::registrar::db::registrar_directory().join(task_id).join("tdatas").to_string_lossy().into_owned(),
+    })
+}
+
+#[tauri::command]
+pub async fn registrar_read_names(path: String) -> Result<Vec<crate::registrar::flow::RegistrationIdentity>, String> {
+    tokio::task::spawn_blocking(move || {
+        use std::io::Read;
+        let file = std::fs::File::open(path).map_err(|_| "could not open names file")?;
+        let mut data = String::new();
+        file.take(4 * 1024 * 1024 + 1).read_to_string(&mut data)
+            .map_err(|_| "names file must be UTF-8 text")?;
+        if data.len() > 4 * 1024 * 1024 { return Err("names file is too large".to_string()); }
+        let mut names = Vec::new();
+        for line in data.trim_start_matches('\u{feff}').lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let (first, last) = line.split_once('|').or_else(|| line.split_once(' ')).unwrap_or((line, ""));
+            let identity = crate::registrar::flow::RegistrationIdentity {
+                first_name: first.trim().to_string(), last_name: last.trim().to_string(),
+            };
+            identity.validate()?;
+            names.push(identity);
+            if names.len() > 100_000 { return Err("too many names".to_string()); }
+        }
+        if names.is_empty() { return Err("names file is empty".to_string()); }
+        Ok(names)
+    }).await.map_err(|_| "names file worker failed".to_string())?
+}
+
+#[tauri::command]
+pub fn registrar_parse_proxies(proxies: String) -> Result<Vec<crate::proxy::ProxyConfig>, String> {
+    let lines: Vec<_> = proxies.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    if lines.len() > 10_000 || proxies.len() > 2 * 1024 * 1024 { return Err("too many proxies".into()); }
+    lines.into_iter().map(|line| crate::proxy::ProxyConfig::from_string(line)
+        .map_err(|_| "invalid Telegram proxy configuration".to_string())).collect()
+}
+
+#[tauri::command]
 pub async fn registrar_antisafety_balance(config: AntiSafetyConfig) -> Result<AntiSafetyBalance, String> {
     antisafety_call(config, |client| client.balance()).await
 }
@@ -213,6 +278,7 @@ mod tests {
             kind: SmsProviderKind::CustomSmsActivate,
             api_key: "test-key".to_string(),
             endpoint: Some("https://example.com/stubs/handler_api.php".to_string()),
+            http_proxy: None,
         }
     }
 

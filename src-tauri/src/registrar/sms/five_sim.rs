@@ -70,8 +70,47 @@ impl FiveSimProvider {
 }
 
 impl SmsProvider for FiveSimProvider {
+    fn set_http_proxy(&mut self, proxy: &str) -> Result<(), SmsError> {
+        self.agent = super::provider::proxy_agent(PROVIDER_NAME, proxy)?;
+        Ok(())
+    }
     fn name(&self) -> &str {
         PROVIDER_NAME
+    }
+
+    fn countries(&self) -> Result<Vec<super::SmsCountry>, SmsError> {
+        let value: serde_json::Value = parse_json(&self.get("/v1/guest/countries", None)?)?;
+        let countries = value.as_object().ok_or_else(|| SmsError::new(PROVIDER_NAME, SmsErrorKind::InvalidResponse, "invalid countries"))?;
+        Ok(countries.iter().map(|(id, country)| super::SmsCountry {
+            id: id.clone(), name: country.get("text_en").and_then(serde_json::Value::as_str).unwrap_or(id).to_string(),
+        }).collect())
+    }
+
+    fn prices(&self, service: &str, country: Option<&str>) -> Result<Vec<super::SmsPrice>, SmsError> {
+        let service = five_sim_service_name(service);
+        validate_path_segment(service, "service")?;
+        let mut path = format!("/v1/guest/prices?product={service}");
+        if let Some(country) = country {
+            validate_path_segment(country, "country")?;
+            path.push_str(&format!("&country={country}"));
+        }
+        let value: serde_json::Value = parse_json(&self.get(&path, None)?)?;
+        let countries = value.as_object().ok_or_else(|| SmsError::new(PROVIDER_NAME, SmsErrorKind::InvalidResponse, "invalid prices"))?;
+        let mut result = Vec::new();
+        for (country, products) in countries {
+            if let Some(operators) = products.get(service).and_then(serde_json::Value::as_object) {
+                for (operator, details) in operators {
+                    if let Some(price) = details.get("cost").and_then(serde_json::Value::as_f64) {
+                        result.push(super::SmsPrice {
+                            country: super::SmsCountry { id: country.clone(), name: country.clone() },
+                            service: service.to_string(), operator: Some(operator.clone()), price,
+                            available: details.get("count").and_then(serde_json::Value::as_u64),
+                        });
+                    }
+                }
+            }
+        }
+        Ok(result)
     }
 
     fn balance(&self) -> Result<f64, SmsError> {

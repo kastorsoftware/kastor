@@ -123,6 +123,7 @@ impl Error for SmsError {}
 // Implementations perform blocking HTTP requests. Call them from spawn_blocking in async flows.
 pub trait SmsProvider: Send + Sync {
     fn name(&self) -> &str;
+    fn set_http_proxy(&mut self, proxy: &str) -> Result<(), SmsError>;
     fn balance(&self) -> Result<f64, SmsError>;
     fn countries(&self) -> Result<Vec<SmsCountry>, SmsError> {
         Err(SmsError::new(
@@ -156,4 +157,16 @@ pub trait SmsProvider: Send + Sync {
         activation_id: &str,
         action: ActivationAction,
     ) -> Result<ActionResult, SmsError>;
+}
+
+pub(super) fn proxy_agent(provider: &str, value: &str) -> Result<ureq::Agent, SmsError> {
+    let proxy = ureq::Proxy::new(value).map_err(|_| SmsError::new(
+        provider, SmsErrorKind::InvalidRequest, "invalid SMS HTTP proxy",
+    ))?;
+    Ok(ureq::Agent::config_builder()
+        .https_only(true)
+        .http_status_as_error(false)
+        .timeout_global(Some(std::time::Duration::from_secs(30)))
+        .proxy(Some(proxy))
+        .build().new_agent())
 }

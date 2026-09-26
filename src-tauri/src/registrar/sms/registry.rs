@@ -62,10 +62,12 @@ pub struct SmsProviderConfig {
     pub api_key: String,
     #[serde(default)]
     pub endpoint: Option<String>,
+    #[serde(default)]
+    pub http_proxy: Option<String>,
 }
 
 pub fn create_provider(config: SmsProviderConfig) -> Result<Box<dyn SmsProvider>, SmsError> {
-    let provider: Box<dyn SmsProvider> = match config.kind {
+    let mut provider: Box<dyn SmsProvider> = match config.kind {
         SmsProviderKind::GrizzlySms => Box::new(SmsActivateProvider::grizzly(config.api_key)?),
         SmsProviderKind::SmsBower => Box::new(SmsActivateProvider::sms_bower(config.api_key)?),
         SmsProviderKind::SmsMan => Box::new(SmsActivateProvider::sms_man(config.api_key)?),
@@ -87,6 +89,9 @@ pub fn create_provider(config: SmsProviderConfig) -> Result<Box<dyn SmsProvider>
             Box::new(SmsActivateProvider::new("Custom SMS provider", endpoint, config.api_key)?)
         }
     };
+    if let Some(proxy) = config.http_proxy {
+        provider.set_http_proxy(&proxy)?;
+    }
     Ok(provider)
 }
 
@@ -100,6 +105,7 @@ mod tests {
             kind: SmsProviderKind::CustomSmsActivate,
             api_key: "key".to_string(),
             endpoint: None,
+            http_proxy: None,
         });
         let error = match result {
             Ok(_) => panic!("custom provider without endpoint must fail"),
