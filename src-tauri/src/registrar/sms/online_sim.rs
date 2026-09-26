@@ -87,35 +87,71 @@ impl SmsProvider for OnlineSimProvider {
     }
 
     fn countries(&self) -> Result<Vec<super::SmsCountry>, SmsError> {
-        let value: serde_json::Value = parse_json(&self.request("getTariffs", &[("lang", "en".into())])?)?;
-        ensure_response_success(value.get("response").ok_or_else(|| response_error("missing response status"))?)?;
-        let countries = value.get("countries").and_then(serde_json::Value::as_object)
+        let value: serde_json::Value =
+            parse_json(&self.request("getTariffs", &[("lang", "en".into())])?)?;
+        ensure_response_success(
+            value
+                .get("response")
+                .ok_or_else(|| response_error("missing response status"))?,
+        )?;
+        let countries = value
+            .get("countries")
+            .and_then(serde_json::Value::as_object)
             .ok_or_else(|| response_error("missing countries"))?;
-        Ok(countries.values().filter_map(|country| Some(super::SmsCountry {
-            id: country.get("code")?.as_u64()?.to_string(),
-            name: country.get("name")?.as_str()?.to_string(),
-        })).collect())
+        Ok(countries
+            .values()
+            .filter_map(|country| {
+                Some(super::SmsCountry {
+                    id: country.get("code")?.as_u64()?.to_string(),
+                    name: country.get("name")?.as_str()?.to_string(),
+                })
+            })
+            .collect())
     }
 
-    fn prices(&self, service: &str, country: Option<&str>) -> Result<Vec<super::SmsPrice>, SmsError> {
+    fn prices(
+        &self,
+        service: &str,
+        country: Option<&str>,
+    ) -> Result<Vec<super::SmsPrice>, SmsError> {
         let countries = match country {
-            Some(country) => vec![super::SmsCountry { id: country.to_string(), name: country.to_string() }],
+            Some(country) => vec![super::SmsCountry {
+                id: country.to_string(),
+                name: country.to_string(),
+            }],
             None => self.countries()?,
         };
         let mut result = Vec::new();
         for country in countries {
-            let value: serde_json::Value = parse_json(&self.request("getTariffs", &[
-                ("country", country.id.clone()), ("filter_service", service_name(service).into()), ("lang", "en".into()),
-            ])?)?;
-            ensure_response_success(value.get("response").ok_or_else(|| response_error("missing response status"))?)?;
+            let value: serde_json::Value = parse_json(&self.request(
+                "getTariffs",
+                &[
+                    ("country", country.id.clone()),
+                    ("filter_service", service_name(service).into()),
+                    ("lang", "en".into()),
+                ],
+            )?)?;
+            ensure_response_success(
+                value
+                    .get("response")
+                    .ok_or_else(|| response_error("missing response status"))?,
+            )?;
             if let Some(services) = value.get("services").and_then(serde_json::Value::as_object) {
                 for details in services.values() {
-                    if details.get("slug").and_then(serde_json::Value::as_str) != Some(service_name(service)) { continue; }
-                    let price = details.get("price").and_then(|price| price.as_f64()
-                        .or_else(|| price.as_str()?.parse().ok()));
+                    if details.get("slug").and_then(serde_json::Value::as_str)
+                        != Some(service_name(service))
+                    {
+                        continue;
+                    }
+                    let price = details
+                        .get("price")
+                        .and_then(|price| price.as_f64().or_else(|| price.as_str()?.parse().ok()));
                     if let Some(price) = price {
                         result.push(super::SmsPrice {
-                            country: country.clone(), service: service.into(), operator: None, price,
+                            country: country.clone(),
+                            service: service.into(),
+                            operator: None,
+                            price,
                             available: details.get("count").and_then(serde_json::Value::as_u64),
                         });
                     }

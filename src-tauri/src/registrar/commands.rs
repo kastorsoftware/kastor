@@ -1,12 +1,12 @@
-use crate::registrar::sms::{
-    create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig, SmsProviderKind,
-};
-use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
-use crate::registrar::db::{RegistrarDatabase, StoredRegistrationRecord};
 use crate::registrar::antisafety::{
     AntiSafetyBalance, AntiSafetyClient, AntiSafetyConfig, AntiSafetyEmailTask,
     AntiSafetyGoogleAuthTask, AntiSafetyLoginTask, AntiSafetyPushToken, AntiSafetyTask,
     AntiSafetyToken,
+};
+use crate::registrar::db::{RegistrarDatabase, StoredRegistrationRecord};
+use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
+use crate::registrar::sms::{
+    create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig, SmsProviderKind,
 };
 use serde::Serialize;
 
@@ -46,15 +46,20 @@ pub async fn registrar_results(task_id: String) -> Result<Vec<StoredRegistration
 }
 
 #[tauri::command]
-pub async fn registrar_status(task_id: String, app: tauri::AppHandle) -> Result<crate::registrar::runner::RegistrarProgress, String> {
+pub async fn registrar_status(
+    task_id: String,
+    app: tauri::AppHandle,
+) -> Result<crate::registrar::runner::RegistrarProgress, String> {
     use tauri::Manager;
     let queue: tauri::State<'_, crate::queue::TaskQueue> = app.state();
     let tasks = queue.get_tasks().await;
     let task = tasks.iter().find(|task| task.id == task_id);
     let finished = !task.is_some_and(|task| task.status == crate::queue::TaskStatus::Running);
     let stored_id = task_id.clone();
-    let stored = tokio::task::spawn_blocking(move || RegistrarDatabase::open_task(&stored_id)?.progress())
-        .await.map_err(|_| "registrar status worker failed")??;
+    let stored =
+        tokio::task::spawn_blocking(move || RegistrarDatabase::open_task(&stored_id)?.progress())
+            .await
+            .map_err(|_| "registrar status worker failed")??;
     if let Some(mut progress) = stored {
         if finished && !progress.finished {
             progress.finished = true;
@@ -63,55 +68,111 @@ pub async fn registrar_status(task_id: String, app: tauri::AppHandle) -> Result<
         return Ok(progress);
     }
     let records = registrar_results(task_id.clone()).await?;
-    let processed = records.iter().filter(|record| !matches!(record.status.as_str(), "buying_number" | "number_acquired" | "waiting_code")).count();
-    let registered = records.iter().filter(|record| record.account_id.is_some()).count();
+    let processed = records
+        .iter()
+        .filter(|record| {
+            !matches!(
+                record.status.as_str(),
+                "buying_number" | "number_acquired" | "waiting_code"
+            )
+        })
+        .count();
+    let registered = records
+        .iter()
+        .filter(|record| record.account_id.is_some())
+        .count();
     Ok(crate::registrar::runner::RegistrarProgress {
-        task_id: task_id.clone(), total: None, processed, registered, failed: processed.saturating_sub(registered),
-        finished, reason: if !finished { "running" } else {
+        task_id: task_id.clone(),
+        total: None,
+        processed,
+        registered,
+        failed: processed.saturating_sub(registered),
+        finished,
+        reason: if !finished {
+            "running"
+        } else {
             match task.map(|task| &task.status) {
                 Some(crate::queue::TaskStatus::Stopped) => "stopped",
                 Some(crate::queue::TaskStatus::Failed) => "failed",
                 _ => "completed",
             }
-        }.into(),
-        results_directory: crate::registrar::db::registrar_directory().join(task_id).join("tdatas").to_string_lossy().into_owned(),
+        }
+        .into(),
+        results_directory: crate::registrar::db::registrar_directory()
+            .join(task_id)
+            .join("tdatas")
+            .to_string_lossy()
+            .into_owned(),
     })
 }
 
 #[tauri::command]
-pub async fn registrar_read_names(path: String) -> Result<Vec<crate::registrar::flow::RegistrationIdentity>, String> {
+pub async fn registrar_read_names(
+    path: String,
+) -> Result<Vec<crate::registrar::flow::RegistrationIdentity>, String> {
     tokio::task::spawn_blocking(move || {
         use std::io::Read;
         let file = std::fs::File::open(path).map_err(|_| "could not open names file")?;
         let mut data = String::new();
-        file.take(4 * 1024 * 1024 + 1).read_to_string(&mut data)
+        file.take(4 * 1024 * 1024 + 1)
+            .read_to_string(&mut data)
             .map_err(|_| "names file must be UTF-8 text")?;
-        if data.len() > 4 * 1024 * 1024 { return Err("names file is too large".to_string()); }
+        if data.len() > 4 * 1024 * 1024 {
+            return Err("names file is too large".to_string());
+        }
         let mut names = Vec::new();
-        for line in data.trim_start_matches('\u{feff}').lines().map(str::trim).filter(|line| !line.is_empty()) {
-            let (first, last) = line.split_once('|').or_else(|| line.split_once(' ')).unwrap_or((line, ""));
+        for line in data
+            .trim_start_matches('\u{feff}')
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+        {
+            let (first, last) = line
+                .split_once('|')
+                .or_else(|| line.split_once(' '))
+                .unwrap_or((line, ""));
             let identity = crate::registrar::flow::RegistrationIdentity {
-                first_name: first.trim().to_string(), last_name: last.trim().to_string(),
+                first_name: first.trim().to_string(),
+                last_name: last.trim().to_string(),
             };
             identity.validate()?;
             names.push(identity);
-            if names.len() > 100_000 { return Err("too many names".to_string()); }
+            if names.len() > 100_000 {
+                return Err("too many names".to_string());
+            }
         }
-        if names.is_empty() { return Err("names file is empty".to_string()); }
+        if names.is_empty() {
+            return Err("names file is empty".to_string());
+        }
         Ok(names)
-    }).await.map_err(|_| "names file worker failed".to_string())?
+    })
+    .await
+    .map_err(|_| "names file worker failed".to_string())?
 }
 
 #[tauri::command]
 pub fn registrar_parse_proxies(proxies: String) -> Result<Vec<crate::proxy::ProxyConfig>, String> {
-    let lines: Vec<_> = proxies.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
-    if lines.len() > 10_000 || proxies.len() > 2 * 1024 * 1024 { return Err("too many proxies".into()); }
-    lines.into_iter().map(|line| crate::proxy::ProxyConfig::from_string(line)
-        .map_err(|_| "invalid Telegram proxy configuration".to_string())).collect()
+    let lines: Vec<_> = proxies
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    if lines.len() > 10_000 || proxies.len() > 2 * 1024 * 1024 {
+        return Err("too many proxies".into());
+    }
+    lines
+        .into_iter()
+        .map(|line| {
+            crate::proxy::ProxyConfig::from_string(line)
+                .map_err(|_| "invalid Telegram proxy configuration".to_string())
+        })
+        .collect()
 }
 
 #[tauri::command]
-pub async fn registrar_antisafety_balance(config: AntiSafetyConfig) -> Result<AntiSafetyBalance, String> {
+pub async fn registrar_antisafety_balance(
+    config: AntiSafetyConfig,
+) -> Result<AntiSafetyBalance, String> {
     antisafety_call(config, |client| client.balance()).await
 }
 
@@ -122,7 +183,10 @@ pub async fn registrar_antisafety_create_play_integrity(
     nonce: String,
     version: i32,
 ) -> Result<AntiSafetyTask, String> {
-    antisafety_call(config, move |client| client.create_play_integrity(standard, &nonce, version)).await
+    antisafety_call(config, move |client| {
+        client.create_play_integrity(standard, &nonce, version)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -186,7 +250,10 @@ pub async fn registrar_antisafety_create_recaptcha(
     app_key: String,
     high_score: bool,
 ) -> Result<AntiSafetyTask, String> {
-    antisafety_call(config, move |client| client.create_recaptcha(&action, &app_key, high_score)).await
+    antisafety_call(config, move |client| {
+        client.create_recaptcha(&action, &app_key, high_score)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -222,7 +289,10 @@ pub async fn registrar_sms_operators(
     config: SmsProviderConfig,
     country: String,
 ) -> Result<Vec<SmsOperator>, String> {
-    sms_catalog_call(config, "operators", move |provider| provider.operators(&country)).await
+    sms_catalog_call(config, "operators", move |provider| {
+        provider.operators(&country)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -233,7 +303,8 @@ pub async fn registrar_sms_prices(
 ) -> Result<Vec<SmsPrice>, String> {
     sms_catalog_call(config, "prices", move |provider| {
         provider.prices(&service, country.as_deref())
-    }).await
+    })
+    .await
 }
 
 async fn sms_catalog_call<T, F>(
@@ -243,12 +314,18 @@ async fn sms_catalog_call<T, F>(
 ) -> Result<T, String>
 where
     T: Send + 'static,
-    F: FnOnce(&dyn crate::registrar::sms::SmsProvider)
-            -> Result<T, crate::registrar::sms::SmsError>
-        + Send + 'static,
+    F: FnOnce(
+            &dyn crate::registrar::sms::SmsProvider,
+        ) -> Result<T, crate::registrar::sms::SmsError>
+        + Send
+        + 'static,
 {
     let kind = config.kind;
-    dbg_log!("registrar::catalog provider={:?} operation={} started", kind, operation_name);
+    dbg_log!(
+        "registrar::catalog provider={:?} operation={} started",
+        kind,
+        operation_name
+    );
     tokio::task::spawn_blocking(move || {
         let started = std::time::Instant::now();
         let result = create_provider(config).and_then(|provider| operation(provider.as_ref()));
@@ -256,11 +333,16 @@ where
         match &result {
             Ok(_) => dbg_log!(
                 "registrar::catalog provider={:?} operation={} completed duration_ms={}",
-                kind, operation_name, started.elapsed().as_millis()
+                kind,
+                operation_name,
+                started.elapsed().as_millis()
             ),
             Err(error) => dbg_log!(
                 "registrar::catalog provider={:?} operation={} failed kind={:?} duration_ms={}",
-                kind, operation_name, error.kind, started.elapsed().as_millis()
+                kind,
+                operation_name,
+                error.kind,
+                started.elapsed().as_millis()
             ),
         }
         result.map_err(|error| error.to_string())
@@ -296,7 +378,8 @@ mod tests {
                 crate::registrar::sms::SmsErrorKind::Unsupported,
                 "unsupported test operation",
             ))
-        }).await;
+        })
+        .await;
         assert!(result.unwrap_err().contains("unsupported test operation"));
     }
 }

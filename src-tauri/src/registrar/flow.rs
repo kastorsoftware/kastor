@@ -1,14 +1,14 @@
 use crate::accounts::devices::DeviceInfo;
+use crate::accounts::session::AccountJson;
+use crate::accounts::storage::AccountStorage;
 use crate::mtproto::auth::perform_dh;
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl::{self, AuthCodeSettings, AuthorizedUser, SentCode};
 use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
-use serde::{Deserialize, Serialize};
-use crate::accounts::storage::AccountStorage;
-use crate::accounts::session::AccountJson;
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 pub struct RegistrationSession {
     client: MtpClient,
@@ -64,7 +64,15 @@ impl RegistrationSession {
         let mut last_error = "Telegram data center migration limit exceeded".to_string();
 
         for _ in 0..=4 {
-            match start_on_dc(dc_id, &phone, &request.profile, request.proxy.as_ref(), &request.code_settings).await {
+            match start_on_dc(
+                dc_id,
+                &phone,
+                &request.profile,
+                request.proxy.as_ref(),
+                &request.code_settings,
+            )
+            .await
+            {
                 Ok((client, sent_code)) => {
                     return Ok((
                         Self {
@@ -103,7 +111,9 @@ impl RegistrationSession {
     }
 
     fn storage(&self) -> AccountStorage {
-        self.output_directory.as_ref().map(|path| AccountStorage::new(path))
+        self.output_directory
+            .as_ref()
+            .map(|path| AccountStorage::new(path))
             .unwrap_or_else(crate::accounts::commands::get_storage_pub)
     }
 
@@ -119,14 +129,20 @@ impl RegistrationSession {
     }
 
     pub async fn register_push(&mut self, token: &str, secret: &str) -> Result<(), String> {
-        let secret = base64::engine::general_purpose::STANDARD.decode(secret)
+        let secret = base64::engine::general_purpose::STANDARD
+            .decode(secret)
             .or_else(|_| base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(secret))
             .map_err(|_| "invalid Push token secret encoding".to_string())?;
         if token.is_empty() || secret.len() != 256 {
             return Err("invalid Push token or encryption secret".to_string());
         }
         let request = crate::mtproto::tl_gen::build_account_registerDevice(
-            false, 2, token, false, &secret, &[],
+            false,
+            2,
+            token,
+            false,
+            &secret,
+            &[],
         );
         let response = self.client.invoke(&request).await?;
         if !crate::mtproto::tl_gen::parse_account_registerDevice(&response)? {
@@ -221,9 +237,12 @@ async fn start_on_dc(
 ) -> Result<(MtpClient, SentCode), String> {
     let address = dc_address(dc_id)?;
     let mut transport = MtpTransport::connect(address, proxy).await?;
-    let dh = perform_dh(&mut transport).await.map_err(|error| error.to_string())?;
+    let dh = perform_dh(&mut transport)
+        .await
+        .map_err(|error| error.to_string())?;
     let mut client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, address);
-    let inner = tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
+    let inner =
+        tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
     let request = tl::wrap_init_connection(
         &inner,
         profile.api_id,
@@ -250,7 +269,11 @@ fn dc_address(dc_id: i32) -> Result<&'static str, String> {
 }
 
 fn phone_migrate_dc(error: &str) -> Option<i32> {
-    let marker = if error.contains("PHONE_MIGRATE_") { "PHONE_MIGRATE_" } else { "NETWORK_MIGRATE_" };
+    let marker = if error.contains("PHONE_MIGRATE_") {
+        "PHONE_MIGRATE_"
+    } else {
+        "NETWORK_MIGRATE_"
+    };
     let start = error.find(marker)? + marker.len();
     let dc_id: i32 = error[start..]
         .chars()

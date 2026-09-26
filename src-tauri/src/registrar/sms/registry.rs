@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-use super::{FiveSimProvider, OnlineSimProvider, SmsActivateProvider, SmsError, SmsErrorKind, SmsProvider, VakSmsProvider};
+use super::{
+    FiveSimProvider, OnlineSimProvider, SmsActivateProvider, SmsError, SmsErrorKind, SmsProvider,
+    VakSmsProvider,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -86,7 +89,11 @@ pub fn create_provider(config: SmsProviderConfig) -> Result<Box<dyn SmsProvider>
                     "endpoint is required for a custom SMS-Activate provider",
                 )
             })?;
-            Box::new(SmsActivateProvider::new("Custom SMS provider", endpoint, config.api_key)?)
+            Box::new(SmsActivateProvider::new(
+                "Custom SMS provider",
+                endpoint,
+                config.api_key,
+            )?)
         }
     };
     if let Some(proxy) = config.http_proxy {

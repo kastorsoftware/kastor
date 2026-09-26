@@ -44,13 +44,17 @@ impl RegistrarDatabase {
     pub fn open_task(task_id: &str) -> Result<Self, String> {
         validate_task_id(task_id)?;
         let path = registrar_directory().join(format!("{task_id}.db"));
-        if !path.is_file() { return Err("registration task does not exist".into()); }
+        if !path.is_file() {
+            return Err("registration task does not exist".into());
+        }
         Self::open(&path)
     }
 
     pub fn open(path: &std::path::Path) -> Result<Self, String> {
-        let connection = Connection::open(path).map_err(|error| format!("open registrar database: {error}"))?;
-        connection.busy_timeout(std::time::Duration::from_secs(5))
+        let connection =
+            Connection::open(path).map_err(|error| format!("open registrar database: {error}"))?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(|error| format!("registrar database timeout: {error}"))?;
         connection
             .execute_batch(
@@ -98,20 +102,36 @@ impl RegistrarDatabase {
         Ok(self.connection.last_insert_rowid())
     }
 
-    pub fn save_progress(&self, progress: &crate::registrar::runner::RegistrarProgress) -> Result<(), String> {
+    pub fn save_progress(
+        &self,
+        progress: &crate::registrar::runner::RegistrarProgress,
+    ) -> Result<(), String> {
         let value = serde_json::to_string(progress).map_err(|_| "encode registrar progress")?;
-        self.connection.execute(
-            "INSERT INTO task_metadata (key, value) VALUES ('progress', ?1)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value", [value],
-        ).map_err(|_| "save registrar progress")?;
+        self.connection
+            .execute(
+                "INSERT INTO task_metadata (key, value) VALUES ('progress', ?1)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                [value],
+            )
+            .map_err(|_| "save registrar progress")?;
         Ok(())
     }
 
     pub fn progress(&self) -> Result<Option<crate::registrar::runner::RegistrarProgress>, String> {
-        let value: Option<String> = self.connection.query_row(
-            "SELECT value FROM task_metadata WHERE key = 'progress'", [], |row| row.get(0),
-        ).optional().map_err(|_| "read registrar progress")?;
-        value.map(|value| serde_json::from_str(&value).map_err(|_| "decode registrar progress".into())).transpose()
+        let value: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT value FROM task_metadata WHERE key = 'progress'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|_| "read registrar progress")?;
+        value
+            .map(|value| {
+                serde_json::from_str(&value).map_err(|_| "decode registrar progress".into())
+            })
+            .transpose()
     }
 
     pub fn update(&self, id: i64, record: &RegistrationRecord) -> Result<(), String> {
@@ -212,8 +232,14 @@ mod tests {
         let database = RegistrarDatabase::open(std::path::Path::new(":memory:")).unwrap();
         assert!(database.progress().unwrap().is_none());
         let progress = crate::registrar::runner::RegistrarProgress {
-            task_id: "test".into(), total: Some(10), processed: 4, registered: 3,
-            failed: 1, finished: true, reason: "price_changed".into(), results_directory: "results".into(),
+            task_id: "test".into(),
+            total: Some(10),
+            processed: 4,
+            registered: 3,
+            failed: 1,
+            finished: true,
+            reason: "price_changed".into(),
+            results_directory: "results".into(),
         };
         database.save_progress(&progress).unwrap();
         database.save_progress(&progress).unwrap();
