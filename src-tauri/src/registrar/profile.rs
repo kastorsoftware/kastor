@@ -90,7 +90,7 @@ impl ProfileGeneratorConfig {
 fn non_empty_values<'a>(values: &'a [String], name: &str) -> Result<Vec<&'a str>, String> {
     let values: Vec<_> = values
         .iter()
-        .map(String::trim)
+        .map(|value| value.trim())
         .filter(|value| !value.is_empty() && value.len() <= 128 && !value.contains(['\r', '\n', '\0']))
         .collect();
     if values.is_empty() {
