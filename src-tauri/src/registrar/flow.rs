@@ -6,6 +6,7 @@ use crate::mtproto::tl::{self, AuthCodeSettings, AuthorizedUser, SentCode};
 use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
+use serde::{Deserialize, Serialize};
 
 pub struct RegistrationSession {
     client: MtpClient,
@@ -24,10 +25,24 @@ pub struct RegistrationCodeRequest {
     pub code_settings: AuthCodeSettings,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegistrationIdentity {
     pub first_name: String,
     pub last_name: String,
+}
+
+impl RegistrationIdentity {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.first_name.trim().is_empty()
+            || self.first_name.len() > 64
+            || self.first_name.contains(['\r', '\n', '\0'])
+            || self.last_name.len() > 64
+            || self.last_name.contains(['\r', '\n', '\0'])
+        {
+            return Err("invalid registration name".to_string());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,7 +92,7 @@ impl RegistrationSession {
         identity: &RegistrationIdentity,
     ) -> Result<RegistrationOutcome, String> {
         validate_code(code)?;
-        validate_identity(identity)?;
+        identity.validate()?;
         let sign_in = tl::build_auth_sign_in(&self.phone, &self.phone_code_hash, code);
         match self.client.invoke(&sign_in).await {
             Ok(response) => match tl::parse_auth_authorization(&response) {
@@ -199,18 +214,6 @@ fn normalize_phone(phone: &str) -> Result<String, String> {
 fn validate_code(code: &str) -> Result<(), String> {
     if code.is_empty() || code.len() > 32 || !code.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
         return Err("verification code must contain up to 32 letters or digits".to_string());
-    }
-    Ok(())
-}
-
-fn validate_identity(identity: &RegistrationIdentity) -> Result<(), String> {
-    for (field, value) in [
-        ("first name", &identity.first_name),
-        ("last name", &identity.last_name),
-    ] {
-        if value.trim().is_empty() || value.len() > 64 || value.contains(['\r', '\n', '\0']) {
-            return Err(format!("invalid {field}"));
-        }
     }
     Ok(())
 }
