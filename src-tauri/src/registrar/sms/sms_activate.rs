@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use super::provider::{
     ActionResult, Activation, ActivationAction, ActivationStatus, NumberRequest, SmsError,
-    SmsErrorKind, SmsProvider,
+    SmsCountry, SmsErrorKind, SmsOperator, SmsPrice, SmsProvider,
 };
 
 pub const GRIZZLY_SMS_ENDPOINT: &str = "https://api.grizzlysms.com/stubs/handler_api.php";
@@ -114,6 +114,49 @@ impl SmsProvider for SmsActivateProvider {
     fn balance(&self) -> Result<f64, SmsError> {
         let body = self.request(&[("action", "getBalance".to_string())])?;
         parse_balance(&self.name, &body)
+    }
+
+    fn countries(&self) -> Result<Vec<SmsCountry>, SmsError> {
+        let body = self.request(&[("action", "getCountries".to_string())])?;
+        parse_countries(&self.name, &body)
+    }
+
+    fn operators(&self, country: &str) -> Result<Vec<SmsOperator>, SmsError> {
+        if country.trim().is_empty() {
+            return Err(SmsError::new(
+                &self.name,
+                SmsErrorKind::InvalidRequest,
+                "country is required",
+            ));
+        }
+        let body = self.request(&[
+            ("action", "getOperators".to_string()),
+            ("country", country.to_string()),
+        ])?;
+        parse_operators(&self.name, &body)
+    }
+
+    fn prices(
+        &self,
+        service: &str,
+        country: Option<&str>,
+    ) -> Result<Vec<SmsPrice>, SmsError> {
+        if service.trim().is_empty() {
+            return Err(SmsError::new(
+                &self.name,
+                SmsErrorKind::InvalidRequest,
+                "service is required",
+            ));
+        }
+        let mut params = vec![
+            ("action", "getPrices".to_string()),
+            ("service", compatible_service_name(service).to_string()),
+        ];
+        if let Some(country) = country.filter(|country| !country.trim().is_empty()) {
+            params.push(("country", country.to_string()));
+        }
+        let body = self.request(&params)?;
+        parse_prices(&self.name, service, &body)
     }
 
     fn acquire_number(&self, request: &NumberRequest) -> Result<Activation, SmsError> {
@@ -317,6 +360,83 @@ fn parse_provider_error(provider: &str, body: &str) -> SmsError {
     SmsError::new(provider, kind, body)
 }
 
+fn parse_countries(provider: &str, body: &str) -> Result<Vec<SmsCountry>, SmsError> {
+    let value: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| parse_provider_error(provider, body))?;
+    let countries = value.as_object().ok_or_else(|| {
+        SmsError::new(provider, SmsErrorKind::InvalidResponse, "invalid countries response")
+    })?;
+    let mut result: Vec<_> = countries
+        .iter()
+        .filter_map(|(id, name)| {
+            name.as_str().map(|name| SmsCountry {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+        })
+        .collect();
+    result.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(result)
+}
+
+fn parse_operators(provider: &str, body: &str) -> Result<Vec<SmsOperator>, SmsError> {
+    let value: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| parse_provider_error(provider, body))?;
+    let object = value.as_object().ok_or_else(|| {
+        SmsError::new(provider, SmsErrorKind::InvalidResponse, "invalid operators response")
+    })?;
+    let mut result: Vec<_> = object
+        .iter()
+        .filter_map(|(id, name)| {
+            name.as_str().map(|name| SmsOperator {
+                id: id.to_string(),
+                name: name.to_string(),
+            })
+        })
+        .collect();
+    result.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(result)
+}
+
+fn parse_prices(provider: &str, service: &str, body: &str) -> Result<Vec<SmsPrice>, SmsError> {
+    let value: serde_json::Value = serde_json::from_str(body)
+        .map_err(|_| parse_provider_error(provider, body))?;
+    let countries = value.as_object().ok_or_else(|| {
+        SmsError::new(provider, SmsErrorKind::InvalidResponse, "invalid prices response")
+    })?;
+    let mut result = Vec::new();
+    for (country_id, services) in countries {
+        let Some(details) = services
+            .as_object()
+            .and_then(|services| services.get(compatible_service_name(service)))
+            .and_then(serde_json::Value::as_object)
+        else {
+            continue;
+        };
+        let Some(price) = details.get("cost").and_then(serde_json::Value::as_f64) else {
+            continue;
+        };
+        let available = details.get("count").and_then(serde_json::Value::as_u64);
+        let name = details
+            .get("country_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(country_id)
+            .to_string();
+        result.push(SmsPrice {
+            country: SmsCountry {
+                id: country_id.to_string(),
+                name,
+            },
+            service: service.to_string(),
+            operator: None,
+            price,
+            available,
+        });
+    }
+    result.sort_by(|left, right| left.price.total_cmp(&right.price));
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -355,5 +475,17 @@ mod tests {
             parse_status("test", "BAD_KEY").unwrap_err().kind,
             SmsErrorKind::Authentication
         );
+    }
+
+    #[test]
+    fn parses_price_list() {
+        let prices = parse_prices(
+            "test",
+            "telegram",
+            r#"{"31":{"tg":{"cost":9.93,"count":2575,"country_name":"South Africa"}}}"#,
+        )
+        .unwrap();
+        assert_eq!(prices[0].country.id, "31");
+        assert_eq!(prices[0].available, Some(2575));
     }
 }

@@ -8,7 +8,7 @@ pub use five_sim::FiveSimProvider;
 pub use online_sim::OnlineSimProvider;
 pub use provider::{
     ActionResult, Activation, ActivationAction, ActivationStatus, NumberRequest, SmsError,
-    SmsErrorKind, SmsProvider,
+    SmsCountry, SmsErrorKind, SmsOperator, SmsPrice, SmsProvider,
 };
 pub use sms_activate::SmsActivateProvider;
 pub use vak_sms::VakSmsProvider;

@@ -11,6 +11,27 @@ pub struct NumberRequest {
     pub max_price: Option<f64>,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmsCountry {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmsOperator {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SmsPrice {
+    pub country: SmsCountry,
+    pub service: String,
+    pub operator: Option<String>,
+    pub price: f64,
+    pub available: Option<u64>,
+}
+
 impl NumberRequest {
     pub fn telegram(country: impl Into<String>) -> Self {
         Self {
@@ -114,6 +135,31 @@ impl Error for SmsError {}
 pub trait SmsProvider: Send + Sync {
     fn name(&self) -> &str;
     fn balance(&self) -> Result<f64, SmsError>;
+    fn countries(&self) -> Result<Vec<SmsCountry>, SmsError> {
+        Err(SmsError::new(
+            self.name(),
+            SmsErrorKind::Unsupported,
+            "listing countries is not supported",
+        ))
+    }
+    fn operators(&self, _country: &str) -> Result<Vec<SmsOperator>, SmsError> {
+        Err(SmsError::new(
+            self.name(),
+            SmsErrorKind::Unsupported,
+            "listing operators is not supported",
+        ))
+    }
+    fn prices(
+        &self,
+        _service: &str,
+        _country: Option<&str>,
+    ) -> Result<Vec<SmsPrice>, SmsError> {
+        Err(SmsError::new(
+            self.name(),
+            SmsErrorKind::Unsupported,
+            "listing prices is not supported",
+        ))
+    }
     fn acquire_number(&self, request: &NumberRequest) -> Result<Activation, SmsError>;
     fn activation_status(&self, activation_id: &str) -> Result<ActivationStatus, SmsError>;
     fn update_activation(
