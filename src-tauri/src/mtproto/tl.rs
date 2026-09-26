@@ -838,12 +838,57 @@ pub fn build_bot_callback_answer(peer_id: i64, access_hash: i64, msg_id: i32, ca
 
 
 pub fn build_auth_send_code(phone: &str, api_id: i32, api_hash: &str) -> Vec<u8> {
-    let settings = tl_gen::serialize_codeSettings(false, false, false, false, false, false, None, None, None);
-    tl_gen::build_auth_sendCode(phone, api_id, api_hash, &settings)
+    build_auth_send_code_with_settings(phone, api_id, api_hash, &AuthCodeSettings::default())
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AuthCodeSettings {
+    pub allow_app_hash: bool,
+    pub allow_missed_call: bool,
+    pub firebase_token: Option<String>,
+    pub firebase_app_sandbox: Option<bool>,
+}
+
+pub fn build_auth_send_code_with_settings(
+    phone: &str,
+    api_id: i32,
+    api_hash: &str,
+    settings: &AuthCodeSettings,
+) -> Vec<u8> {
+    let firebase_token = settings.firebase_token.as_deref().filter(|token| !token.is_empty());
+    let code_settings = tl_gen::serialize_codeSettings(
+        false,
+        false,
+        settings.allow_app_hash,
+        settings.allow_missed_call,
+        firebase_token.is_some(),
+        false,
+        None,
+        firebase_token,
+        firebase_token.and(settings.firebase_app_sandbox),
+    );
+    tl_gen::build_auth_sendCode(phone, api_id, api_hash, &code_settings)
 }
 
 pub fn build_auth_sign_in(phone: &str, phone_code_hash: &str, code: &str) -> Vec<u8> {
     tl_gen::build_auth_signIn(phone, phone_code_hash, Some(code), None)
+}
+
+pub fn build_auth_sign_up(
+    phone: &str,
+    phone_code_hash: &str,
+    first_name: &str,
+    last_name: &str,
+) -> Vec<u8> {
+    tl_gen::build_auth_signUp(false, phone, phone_code_hash, first_name, last_name)
+}
+
+pub fn build_auth_resend_code(phone: &str, phone_code_hash: &str) -> Vec<u8> {
+    tl_gen::build_auth_resendCode(phone, phone_code_hash, None)
+}
+
+pub fn build_auth_cancel_code(phone: &str, phone_code_hash: &str) -> Vec<u8> {
+    tl_gen::build_auth_cancelCode(phone, phone_code_hash)
 }
 
 pub fn build_account_get_password() -> Vec<u8> {
