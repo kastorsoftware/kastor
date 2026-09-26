@@ -7,6 +7,7 @@ export const en = {
     loading: "Loading…",
     available: "Available",
     unknown: "Unknown",
+    unknownCallingCode: "unknown calling code",
     countryNames: {
       russia: "Russia",
       ukraine: "Ukraine",

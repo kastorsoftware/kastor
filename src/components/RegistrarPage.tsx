@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { CircleHelp, FolderOpen, Play, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
+import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
 
 type NameMode = "same" | "file" | "random";
 
@@ -109,6 +110,8 @@ export function RegistrarPage() {
     return grouped;
   }, [prices]);
 
+  const sortedCountries = useMemo(() => sortRegistrarCountries(countries, prices), [countries, prices]);
+
   const toggleCountry = (id: string) => {
     setSelectedCountries((current) => current.includes(id)
       ? current.filter((country) => country !== id)
@@ -142,10 +145,11 @@ export function RegistrarPage() {
               {providers.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}
             </select>
           </Field>
-          <Field label={t("registrar.apiKey")} hint={t("registrar.keyHint")}>
+          <Field label={t("registrar.apiKey")}>
             <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" className={inputClass} placeholder="••••••••••••" />
           </Field>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">{t("registrar.keyHint")}</p>
         {providers.find((item) => item.kind === provider)?.requires_endpoint && (
           <div className="mt-5 max-w-xl">
             <Field label={t("registrar.endpoint")} hint={t("registrar.endpointHint")}>
@@ -168,9 +172,9 @@ export function RegistrarPage() {
           <label className="text-sm font-medium">{t("registrar.countries")}</label>
           <p className="mb-3 text-xs text-muted-foreground">{t("registrar.countriesHint")}</p>
           <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {countries.map((country) => (
+            {sortedCountries.map((country) => (
               <div key={country.id}>
-                <CheckRow checked={selectedCountries.includes(country.id)} onChange={() => toggleCountry(country.id)} label={country.name} />
+                <CheckRow checked={selectedCountries.includes(country.id)} onChange={() => toggleCountry(country.id)} label={`${country.name} (${countryCallingCode(country) ?? t("registrar.unknownCallingCode")})`} />
                 {(pricesByCountry.get(country.id) ?? []).map((price, index) => (
                   <p key={index} className="mt-1 text-xs text-muted-foreground">
                     {price.operator ? `${price.operator}: ` : ""}{price.price} · {t("registrar.available")}: {price.available ?? t("registrar.unknown")}
@@ -286,11 +290,11 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 function ToggleRow({ checked, onChange, label, hint }: { checked: boolean; onChange: (checked: boolean) => void; label: string; hint?: string }) {
-  return <label className="flex cursor-pointer items-start gap-3"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 h-4 w-4 rounded border-border accent-primary" /><span><span className="text-sm font-medium">{label}</span>{hint && <span className="mt-0.5 block text-xs text-muted-foreground">{hint}</span>}</span></label>;
+  return <label className="grid cursor-pointer grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-3"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="m-0 h-4 w-4 rounded border-border accent-primary" /><span className="text-sm font-medium leading-5">{label}</span>{hint && <span className="col-start-2 mt-0.5 text-xs text-muted-foreground">{hint}</span>}</label>;
 }
 
 function CheckRow({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
-  return <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-sm hover:border-primary/40"><input type="checkbox" checked={checked} onChange={onChange} className="h-4 w-4 rounded border-border accent-primary" />{label}</label>;
+  return <label className="flex cursor-pointer items-center gap-2 rounded-md border border-border bg-background/40 px-3 py-2 text-sm hover:border-primary/40"><input type="checkbox" checked={checked} onChange={onChange} className="m-0 h-4 w-4 shrink-0 rounded border-border accent-primary" /><span className="min-w-0 leading-5">{label}</span></label>;
 }
 
 function Choice({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {

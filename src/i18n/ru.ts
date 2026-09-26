@@ -7,6 +7,7 @@ export const ru = {
     loading: "Загрузка…",
     available: "В наличии",
     unknown: "Неизвестно",
+    unknownCallingCode: "код неизвестен",
     countryNames: {
       russia: "Россия",
       ukraine: "Украина",
