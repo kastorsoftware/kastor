@@ -996,11 +996,19 @@ where
 }
 
 async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
-    if let Err(error) = provider_call(config, "cancel", move |provider| {
-        provider.update_activation(&activation_id, ActivationAction::Cancel)
-    })
-    .await
-    {
+    let result = cancel_with_retry(
+        || {
+            let id = activation_id.clone();
+            provider_call(config.clone(), "cancel", move |provider| {
+                provider
+                    .update_activation(&id, ActivationAction::Cancel)
+                    .map(|_| ())
+            })
+        },
+        || tokio::time::sleep(Duration::from_secs(120)),
+    )
+    .await;
+    if let Err(error) = result {
         dbg_log!(
             "registrar::activation cancellation failed category={}",
             error
@@ -1008,9 +1016,82 @@ async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
     }
 }
 
+async fn cancel_with_retry<F, Fut, W, Wait>(mut cancel: F, wait: W) -> Result<(), String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<(), String>>,
+    W: FnOnce() -> Wait,
+    Wait: std::future::Future<Output = ()>,
+{
+    match cancel().await {
+        Err(error) if error == "sms_tooearlytocancel" => {
+            dbg_log!("registrar::activation cancellation deferred retry_after_secs=120");
+            // Cleanup remains active after Stop: the purchased reservation still needs cancellation.
+            wait().await;
+            dbg_log!("registrar::activation cancellation retry started");
+            cancel().await
+        }
+        result => result,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn early_cancellation_waits_and_retries_once() {
+        let attempts = std::cell::Cell::new(0);
+        let waited = std::cell::Cell::new(false);
+        let result = cancel_with_retry(
+            || {
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                std::future::ready(if attempt == 0 {
+                    Err("sms_tooearlytocancel".into())
+                } else {
+                    assert!(waited.get());
+                    Ok(())
+                })
+            },
+            || {
+                waited.set(true);
+                std::future::ready(())
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(attempts.get(), 2);
+    }
+
+    #[tokio::test]
+    async fn cancellation_does_not_retry_other_errors_or_retry_forever() {
+        for error in ["sms_transport", "sms_tooearlytocancel"] {
+            let attempts = std::cell::Cell::new(0);
+            let waits = std::cell::Cell::new(0);
+            let result = cancel_with_retry(
+                || {
+                    attempts.set(attempts.get() + 1);
+                    std::future::ready(Err(error.to_string()))
+                },
+                || {
+                    waits.set(waits.get() + 1);
+                    std::future::ready(())
+                },
+            )
+            .await;
+            assert_eq!(result.unwrap_err(), error);
+            assert_eq!(
+                attempts.get(),
+                if error == "sms_tooearlytocancel" {
+                    2
+                } else {
+                    1
+                }
+            );
+            assert_eq!(waits.get(), usize::from(error == "sms_tooearlytocancel"));
+        }
+    }
 
     #[test]
     fn price_ranges_reject_nonfinite_and_reversed_bounds() {
