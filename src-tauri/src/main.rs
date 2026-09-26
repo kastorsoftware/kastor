@@ -354,6 +354,7 @@ fn main() {
             registrar::commands::registrar_sms_countries,
             registrar::commands::registrar_sms_operators,
             registrar::commands::registrar_sms_prices,
+            registrar::commands::registrar_generate_profiles,
             queue::validate::enqueue_validate,
             accounts::commands::import_accounts,
             accounts::commands::import_from_authkey,

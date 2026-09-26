@@ -1,6 +1,15 @@
 use crate::registrar::sms::{
     create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig,
 };
+use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
+
+#[tauri::command]
+pub fn registrar_generate_profiles(
+    config: ProfileGeneratorConfig,
+    count: usize,
+) -> Result<Vec<RegistrationProfile>, String> {
+    config.generate(count)
+}
 
 #[tauri::command]
 pub async fn registrar_sms_balance(config: SmsProviderConfig) -> Result<f64, String> {
