@@ -41,6 +41,18 @@ impl RegistrationSessions {
         );
         id
     }
+
+    async fn take(&self, id: &str) -> Result<StoredSession, String> {
+        let mut sessions = self.sessions.lock().await;
+        purge_expired(&mut sessions);
+        sessions
+            .remove(id)
+            .ok_or_else(|| "registration session was not found or expired".to_string())
+    }
+
+    async fn restore(&self, id: String, session: StoredSession) {
+        self.sessions.lock().await.insert(id, session);
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,14 +81,14 @@ pub async fn registrar_manual_complete(
     identity: RegistrationIdentity,
     sessions: State<'_, RegistrationSessions>,
 ) -> Result<RegistrationOutcome, String> {
-    let mut sessions = sessions.sessions.lock().await;
-    purge_expired(&mut sessions);
-    let stored = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| "registration session was not found or expired".to_string())?;
-    let outcome = stored.session.complete(&code, &identity).await?;
-    sessions.remove(&session_id);
-    Ok(outcome)
+    let mut stored = sessions.take(&session_id).await?;
+    match stored.session.complete(&code, &identity).await {
+        Ok(outcome) => Ok(outcome),
+        Err(error) => {
+            sessions.restore(session_id, stored).await;
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -84,12 +96,10 @@ pub async fn registrar_manual_resend_code(
     session_id: String,
     sessions: State<'_, RegistrationSessions>,
 ) -> Result<String, String> {
-    let mut sessions = sessions.sessions.lock().await;
-    purge_expired(&mut sessions);
-    let stored = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| "registration session was not found or expired".to_string())?;
-    Ok(stored.session.resend().await?.code_type)
+    let mut stored = sessions.take(&session_id).await?;
+    let result = stored.session.resend().await.map(|sent_code| sent_code.code_type);
+    sessions.restore(session_id, stored).await;
+    result
 }
 
 #[tauri::command]
@@ -97,14 +107,14 @@ pub async fn registrar_manual_cancel(
     session_id: String,
     sessions: State<'_, RegistrationSessions>,
 ) -> Result<(), String> {
-    let mut sessions = sessions.sessions.lock().await;
-    purge_expired(&mut sessions);
-    let stored = sessions
-        .get_mut(&session_id)
-        .ok_or_else(|| "registration session was not found or expired".to_string())?;
-    stored.session.cancel().await?;
-    sessions.remove(&session_id);
-    Ok(())
+    let mut stored = sessions.take(&session_id).await?;
+    match stored.session.cancel().await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            sessions.restore(session_id, stored).await;
+            Err(error)
+        }
+    }
 }
 
 fn purge_expired(sessions: &mut HashMap<String, StoredSession>) {
