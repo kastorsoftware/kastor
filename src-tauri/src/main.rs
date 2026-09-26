@@ -332,6 +332,7 @@ fn main() {
         .manage(state)
         .manage(task_queue)
         .manage(accounts::auth_login::AuthSessions::new())
+        .manage(registrar::manual::RegistrationSessions::new())
         .invoke_handler(tauri::generate_handler![
             i18n::set_locale,
             get_version,
@@ -356,6 +357,10 @@ fn main() {
             registrar::commands::registrar_sms_prices,
             registrar::commands::registrar_generate_profiles,
             registrar::commands::registrar_results,
+            registrar::manual::registrar_manual_send_code,
+            registrar::manual::registrar_manual_complete,
+            registrar::manual::registrar_manual_resend_code,
+            registrar::manual::registrar_manual_cancel,
             registrar::runner::registrar_start,
             registrar::runner::registrar_stop,
             queue::validate::enqueue_validate,

@@ -17,7 +17,7 @@ pub struct RegistrationSession {
     proxy: Option<ProxyConfig>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RegistrationCodeRequest {
     pub phone: String,
     pub profile: RegistrationProfile,
@@ -45,7 +45,8 @@ impl RegistrationIdentity {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
 pub enum RegistrationOutcome {
     Registered { account_id: String },
     AlreadyRegistered,
@@ -87,7 +88,7 @@ impl RegistrationSession {
     }
 
     pub async fn complete(
-        mut self,
+        &mut self,
         code: &str,
         identity: &RegistrationIdentity,
     ) -> Result<RegistrationOutcome, String> {
