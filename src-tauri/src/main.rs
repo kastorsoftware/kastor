@@ -355,6 +355,7 @@ fn main() {
             registrar::commands::registrar_sms_operators,
             registrar::commands::registrar_sms_prices,
             registrar::commands::registrar_generate_profiles,
+            registrar::commands::registrar_results,
             registrar::runner::registrar_start,
             registrar::runner::registrar_stop,
             queue::validate::enqueue_validate,

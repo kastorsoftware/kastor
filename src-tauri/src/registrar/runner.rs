@@ -11,6 +11,7 @@ use crate::registrar::db::{RegistrarDatabase, RegistrationRecord};
 use crate::registrar::flow::{
     RegistrationCodeRequest, RegistrationIdentity, RegistrationOutcome, RegistrationSession,
 };
+use crate::mtproto::tl::AuthCodeSettings;
 use crate::registrar::profile::RegistrationProfile;
 use crate::registrar::sms::{
     create_provider, ActivationAction, ActivationStatus, NumberRequest,
@@ -36,6 +37,8 @@ pub struct RegistrarTaskConfig {
     pub sms_provider: SmsProviderConfig,
     pub number_request: NumberRequest,
     pub attempts: Vec<RegistrationAttempt>,
+    #[serde(default)]
+    pub code_settings: AuthCodeSettings,
     #[serde(default = "default_concurrency")]
     pub concurrency: usize,
     #[serde(default = "default_poll_interval_secs")]
@@ -150,6 +153,7 @@ async fn run_task(
         let database = database.clone();
         let app = app.clone();
         let token = token.clone();
+        let code_settings = config.code_settings.clone();
         let poll_interval_secs = config.poll_interval_secs;
         let code_timeout_secs = config.code_timeout_secs;
         handles.push(tokio::spawn(async move {
@@ -163,6 +167,7 @@ async fn run_task(
                 database,
                 app,
                 token,
+                code_settings,
                 poll_interval_secs,
                 code_timeout_secs,
             )
@@ -189,6 +194,7 @@ async fn process_attempt(
     database: Arc<tokio::sync::Mutex<RegistrarDatabase>>,
     app: tauri::AppHandle,
     token: Arc<AtomicBool>,
+    code_settings: AuthCodeSettings,
     poll_interval_secs: u64,
     code_timeout_secs: u64,
 ) {
@@ -227,7 +233,7 @@ async fn process_attempt(
         phone: activation.phone.clone(),
         profile: attempt.profile,
         proxy: attempt.proxy,
-        code_settings: Default::default(),
+        code_settings,
     })
     .await
     {
@@ -434,6 +440,7 @@ mod tests {
             },
             number_request: NumberRequest::telegram("russia"),
             attempts: Vec::new(),
+            code_settings: AuthCodeSettings::default(),
             concurrency: 1,
             poll_interval_secs: 5,
             code_timeout_secs: 300,

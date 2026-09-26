@@ -1,4 +1,5 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use serde::Deserialize;
 use std::io::{Cursor, Read};
 use super::tl_gen;
 use super::client::MtpClient;
@@ -841,7 +842,7 @@ pub fn build_auth_send_code(phone: &str, api_id: i32, api_hash: &str) -> Vec<u8>
     build_auth_send_code_with_settings(phone, api_id, api_hash, &AuthCodeSettings::default())
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct AuthCodeSettings {
     pub allow_app_hash: bool,
     pub allow_missed_call: bool,

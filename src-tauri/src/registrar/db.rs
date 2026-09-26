@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use rusqlite::{params, Connection};
+use serde::Serialize;
 
 pub struct RegistrarDatabase {
     connection: Connection,
@@ -16,18 +17,33 @@ pub struct RegistrationRecord {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct StoredRegistrationRecord {
+    pub id: i64,
+    pub phone: String,
+    pub provider: String,
+    pub activation_id: Option<String>,
+    pub status: String,
+    pub account_id: Option<String>,
+    pub error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 impl RegistrarDatabase {
     pub fn create(task_id: &str) -> Result<(Self, PathBuf), String> {
         validate_task_id(task_id)?;
-        let directory = dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("kastor")
-            .join("registrar");
+        let directory = registrar_directory();
         std::fs::create_dir_all(&directory)
             .map_err(|error| format!("create registrar directory: {error}"))?;
         let path = directory.join(format!("{task_id}.db"));
         let database = Self::open(&path)?;
         Ok((database, path))
+    }
+
+    pub fn open_task(task_id: &str) -> Result<Self, String> {
+        validate_task_id(task_id)?;
+        Self::open(&registrar_directory().join(format!("{task_id}.db")))
     }
 
     pub fn open(path: &std::path::Path) -> Result<Self, String> {
@@ -98,6 +114,40 @@ impl RegistrarDatabase {
         }
         Ok(())
     }
+
+    pub fn records(&self) -> Result<Vec<StoredRegistrationRecord>, String> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, phone, provider, activation_id, status, account_id, error, created_at, updated_at
+                 FROM registrations ORDER BY id",
+            )
+            .map_err(|error| format!("prepare registrar results query: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(StoredRegistrationRecord {
+                    id: row.get(0)?,
+                    phone: row.get(1)?,
+                    provider: row.get(2)?,
+                    activation_id: row.get(3)?,
+                    status: row.get(4)?,
+                    account_id: row.get(5)?,
+                    error: row.get(6)?,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
+            })
+            .map_err(|error| format!("read registrar results: {error}"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("decode registrar results: {error}"))
+    }
+}
+
+fn registrar_directory() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("kastor")
+        .join("registrar")
 }
 
 fn validate_task_id(task_id: &str) -> Result<(), String> {

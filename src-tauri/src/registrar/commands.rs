@@ -2,6 +2,7 @@ use crate::registrar::sms::{
     create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig,
 };
 use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
+use crate::registrar::db::{RegistrarDatabase, StoredRegistrationRecord};
 
 #[tauri::command]
 pub fn registrar_generate_profiles(
@@ -9,6 +10,13 @@ pub fn registrar_generate_profiles(
     count: usize,
 ) -> Result<Vec<RegistrationProfile>, String> {
     config.generate(count)
+}
+
+#[tauri::command]
+pub async fn registrar_results(task_id: String) -> Result<Vec<StoredRegistrationRecord>, String> {
+    tokio::task::spawn_blocking(move || RegistrarDatabase::open_task(&task_id)?.records())
+        .await
+        .map_err(|error| format!("registrar database task failed: {error}"))?
 }
 
 #[tauri::command]
