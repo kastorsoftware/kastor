@@ -1,3 +1,4 @@
+pub mod antisafety;
 pub mod sms;
 pub mod commands;
 pub mod db;

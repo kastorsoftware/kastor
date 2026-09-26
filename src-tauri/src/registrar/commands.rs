@@ -3,6 +3,11 @@ use crate::registrar::sms::{
 };
 use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
 use crate::registrar::db::{RegistrarDatabase, StoredRegistrationRecord};
+use crate::registrar::antisafety::{
+    AntiSafetyBalance, AntiSafetyClient, AntiSafetyConfig, AntiSafetyEmailTask,
+    AntiSafetyGoogleAuthTask, AntiSafetyLoginTask, AntiSafetyPushToken, AntiSafetyTask,
+    AntiSafetyToken,
+};
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,6 +43,103 @@ pub async fn registrar_results(task_id: String) -> Result<Vec<StoredRegistration
     tokio::task::spawn_blocking(move || RegistrarDatabase::open_task(&task_id)?.records())
         .await
         .map_err(|error| format!("registrar database task failed: {error}"))?
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_balance(config: AntiSafetyConfig) -> Result<AntiSafetyBalance, String> {
+    antisafety_call(config, |client| client.balance()).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_play_integrity(
+    config: AntiSafetyConfig,
+    standard: bool,
+    nonce: String,
+    version: i32,
+) -> Result<AntiSafetyTask, String> {
+    antisafety_call(config, move |client| client.create_play_integrity(standard, &nonce, version)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_get_play_integrity(
+    config: AntiSafetyConfig,
+    id: String,
+) -> Result<AntiSafetyToken, String> {
+    antisafety_call(config, move |client| client.get_play_integrity(&id)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_android_push(
+    config: AntiSafetyConfig,
+) -> Result<AntiSafetyTask, String> {
+    antisafety_call(config, |client| client.create_android_push()).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_get_android_push(
+    config: AntiSafetyConfig,
+    id: String,
+) -> Result<AntiSafetyPushToken, String> {
+    antisafety_call(config, move |client| client.get_android_push(&id)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_email(
+    config: AntiSafetyConfig,
+    premium: bool,
+) -> Result<AntiSafetyEmailTask, String> {
+    antisafety_call(config, move |client| client.create_email(premium)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_get_email(
+    config: AntiSafetyConfig,
+    id: String,
+    premium: bool,
+) -> Result<String, String> {
+    antisafety_call(config, move |client| client.get_email(&id, premium)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_google_auth(
+    config: AntiSafetyConfig,
+) -> Result<AntiSafetyGoogleAuthTask, String> {
+    antisafety_call(config, |client| client.create_google_auth()).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_login(
+    config: AntiSafetyConfig,
+) -> Result<AntiSafetyLoginTask, String> {
+    antisafety_call(config, |client| client.create_login()).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_create_recaptcha(
+    config: AntiSafetyConfig,
+    action: String,
+    app_key: String,
+    high_score: bool,
+) -> Result<AntiSafetyTask, String> {
+    antisafety_call(config, move |client| client.create_recaptcha(&action, &app_key, high_score)).await
+}
+
+#[tauri::command]
+pub async fn registrar_antisafety_get_recaptcha(
+    config: AntiSafetyConfig,
+    id: String,
+) -> Result<AntiSafetyToken, String> {
+    antisafety_call(config, move |client| client.get_recaptcha(&id)).await
+}
+
+async fn antisafety_call<T, F>(config: AntiSafetyConfig, operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce(AntiSafetyClient) -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || operation(AntiSafetyClient::new(config)?))
+        .await
+        .map_err(|error| format!("AntiSafety task failed: {error}"))?
 }
 
 #[tauri::command]
