@@ -871,6 +871,11 @@ pub fn build_auth_send_code_with_settings(
     tl_gen::build_auth_sendCode(phone, api_id, api_hash, &code_settings)
 }
 
+/// Wraps an auth request in Telegram's one-shot reCAPTCHA authorization envelope.
+pub fn wrap_with_recaptcha(token: &str, query: &[u8]) -> Vec<u8> {
+    tl_gen::build_invokeWithReCaptcha(token, query)
+}
+
 pub fn build_auth_sign_in(phone: &str, phone_code_hash: &str, code: &str) -> Vec<u8> {
     tl_gen::build_auth_signIn(phone, phone_code_hash, Some(code), None)
 }

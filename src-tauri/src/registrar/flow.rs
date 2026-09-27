@@ -8,6 +8,14 @@ use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
+
+const RECAPTCHA_TIMEOUT: Duration = Duration::from_secs(120);
+const RECAPTCHA_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct RegistrationSession {
     client: MtpClient,
@@ -26,6 +34,25 @@ pub struct RegistrationCodeRequest {
     pub profile: RegistrationProfile,
     pub proxy: Option<ProxyConfig>,
     pub code_settings: AuthCodeSettings,
+    #[serde(default)]
+    pub antisafety: Option<AntiSafetyConfig>,
+    #[serde(skip)]
+    pub cancellation: Option<Arc<AtomicBool>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecaptchaChallenge {
+    action: String,
+    app_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RecaptchaState {
+    Creating,
+    Waiting,
+    Ready,
+    Cancelled,
+    TimedOut,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +96,8 @@ impl RegistrationSession {
                 &request.profile,
                 request.proxy.as_ref(),
                 &request.code_settings,
+                request.antisafety.as_ref(),
+                request.cancellation.as_deref(),
             )
             .await
             {
@@ -258,6 +287,8 @@ async fn start_on_dc(
     profile: &RegistrationProfile,
     proxy: Option<&ProxyConfig>,
     settings: &AuthCodeSettings,
+    antisafety: Option<&AntiSafetyConfig>,
+    cancellation: Option<&AtomicBool>,
 ) -> Result<(MtpClient, SentCode), String> {
     let address = dc_address(dc_id)?;
     dbg_log!(
@@ -278,16 +309,25 @@ async fn start_on_dc(
     let mut client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, address);
     let inner =
         tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
-    let request = tl::wrap_init_connection(
-        &inner,
-        profile.api_id,
-        &profile.device_model,
-        &profile.system_version,
-        &profile.app_version,
-        &profile.system_lang_code,
-        &profile.lang_code,
-    );
-    let response = super::diagnostics::observe("send_code_invoke", client.invoke(&request).await)?;
+    let response = match invoke_send_code(&mut client, &inner, profile).await {
+        Ok(response) => response,
+        Err(error) => {
+            let Some(challenge) = parse_recaptcha_challenge(&error) else {
+                return Err(error);
+            };
+            let config = antisafety.ok_or("AntiSafety credentials are required for reCAPTCHA")?;
+            dbg_log!(
+                "registrar::send_code dc={} recaptcha_challenge_received",
+                dc_id
+            );
+            let token = solve_recaptcha(config, challenge, cancellation).await?;
+            let protected_inner = tl::wrap_with_recaptcha(&token, &inner);
+            super::diagnostics::observe(
+                "send_code_recaptcha_invoke",
+                invoke_send_code(&mut client, &protected_inner, profile).await,
+            )?
+        }
+    };
     if let Some(bytes) = response.get(..4) {
         dbg_log!(
             "registrar::send_code dc={} response_bytes={} constructor={:#x}",
@@ -304,6 +344,95 @@ async fn start_on_dc(
         sent_code.code_type
     );
     Ok((client, sent_code))
+}
+
+async fn invoke_send_code(
+    client: &mut MtpClient,
+    inner: &[u8],
+    profile: &RegistrationProfile,
+) -> Result<Vec<u8>, String> {
+    let request = tl::wrap_init_connection(
+        inner,
+        profile.api_id,
+        &profile.device_model,
+        &profile.system_version,
+        &profile.app_version,
+        &profile.system_lang_code,
+        &profile.lang_code,
+    );
+    super::diagnostics::observe("send_code_invoke", client.invoke(&request).await)
+}
+
+async fn solve_recaptcha(
+    config: &AntiSafetyConfig,
+    challenge: RecaptchaChallenge,
+    cancellation: Option<&AtomicBool>,
+) -> Result<String, String> {
+    if is_cancelled(cancellation) {
+        return Err("stopped".to_string());
+    }
+    let client = AntiSafetyClient::new(config.clone())?;
+    let mut state = RecaptchaState::Creating;
+    dbg_log!("registrar::recaptcha state={state:?}");
+    let task_client = client.clone();
+    let task = tokio::task::spawn_blocking(move || {
+        task_client.create_recaptcha(&challenge.action, &challenge.app_key, true)
+    })
+    .await
+    .map_err(|_| "reCAPTCHA worker failed".to_string())??;
+
+    state = RecaptchaState::Waiting;
+    dbg_log!("registrar::recaptcha state={state:?}");
+    let deadline = tokio::time::Instant::now() + RECAPTCHA_TIMEOUT;
+    loop {
+        if is_cancelled(cancellation) {
+            state = RecaptchaState::Cancelled;
+            dbg_log!("registrar::recaptcha state={state:?}");
+            return Err("stopped".to_string());
+        }
+        let task_client = client.clone();
+        let id = task.id.clone();
+        let result = tokio::task::spawn_blocking(move || task_client.get_recaptcha(&id))
+            .await
+            .map_err(|_| "reCAPTCHA worker failed".to_string())?;
+        if let Ok(token) = result {
+            state = RecaptchaState::Ready;
+            dbg_log!("registrar::recaptcha state={state:?}");
+            return Ok(token.token);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            state = RecaptchaState::TimedOut;
+            dbg_log!("registrar::recaptcha state={state:?}");
+            return Err("reCAPTCHA token timeout".to_string());
+        }
+        wait_for_recaptcha_poll(cancellation).await?;
+    }
+}
+
+async fn wait_for_recaptcha_poll(cancellation: Option<&AtomicBool>) -> Result<(), String> {
+    for _ in 0..RECAPTCHA_POLL_INTERVAL.as_secs() {
+        if is_cancelled(cancellation) {
+            return Err("stopped".to_string());
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    Ok(())
+}
+
+fn is_cancelled(cancellation: Option<&AtomicBool>) -> bool {
+    cancellation.is_some_and(|token| !token.load(Ordering::Relaxed))
+}
+
+fn parse_recaptcha_challenge(error: &str) -> Option<RecaptchaChallenge> {
+    let payload = error.split_once("RECAPTCHA_CHECK_")?.1;
+    let (action, app_key) = payload.split_once("__")?;
+    let valid = |value: &str, max_length| {
+        !value.is_empty() && value.len() <= max_length && !value.contains(['\r', '\n', '\0'])
+    };
+    (valid(action, 256) && valid(app_key, 512)).then(|| RecaptchaChallenge {
+        action: action.to_string(),
+        app_key: app_key.to_string(),
+    })
 }
 
 fn dc_address(dc_id: i32) -> Result<&'static str, String> {
@@ -373,5 +502,18 @@ mod tests {
         assert!(is_unoccupied("SIGN_UP_REQUIRED"));
         assert!(!is_unoccupied("PHONE_CODE_INVALID"));
         assert_eq!(phone_migrate_dc("NETWORK_MIGRATE_3"), Some(3));
+    }
+
+    #[test]
+    fn parses_recaptcha_challenge_without_retaining_rpc_prefix() {
+        assert_eq!(
+            parse_recaptcha_challenge("RPC 400: RECAPTCHA_CHECK_login__site-key"),
+            Some(RecaptchaChallenge {
+                action: "login".to_string(),
+                app_key: "site-key".to_string(),
+            })
+        );
+        assert_eq!(parse_recaptcha_challenge("RECAPTCHA_CHECK_login"), None);
+        assert_eq!(parse_recaptcha_challenge("RECAPTCHA_CHECK___site-key"), None);
     }
 }

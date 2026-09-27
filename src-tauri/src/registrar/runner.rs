@@ -690,6 +690,8 @@ async fn register_number(
         profile: attempt.profile.clone(),
         proxy: attempt.proxy.clone(),
         code_settings: config.code_settings.clone(),
+        antisafety: config.antisafety.clone(),
+        cancellation: Some(context.token.clone()),
     })
     .await?;
     session.set_output_directory(context.output.clone());
