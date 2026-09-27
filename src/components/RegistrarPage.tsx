@@ -7,12 +7,23 @@ import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCount
 import { optionalPrice } from "@/lib/registrarSettings";
 
 type NameMode = "same" | "file" | "random";
+type AvatarMode = "emoji" | "folder" | "single" | "generated";
+type UsernameMode = "random" | "from_list" | "prefix_random";
 
 type Provider = { kind: string; label: string; requires_endpoint: boolean };
 type Country = { id: string; name: string };
 type Price = { country: Country; price: number; available: number | null; operator: string | null };
 type Progress = { task_id: string; total: number | null; processed: number; registered: number; failed: number; finished: boolean; reason: string; results_directory: string };
 type Identity = { first_name: string; last_name: string };
+type StoredSettings = {
+  provider: string; apiKey: string; customEndpoint: string; selectedCountries: string[]; countMode: "count" | "budget"; count: string;
+  setTwoFa: boolean; twoFaPassword: string; antiSafetyKey: string; antiSafetyAid: string; emailPremium: boolean; allowEmailFallback: boolean;
+  addToPanel: boolean; openResults: boolean; hidePhoneNumber: boolean; hideOnlineStatus: boolean; setAvatar: boolean; setUsername: boolean; smsTimeout: string; stopOnPriceChange: boolean; minPrice: string; maxPrice: string;
+  nameMode: NameMode; firstName: string; lastName: string; namesFile: string; rejectAppCode: boolean; concurrency: string; pollInterval: string;
+  failureStop: boolean; failureLimit: string;
+  avatarMode: AvatarMode; avatarPath: string; usernameMode: UsernameMode; usernamePrefix: string; usernameListPath: string;
+  manualLocale: boolean; registrationLanguage: "ru" | "en"; timezoneOffset: string;
+};
 
 export function RegistrarPage() {
   const t = useT();
@@ -33,8 +44,22 @@ export function RegistrarPage() {
   const [twoFaPassword, setTwoFaPassword] = useState("");
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
+  const [emailPremium, setEmailPremium] = useState(false);
+  const [allowEmailFallback, setAllowEmailFallback] = useState(false);
   const [addToPanel, setAddToPanel] = useState(true);
   const [openResults, setOpenResults] = useState(false);
+  const [hidePhoneNumber, setHidePhoneNumber] = useState(false);
+  const [hideOnlineStatus, setHideOnlineStatus] = useState(false);
+  const [setAvatar, setSetAvatar] = useState(false);
+  const [setUsername, setSetUsername] = useState(false);
+  const [avatarMode, setAvatarMode] = useState<AvatarMode>("emoji");
+  const [avatarPath, setAvatarPath] = useState("");
+  const [usernameMode, setUsernameMode] = useState<UsernameMode>("random");
+  const [usernamePrefix, setUsernamePrefix] = useState("");
+  const [usernameListPath, setUsernameListPath] = useState("");
+  const [manualLocale, setManualLocale] = useState(false);
+  const [registrationLanguage, setRegistrationLanguage] = useState<"ru" | "en">("en");
+  const [timezoneOffset, setTimezoneOffset] = useState("0");
   const [smsTimeout, setSmsTimeout] = useState("300");
   const [stopOnPriceChange, setStopOnPriceChange] = useState(true);
   const [minPrice, setMinPrice] = useState("");
@@ -43,11 +68,19 @@ export function RegistrarPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [namesFile, setNamesFile] = useState("");
-  const [useSmsProxy, setUseSmsProxy] = useState(false);
-  const [smsProxy, setSmsProxy] = useState("");
   const [rejectAppCode, setRejectAppCode] = useState(true);
   const [concurrency, setConcurrency] = useState("1");
-  const [pollInterval, setPollInterval] = useState("5");
+  const [pollInterval, setPollInterval] = useState("3");
+  const [failureStop, setFailureStop] = useState(false);
+  const [failureLimit, setFailureLimit] = useState("");
+  const [settingsLock, setSettingsLock] = useState<"loading" | "setup" | "locked" | "unlocked">("loading");
+  const [registrarPassword, setRegistrarPassword] = useState("");
+  const [passwordConfirmation, setPasswordConfirmation] = useState("");
+  const [settingsPasswordError, setSettingsPasswordError] = useState("");
+  const [antiSafetyHelpOpen, setAntiSafetyHelpOpen] = useState(false);
+  const [launchNoticeOpen, setLaunchNoticeOpen] = useState(false);
+  const [launchNoticeRead, setLaunchNoticeRead] = useState(false);
+  const [launchNoticeDismissed, setLaunchNoticeDismissed] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [launching, setLaunching] = useState(false);
@@ -56,6 +89,73 @@ export function RegistrarPage() {
   const taskId = useRef<string | null>(sessionStorage.getItem("registrar_task_id"));
   const lastEvent = useRef<Progress | null>(null);
   const running = progress !== null && !progress.finished;
+
+  const storedSettings = (): StoredSettings => ({
+    provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, antiSafetyKey, antiSafetyAid,
+    emailPremium, allowEmailFallback, addToPanel, openResults, hidePhoneNumber, hideOnlineStatus, setAvatar, setUsername, smsTimeout, stopOnPriceChange, minPrice, maxPrice, nameMode,
+    firstName, lastName, namesFile, rejectAppCode, concurrency, pollInterval, failureStop, failureLimit,
+    avatarMode, avatarPath, usernameMode, usernamePrefix, usernameListPath,
+    manualLocale, registrationLanguage, timezoneOffset,
+  });
+
+  const applyStoredSettings = (settings: Partial<StoredSettings>) => {
+    if (typeof settings.provider === "string") setProvider(settings.provider);
+    if (typeof settings.apiKey === "string") setApiKey(settings.apiKey);
+    if (typeof settings.customEndpoint === "string") setCustomEndpoint(settings.customEndpoint);
+    if (Array.isArray(settings.selectedCountries)) setSelectedCountries(settings.selectedCountries.filter((value): value is string => typeof value === "string"));
+    if (settings.countMode === "count" || settings.countMode === "budget") setCountMode(settings.countMode);
+    if (typeof settings.count === "string") setCount(settings.count);
+    if (typeof settings.setTwoFa === "boolean") setSetTwoFa(settings.setTwoFa);
+    if (typeof settings.twoFaPassword === "string") setTwoFaPassword(settings.twoFaPassword);
+    if (typeof settings.antiSafetyKey === "string") setAntiSafetyKey(settings.antiSafetyKey);
+    if (typeof settings.antiSafetyAid === "string") setAntiSafetyAid(settings.antiSafetyAid);
+    if (typeof settings.emailPremium === "boolean") setEmailPremium(settings.emailPremium);
+    if (typeof settings.allowEmailFallback === "boolean") setAllowEmailFallback(settings.allowEmailFallback);
+    if (typeof settings.addToPanel === "boolean") setAddToPanel(settings.addToPanel);
+    if (typeof settings.openResults === "boolean") setOpenResults(settings.openResults);
+    if (typeof settings.hidePhoneNumber === "boolean") setHidePhoneNumber(settings.hidePhoneNumber);
+    if (typeof settings.hideOnlineStatus === "boolean") setHideOnlineStatus(settings.hideOnlineStatus);
+    if (typeof settings.setAvatar === "boolean") setSetAvatar(settings.setAvatar);
+    if (typeof settings.setUsername === "boolean") setSetUsername(settings.setUsername);
+    if (settings.avatarMode && ["emoji", "folder", "single", "generated"].includes(settings.avatarMode)) setAvatarMode(settings.avatarMode);
+    if (typeof settings.avatarPath === "string") setAvatarPath(settings.avatarPath);
+    if (settings.usernameMode && ["random", "from_list", "prefix_random"].includes(settings.usernameMode)) setUsernameMode(settings.usernameMode);
+    if (typeof settings.usernamePrefix === "string") setUsernamePrefix(settings.usernamePrefix);
+    if (typeof settings.usernameListPath === "string") setUsernameListPath(settings.usernameListPath);
+    if (typeof settings.manualLocale === "boolean") setManualLocale(settings.manualLocale);
+    if (settings.registrationLanguage === "ru" || settings.registrationLanguage === "en") setRegistrationLanguage(settings.registrationLanguage);
+    if (typeof settings.timezoneOffset === "string") setTimezoneOffset(settings.timezoneOffset);
+    if (typeof settings.smsTimeout === "string") setSmsTimeout(settings.smsTimeout);
+    if (typeof settings.stopOnPriceChange === "boolean") setStopOnPriceChange(settings.stopOnPriceChange);
+    if (typeof settings.minPrice === "string") setMinPrice(settings.minPrice);
+    if (typeof settings.maxPrice === "string") setMaxPrice(settings.maxPrice);
+    if (["same", "file", "random"].includes(settings.nameMode ?? "")) setNameMode(settings.nameMode as NameMode);
+    if (typeof settings.firstName === "string") setFirstName(settings.firstName);
+    if (typeof settings.lastName === "string") setLastName(settings.lastName);
+    if (typeof settings.namesFile === "string") setNamesFile(settings.namesFile);
+    if (typeof settings.rejectAppCode === "boolean") setRejectAppCode(settings.rejectAppCode);
+    if (typeof settings.concurrency === "string") setConcurrency(settings.concurrency);
+    if (typeof settings.pollInterval === "string") setPollInterval(settings.pollInterval);
+    if (typeof settings.failureStop === "boolean") setFailureStop(settings.failureStop);
+    if (typeof settings.failureLimit === "string") setFailureLimit(settings.failureLimit);
+  };
+
+  useEffect(() => {
+    void invoke<{ configured: boolean }>("registrar_settings_state")
+      .then((state) => setSettingsLock(state.configured ? "locked" : "setup"))
+      .catch(() => setSettingsLock("setup"));
+  }, []);
+
+  const unlockSettings = async () => {
+    setSettingsPasswordError("");
+    if (settingsLock === "setup" && registrarPassword !== passwordConfirmation) { setSettingsPasswordError(t("registrar.passwordMismatch")); return; }
+    try {
+      if (settingsLock === "setup") await invoke("registrar_settings_save", { password: registrarPassword, settings: storedSettings() });
+      else applyStoredSettings(await invoke<Partial<StoredSettings>>("registrar_settings_unlock", { password: registrarPassword }));
+      setSettingsLock("unlocked");
+      setPasswordConfirmation("");
+    } catch (error) { setSettingsPasswordError(error instanceof Error ? error.message : t("registrar.settingsUnlockFailed")); }
+  };
 
   useEffect(() => {
     let disposed = false;
@@ -121,7 +221,7 @@ export function RegistrarPage() {
     invoke<Provider[]>("registrar_sms_providers").then((items) => {
       if (disposed) return;
       setProviders(items);
-      setProvider(items[0]?.kind ?? "");
+      setProvider((current) => current || items[0]?.kind || "");
     }).catch(() => {
       if (!disposed) setRequestError("registrar.providersError");
     });
@@ -136,13 +236,13 @@ export function RegistrarPage() {
     setSelectedCountries([]);
     setRequestError("");
     setPending(false);
-  }, [provider, apiKey, customEndpoint, useSmsProxy, smsProxy]);
+  }, [provider, apiKey, customEndpoint]);
 
   const requestProviderData = async (catalog: boolean) => {
     const generation = ++requestGeneration.current;
     setPending(true);
     setRequestError("");
-    const config = { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: useSmsProxy ? smsProxy.trim() : null };
+    const config = { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: null };
     try {
       if (catalog) {
         const [loadedCountries, loadedPrices] = await Promise.all([
@@ -199,7 +299,7 @@ export function RegistrarPage() {
     setLaunching(true);
     setRequestError("");
     try {
-      const pairs = [{ api_id: 4, api_hash: "014b35b6184100b085b0d0572f9b5103" }];
+      const pairs = [{ api_id: 6, api_hash: "eb06d4abfb49dc3eeb1aeb98ae0f581e" }];
       const minimum = optionalPrice(minPrice);
       const maximum = optionalPrice(maxPrice);
       if (minimum !== null && maximum !== null && minimum > maximum) throw new Error("registrar.invalidPrice");
@@ -208,15 +308,18 @@ export function RegistrarPage() {
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
       if (!antiSafetyKey.trim() || !antiSafetyAid.trim()) throw new Error("registrar.pushCredentialsRequired");
-      if (useSmsProxy && !smsProxy.trim()) throw new Error("registrar.proxyRequired");
+      if (setAvatar && avatarMode !== "emoji" && !avatarPath) throw new Error("registrar.avatarRequired");
+      if (setUsername && usernameMode === "from_list" && !usernameListPath) throw new Error("registrar.usernameFileRequired");
+      if (manualLocale && (!Number.isInteger(Number(timezoneOffset)) || Number(timezoneOffset) < -12 || Number(timezoneOffset) > 14)) throw new Error("registrar.invalidTimezone");
+      if (failureStop && (!Number.isInteger(Number(failureLimit)) || Number(failureLimit) < 1)) throw new Error("registrar.invalidFailureLimit");
+      await invoke("registrar_settings_save", { password: registrarPassword, settings: storedSettings() });
       const identities: Identity[] = nameMode === "file"
         ? await invoke<Identity[]>("registrar_read_names", { path: namesFile })
         : [{ first_name: nameMode === "random" ? crypto.randomUUID().replace(/-/g, "").slice(0, 10) : firstName.trim(), last_name: lastName.trim() }];
       if (!identities.length || identities.some((identity) => !identity.first_name)) throw new Error("registrar.namesRequired");
       const attempts = Array.from({ length: Math.max(pairs.length, identities.length, 1) }, (_, index) => ({
         profile: {
-          ...pairs[index % pairs.length], device_model: "Android", system_version: "SDK 35",
-          app_version: "0", system_lang_code: navigator.language, lang_code: navigator.language.split("-")[0],
+          ...pairs[index % pairs.length], system_lang_code: navigator.language, lang_code: navigator.language.split("-")[0],
           timezone_offset_seconds: -new Date().getTimezoneOffset() * 60,
         },
         identity: identities[index % identities.length], proxy: null,
@@ -232,14 +335,19 @@ export function RegistrarPage() {
       }
       setLogs([]);
       const id = await invoke<string>("registrar_start", { config: {
-        sms_provider: { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: useSmsProxy ? smsProxy.trim() : null },
+        sms_provider: { kind: provider, api_key: apiKey, endpoint: customEndpoint || null, http_proxy: null },
         number_request: { country: selectedCountries[0], service: "telegram", operator: null, max_price: maximum },
         attempts, attempt_count: countMode === "count" ? quantity : null, random_names: nameMode === "random",
         countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
         min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
         two_fa_password: setTwoFa ? twoFaPassword : null, send_push: true,
         antisafety: { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() },
-        add_to_panel: addToPanel, open_results: openResults, concurrency: Number(concurrency),
+        email_premium: emailPremium,
+        allow_email_fallback: allowEmailFallback,
+        max_consecutive_failures: failureStop ? Number(failureLimit) : null,
+        add_to_panel: addToPanel, open_results: openResults, hide_phone_number: hidePhoneNumber, hide_online_status: hideOnlineStatus, set_avatar: setAvatar, set_username: setUsername, concurrency: Number(concurrency),
+        avatar_mode: avatarMode, avatar_path: avatarPath, username_mode: usernameMode, username_prefix: usernamePrefix, username_list_path: usernameListPath,
+        manual_locale: manualLocale, registration_language: registrationLanguage, timezone_offset_seconds: Number(timezoneOffset) * 3600,
         poll_interval_secs: Number(pollInterval), code_timeout_secs: Number(smsTimeout),
       } });
       taskId.current = id;
@@ -249,7 +357,8 @@ export function RegistrarPage() {
         failed: 0, finished: false, reason: "running", results_directory: "",
       });
     } catch (error) {
-      const key = error instanceof Error && error.message.startsWith("registrar.") ? error.message : "registrar.startFailed";
+      const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+      const key = message.startsWith("registrar.") ? message : "registrar.startFailed";
       setRequestError(key);
     } finally { setLaunching(false); }
   };
@@ -259,6 +368,22 @@ export function RegistrarPage() {
     setStopping(true);
     try { await invoke("registrar_stop", { taskId: taskId.current }); }
     catch { setStopping(false); setRequestError("registrar.stopFailed"); }
+  };
+
+  const requestStart = () => {
+    if (launchNoticeDismissed) void startTask();
+    else setLaunchNoticeOpen(true);
+  };
+
+  const selectProfileResource = async (kind: "avatar" | "username") => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const path = await open(kind === "avatar" && avatarMode === "folder"
+      ? { directory: true, multiple: false }
+      : { multiple: false, filters: [{ name: kind === "avatar" ? "Images" : "Text", extensions: kind === "avatar" ? ["jpg", "jpeg", "png", "webp"] : ["txt"] }] });
+    if (typeof path === "string") {
+      if (kind === "avatar") setAvatarPath(path);
+      else setUsernameListPath(path);
+    }
   };
 
   return (
@@ -347,23 +472,49 @@ export function RegistrarPage() {
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
             <ToggleRow checked={openResults} onChange={setOpenResults} label={t("registrar.openResults")} />
+            <ToggleRow checked={hidePhoneNumber} onChange={setHidePhoneNumber} label={t("registrar.hidePhoneNumber")} />
+            <ToggleRow checked={hideOnlineStatus} onChange={setHideOnlineStatus} label={t("registrar.hideOnlineStatus")} />
+            <ToggleRow checked={setAvatar} onChange={setSetAvatar} label={t("registrar.setAvatar")} />
+            {setAvatar && <div className="space-y-2 pl-7">
+              <select value={avatarMode} onChange={(event) => { setAvatarMode(event.target.value as AvatarMode); setAvatarPath(""); }} className={selectClass}>
+                <option value="folder">{t("registrar.avatarFolder")}</option>
+                <option value="single">{t("registrar.avatarSingle")}</option>
+                <option value="generated">{t("registrar.avatarGenerated")}</option>
+                <option value="emoji">{t("registrar.avatarEmoji")}</option>
+              </select>
+              {avatarMode !== "emoji" && avatarMode !== "generated" && <><button type="button" onClick={() => void selectProfileResource("avatar")} className="rounded-md border border-border px-3 py-2 text-sm">{t(avatarMode === "folder" ? "registrar.chooseFolder" : "registrar.chooseFile")}</button><p className="break-all text-xs text-muted-foreground">{avatarPath || t("registrar.noFile")}</p></>}
+              {avatarMode === "generated" && <p className="text-xs text-muted-foreground">{t("registrar.avatarGeneratedHint")}</p>}
+            </div>}
+            <ToggleRow checked={setUsername} onChange={setSetUsername} label={t("registrar.setUsername")} />
+            {setUsername && <div className="space-y-2 pl-7">
+              <select value={usernameMode} onChange={(event) => setUsernameMode(event.target.value as UsernameMode)} className={selectClass}>
+                <option value="random">{t("accountActions.usernameRandom")}</option>
+                <option value="from_list">{t("accountActions.usernameFromList")}</option>
+                <option value="prefix_random">{t("accountActions.usernamePrefixRandom")}</option>
+              </select>
+              {usernameMode === "prefix_random" && <input value={usernamePrefix} onChange={(event) => setUsernamePrefix(event.target.value)} className={inputClass} placeholder={t("accountActions.prefixPlaceholder")} />}
+              {usernameMode === "from_list" && <><button type="button" onClick={() => void selectProfileResource("username")} className="rounded-md border border-border px-3 py-2 text-sm">{t("registrar.chooseFile")}</button><p className="break-all text-xs text-muted-foreground">{usernameListPath || t("registrar.noFile")}</p><p className="text-xs text-muted-foreground">{t("registrar.usernameFileHint")}</p></>}
+            </div>}
             <ToggleRow checked={rejectAppCode} onChange={setRejectAppCode} label={t("registrar.rejectAppCode")} />
           </div>
         </Section>
 
         <Section icon={Smartphone} title={t("registrar.antiSafety")}>
-          <p className="text-xs text-muted-foreground">{t("registrar.antiSafetyHint")}</p>
+          <p className="-mt-2 text-xs text-muted-foreground">{t("registrar.antiSafetyHint")}</p>
           <div className="mt-4 grid gap-4">
             <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
             <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
-            <p className="rounded-md border border-border bg-background/40 px-3 py-2 text-xs text-muted-foreground">
-              {t("registrar.challengeHint")}
-            </p>
+            <div className="space-y-2">
+              <div className="flex justify-between text-xs text-muted-foreground"><span>Basic</span><span>Premium</span></div>
+              <input aria-label={t("registrar.emailPremium")} type="range" min="0" max="1" step="1" value={emailPremium ? 1 : 0} onChange={(event) => setEmailPremium(event.target.value === "1")} className="h-3 w-full cursor-pointer appearance-none rounded-full bg-muted accent-primary [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary" />
+              <ToggleRow checked={allowEmailFallback} onChange={setAllowEmailFallback} label={t("registrar.emailFallback")} />
+            </div>
+            <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="w-fit rounded-md border border-border bg-background px-3 py-2 text-sm hover:border-primary/50">{t("registrar.whatIsThis")}</button>
           </div>
         </Section>
       </div>
 
-      <Section icon={Smartphone} title={t("registrar.profileSection")}>
+      <Section icon={Smartphone} title={t("registrar.namesSection")} headingClassName="mb-3">
         <div className="grid gap-6 xl:grid-cols-2">
           <div>
             <label className="text-sm font-medium">{t("registrar.names")}</label>
@@ -382,22 +533,33 @@ export function RegistrarPage() {
       <div className="grid gap-6 xl:grid-cols-2">
         <Section icon={CircleHelp} title={t("registrar.priceSection")}>
           <ToggleRow checked={stopOnPriceChange} onChange={setStopOnPriceChange} label={t("registrar.stopOnPriceChange")} />
-          <div className="mt-4 grid grid-cols-2 gap-4">
+          {stopOnPriceChange && <div className="mt-4 grid grid-cols-2 gap-4">
             <Field label={t("registrar.minPrice")}><input value={minPrice} onChange={(event) => setMinPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
             <Field label={t("registrar.maxPrice")}><input value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
-          </div>
+          </div>}
         </Section>
 
         <Section icon={Smartphone} title={t("registrar.proxySection")}>
-          <ToggleRow checked={useSmsProxy} onChange={setUseSmsProxy} label={t("registrar.useSmsProxy")} />
-          {useSmsProxy && <Field label={t("registrar.proxy")} hint="socks5://user:password@host:port"><textarea value={smsProxy} onChange={(event) => setSmsProxy(event.target.value)} rows={3} className={`${textareaClass} mt-3`} placeholder="socks5://127.0.0.1:1080" /></Field>}
+          <p className="text-xs text-muted-foreground">{t("registrar.randomSmsProxyHint")}</p>
         </Section>
       </div>
       <Section icon={CircleHelp} title={t("registrar.execution")}>
-        <div className="grid gap-4 md:grid-cols-2">
-          <Field label={t("common.threads")} hint={t("registrar.concurrencyHint")}><input type="number" min="1" max="20" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className={inputClass}/></Field>
-          <Field label={t("registrar.pollInterval")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
+        <div className="grid gap-4 md:grid-cols-3">
+          <Field className="flex h-full flex-col" label={t("common.threads")} hint={t("registrar.concurrencyHint")}><input type="number" min="1" max="100" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className={inputClass}/></Field>
+          <Field className="flex h-full flex-col" label={t("registrar.pollInterval")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
+          <Field className="flex h-full flex-col" label={t("registrar.failureLimit")}>
+            <select value={failureStop ? "limit" : "never"} onChange={(event) => setFailureStop(event.target.value === "limit")} className={selectClass}>
+              <option value="never">{t("registrar.neverStop")}</option>
+              <option value="limit">{t("registrar.stopAtFailures")}</option>
+            </select>
+            {failureStop && <input type="number" min="1" value={failureLimit} onChange={(event) => setFailureLimit(event.target.value)} className={`${inputClass} mt-2`} placeholder="1" />}
+          </Field>
         </div>
+      </Section>
+      <Section icon={Smartphone} title={t("registrar.registrationLocale")}>
+        <p className="text-xs text-muted-foreground">{t("registrar.autoLocaleHint")}</p>
+        <div className="mt-4"><ToggleRow checked={manualLocale} onChange={setManualLocale} label={t("registrar.manualLocale")} /></div>
+        {manualLocale && <div className="mt-4 grid gap-4 md:grid-cols-2"><Field label={t("registrar.registrationLanguage")}><select value={registrationLanguage} onChange={(event) => setRegistrationLanguage(event.target.value as "ru" | "en")} className={selectClass}><option value="en">English</option><option value="ru">Русский</option></select></Field><Field label={t("registrar.timezone")}><select value={timezoneOffset} onChange={(event) => setTimezoneOffset(event.target.value)} className={selectClass}>{Array.from({ length: 27 }, (_, index) => index - 12).map((offset) => <option key={offset} value={offset}>{`UTC${offset >= 0 ? "+" : ""}${offset}`}</option>)}</select></Field></div>}
       </Section>
       </fieldset>
 
@@ -409,7 +571,7 @@ export function RegistrarPage() {
           {requestError && <p role="alert" className="mt-2 text-sm text-destructive">{t(requestError)}</p>}
         </div>
         {running ? <button type="button" disabled={stopping} onClick={() => void stopTask()} className="flex items-center gap-2 rounded-md border border-destructive/50 px-4 py-2 text-sm disabled:opacity-50"><Square className="h-4 w-4"/>{t(stopping ? "registrar.stopping" : "common.stop")}</button>
-          : <button type="button" disabled={launching || pending || !listenersReady || !provider || !apiKey.trim()} onClick={() => void startTask()} className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"><Play className="h-4 w-4" />{t(launching ? "registrar.launching" : "registrar.start")}</button>}
+          : <button type="button" disabled={launching || pending || !listenersReady || !provider || !apiKey.trim()} onClick={requestStart} className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"><Play className="h-4 w-4" />{t(launching ? "registrar.launching" : "registrar.start")}</button>}
       </div>
       {logs.length > 0 && <pre aria-live="polite" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-xs">{logs.map((line) => {
         const split = line.indexOf("] ");
@@ -418,20 +580,22 @@ export function RegistrarPage() {
         const translated = t(key);
         return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
       }).join("\n")}</pre>}
+      {antiSafetyHelpOpen && <RegistrarModal title="Placeholder" onClose={() => setAntiSafetyHelpOpen(false)}><p>Placeholder</p></RegistrarModal>}
+      {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t("registrar.settingsPasswordTitle")} onClose={() => {}}><p>{t("registrar.settingsPasswordWarning")}</p><div className="mt-4 space-y-3"><input value={registrarPassword} onChange={(event) => setRegistrarPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPassword")} />{settingsLock === "setup" && <input value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPasswordConfirm")} />}{settingsPasswordError && <p className="text-sm text-destructive">{settingsPasswordError}</p>}<button type="button" onClick={() => void unlockSettings()} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary">{settingsLock === "setup" ? t("registrar.settingsPasswordCreate") : t("registrar.settingsPasswordUnlock")}</button></div></RegistrarModal>}
+      {launchNoticeOpen && <RegistrarModal title="Placeholder" onClose={() => {}}><div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} className="max-h-60 overflow-y-auto whitespace-pre-wrap pr-2">{"Placeholder\n\n".repeat(40)}</div><div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary disabled:opacity-50">{t("registrar.understood")}</button></div></RegistrarModal>}
     </div>
   );
 }
 
 const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:border-primary/50";
 const selectClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:border-primary/50";
-const textareaClass = "w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none transition focus:border-primary/50 resize-y";
 
-function Section({ icon: Icon, title, children }: { icon: typeof WalletCards; title: string; children: React.ReactNode }) {
-  return <section className="rounded-xl border border-border bg-card p-6"><div className="mb-5 flex items-center gap-2"><Icon className="h-4 w-4 text-primary" /><h2 className="text-base font-semibold">{title}</h2></div>{children}</section>;
+function Section({ icon: Icon, title, children, headingClassName = "mb-5" }: { icon: typeof WalletCards; title: string; children: React.ReactNode; headingClassName?: string }) {
+  return <section className="rounded-xl border border-border bg-card p-6"><div className={`${headingClassName} flex items-center gap-2`}><Icon className="h-4 w-4 text-primary" /><h2 className="text-base font-semibold">{title}</h2></div>{children}</section>;
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return <div><label className="text-sm font-medium">{label}</label>{hint && <p className="mb-1.5 mt-0.5 text-xs text-muted-foreground">{hint}</p>}<div className={hint ? "" : "mt-1.5"}>{children}</div></div>;
+function Field({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
+  return <div className={className}><label className="text-sm font-medium">{label}</label>{hint && <p className="mb-1.5 mt-0.5 text-xs text-muted-foreground">{hint}</p>}<div className={hint ? "" : "mt-auto pt-1.5"}>{children}</div></div>;
 }
 
 function ToggleRow({ checked, onChange, label, hint }: { checked: boolean; onChange: (checked: boolean) => void; label: string; hint?: string }) {
@@ -448,4 +612,8 @@ function Choice({ active, onClick, label }: { active: boolean; onClick: () => vo
 
 function ProviderButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {
   return <button type="button" disabled={disabled} onClick={onClick} className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm font-medium text-muted-foreground hover:border-primary/50 hover:text-foreground disabled:opacity-50"><RefreshCw className="h-4 w-4" />{label}</button>;
+}
+
+function RegistrarModal({ title, children, onClose }: { title: string; children: React.ReactNode; onClose: () => void }) {
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}><div className="w-full max-w-3xl rounded-xl border border-border bg-card p-6 shadow-xl"><h2 className="text-lg font-semibold">{title}</h2><div className="mt-4 text-sm text-muted-foreground">{children}</div></div></div>;
 }

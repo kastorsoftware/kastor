@@ -928,10 +928,16 @@ pub struct SentCode {
 
 pub fn parse_auth_sent_code(data: &[u8]) -> Result<SentCode, String> {
     let inner = tl_gen::unwrap_rpc(data)?;
+    parse_auth_sent_code_inner(&inner)
+}
+
+pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlAuthSentCode>(&inner)?;
     match obj {
         tl_gen::TlAuthSentCode::Success { .. } => Err("AUTH_ALREADY_AUTHORIZED".into()),
-        tl_gen::TlAuthSentCode::PaymentRequired { .. } => Err("AUTH_PAYMENT_REQUIRED".into()),
+        tl_gen::TlAuthSentCode::PaymentRequired { premium_days, .. } => {
+            Err(format!("AUTH_PAYMENT_REQUIRED_{premium_days}_DAYS"))
+        }
         tl_gen::TlAuthSentCode::SentCode { r#type, phone_code_hash, .. } => {
             let code_type = match tl_gen::deserialize_tl_obj::<tl_gen::TlAuthSentCodeType>(&r#type) {
                 Ok(t) => match t {

@@ -175,6 +175,15 @@ impl SmsProvider for OnlineSimProvider {
 
     fn acquire_number(&self, request: &NumberRequest) -> Result<Activation, SmsError> {
         validate_request(request)?;
+        // getNum has no server-side price ceiling; a tariff lookup cannot make
+        // the later purchase atomic when prices change between requests.
+        if request.max_price.is_some() {
+            return Err(SmsError::new(
+                PROVIDER_NAME,
+                SmsErrorKind::Unsupported,
+                "OnlineSIM cannot enforce a maximum purchase price",
+            ));
+        }
         let body = self.request(
             "getNum",
             &[
@@ -404,5 +413,17 @@ mod tests {
             response_error("ERROR_NO_NUMBERS").kind,
             SmsErrorKind::NoNumbers
         );
+    }
+
+    #[test]
+    fn rejects_purchase_with_unenforceable_price_limit() {
+        let provider = OnlineSimProvider::new("test-key").unwrap();
+        let result = provider.acquire_number(&NumberRequest {
+            country: "1".into(),
+            service: "telegram".into(),
+            operator: None,
+            max_price: Some(1.0),
+        });
+        assert_eq!(result.unwrap_err().kind, SmsErrorKind::Unsupported);
     }
 }

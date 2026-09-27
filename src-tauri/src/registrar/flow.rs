@@ -37,7 +37,13 @@ pub struct RegistrationCodeRequest {
     #[serde(default)]
     pub antisafety: Option<AntiSafetyConfig>,
     #[serde(skip)]
+    pub antisafety_proxy: Option<String>,
+    #[serde(skip)]
     pub cancellation: Option<Arc<AtomicBool>>,
+    #[serde(skip)]
+    pub log_target: Option<tauri::AppHandle>,
+    #[serde(skip)]
+    pub log_prefix: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,7 +103,10 @@ impl RegistrationSession {
                 request.proxy.as_ref(),
                 &request.code_settings,
                 request.antisafety.as_ref(),
+                request.antisafety_proxy.as_deref(),
                 request.cancellation.as_deref(),
+                request.log_target.as_ref(),
+                &request.log_prefix,
             )
             .await
             {
@@ -179,6 +188,49 @@ impl RegistrationSession {
         Ok(())
     }
 
+    pub async fn hide_phone_number(&mut self) -> Result<(), String> {
+        self.set_privacy(crate::mtproto::tl_gen::INPUT_PRIVACY_KEY_PHONE_NUMBER)
+            .await
+    }
+
+    pub async fn set_random_avatar(&mut self) -> Result<(), String> {
+        crate::accounts::actions::set_random_emoji_avatar(&mut self.client).await
+    }
+
+    pub async fn set_avatar(&mut self, mode: &str, path: &str) -> Result<(), String> {
+        if mode == "emoji" { return self.set_random_avatar().await; }
+        if mode == "generated" { return crate::accounts::actions::set_generated_face_avatar(&mut self.client).await; }
+        let photo = if mode == "folder" {
+            let photos = crate::accounts::actions::photos_from_folder(path);
+            photos.get(rand::random::<usize>() % photos.len().max(1)).ok_or("avatar folder is empty")?.clone()
+        } else { path.to_string() };
+        crate::accounts::actions::set_photo_from_path(&mut self.client, &photo).await
+    }
+
+    pub async fn set_username(&mut self, account_id: &str, mode: &str, prefix: &str, value: Option<&str>) -> Result<(), String> {
+        let username = crate::accounts::actions::set_username(&mut self.client, mode, prefix, value).await?;
+        let path = self.storage().json_path(account_id);
+        let mut json = AccountJson::from_file(&path)?;
+        json.username = username;
+        json.to_file(&path)
+    }
+
+    pub async fn hide_online_status(&mut self) -> Result<(), String> {
+        self.set_privacy(crate::mtproto::tl_gen::INPUT_PRIVACY_KEY_STATUS_TIMESTAMP)
+            .await
+    }
+
+    async fn set_privacy(&mut self, key_constructor: u32) -> Result<(), String> {
+        let key = crate::mtproto::tl_gen::serialize_bare_ctor(key_constructor);
+        let rule = crate::mtproto::tl_gen::serialize_bare_ctor(
+            crate::mtproto::tl_gen::INPUT_PRIVACY_VALUE_DISALLOW_ALL,
+        );
+        self.client
+            .invoke(&crate::mtproto::tl_gen::build_account_setPrivacy(&key, &[&rule]))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn complete(
         &mut self,
         code: &str,
@@ -234,6 +286,50 @@ impl RegistrationSession {
         Ok(sent_code)
     }
 
+    pub async fn request_login_email_verification(&mut self, email: &str) -> Result<(), String> {
+        if email.trim().is_empty() || email.len() > 254 || email.contains(['\r', '\n', '\0']) {
+            return Err("invalid login email".to_string());
+        }
+        let purpose = crate::mtproto::tl_gen::serialize_emailVerifyPurposeLoginSetup(
+            &self.phone,
+            &self.phone_code_hash,
+        );
+        let request = crate::mtproto::tl_gen::build_account_sendVerifyEmailCode(&purpose, email);
+        let response = super::diagnostics::observe(
+            "send_verify_email_code",
+            self.client.invoke(&request).await,
+        )?;
+        super::diagnostics::observe(
+            "send_verify_email_code_parse",
+            crate::mtproto::tl_gen::parse_account_sendVerifyEmailCode(&response),
+        )?;
+        Ok(())
+    }
+
+    pub async fn confirm_login_email_verification(&mut self, code: &str) -> Result<SentCode, String> {
+        if code.trim().is_empty() || code.len() > 64 || code.contains(['\r', '\n', '\0']) {
+            return Err("invalid email verification code".to_string());
+        }
+        let purpose = crate::mtproto::tl_gen::serialize_emailVerifyPurposeLoginSetup(
+            &self.phone,
+            &self.phone_code_hash,
+        );
+        let verification = crate::mtproto::tl_gen::serialize_emailVerificationCode(code);
+        let request = crate::mtproto::tl_gen::build_account_verifyEmail(&purpose, &verification);
+        let response = super::diagnostics::observe("verify_email", self.client.invoke(&request).await)?;
+        match super::diagnostics::observe(
+            "verify_email_parse",
+            crate::mtproto::tl_gen::parse_account_verifyEmail(&response),
+        )? {
+            crate::mtproto::tl_gen::TlAccountEmailVerified::Login { sent_code, .. } => {
+                tl::parse_auth_sent_code_inner(&sent_code)
+            }
+            crate::mtproto::tl_gen::TlAccountEmailVerified::EmailVerified { .. } => {
+                Err("Telegram did not return a login verification code".to_string())
+            }
+        }
+    }
+
     async fn sign_up(
         &mut self,
         identity: &RegistrationIdentity,
@@ -244,13 +340,50 @@ impl RegistrationSession {
             &identity.first_name,
             &identity.last_name,
         );
-        let response =
-            super::diagnostics::observe("sign_up_invoke", self.client.invoke(&request).await)?;
-        let user =
-            super::diagnostics::observe("sign_up_parse", tl::parse_auth_authorization(&response))?;
+        let result = match super::diagnostics::observe("sign_up_invoke", self.client.invoke(&request).await) {
+            Ok(response) => super::diagnostics::observe(
+                "sign_up_parse",
+                tl::parse_auth_authorization(&response),
+            ),
+            Err(error) => Err(error),
+        };
+        let user = match result {
+            Ok(user) => user,
+            Err(error) => self.recover_registered_user(&error).await?,
+        };
         self.server_registered = true;
         super::diagnostics::observe("save_account", self.save(&user))
             .map(|account_id| RegistrationOutcome::Registered { account_id })
+    }
+
+    async fn recover_registered_user(&mut self, original_error: &str) -> Result<AuthorizedUser, String> {
+        for _ in 0..3 {
+            let result = self.client.get_me(
+                self.profile.api_id,
+                &self.profile.device_model,
+                &self.profile.system_version,
+                &self.profile.app_version,
+                &self.profile.system_lang_code,
+                &self.profile.lang_code,
+            ).await;
+            match result {
+                Ok(user) if is_matching_self_user(user.id, &user.phone, &self.phone) => {
+                        dbg_log!("registrar::sign_up recovered authorized session after ambiguous response");
+                        return Ok(AuthorizedUser {
+                            user_id: user.id,
+                            phone: user.phone,
+                            first_name: user.first_name,
+                            last_name: user.last_name,
+                            username: user.username,
+                            is_premium: user.premium,
+                        });
+                }
+                Ok(_) => break,
+                Err(error) if !crate::mtproto::client::is_network_error(&error) => break,
+                Err(_) => tokio::time::sleep(Duration::from_secs(2)).await,
+            }
+        }
+        Err(original_error.to_string())
     }
 
     fn save(&self, user: &AuthorizedUser) -> Result<String, String> {
@@ -288,7 +421,10 @@ async fn start_on_dc(
     proxy: Option<&ProxyConfig>,
     settings: &AuthCodeSettings,
     antisafety: Option<&AntiSafetyConfig>,
+    antisafety_proxy: Option<&str>,
     cancellation: Option<&AtomicBool>,
+    log_target: Option<&tauri::AppHandle>,
+    log_prefix: &str,
 ) -> Result<(MtpClient, SentCode), String> {
     let address = dc_address(dc_id)?;
     dbg_log!(
@@ -298,15 +434,13 @@ async fn start_on_dc(
         proxy.is_some()
     );
     dbg_log!("registrar::send_code settings allow_app_hash={} allow_missed_call={} firebase_token_present={} sandbox={:?}", settings.allow_app_hash, settings.allow_missed_call, settings.firebase_token.as_ref().is_some_and(|token| !token.is_empty()), settings.firebase_app_sandbox);
-    let mut transport =
-        super::diagnostics::observe("connect", MtpTransport::connect(address, proxy).await)?;
-    let dh = super::diagnostics::observe(
-        "dh",
-        perform_dh(&mut transport)
-            .await
-            .map_err(|error| error.to_string()),
-    )?;
+    let (transport, dh) = connect_and_auth(address, proxy, cancellation).await?;
     let mut client = MtpClient::from_transport(transport, dh.auth_key, dh.server_salt, address);
+    client.set_proxy(proxy.cloned());
+    if let Some(handle) = log_target {
+        client.set_log_target("registrar-log", handle.clone());
+        client.set_log_prefix(log_prefix);
+    }
     let inner =
         tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
     let response = match invoke_send_code(&mut client, &inner, profile).await {
@@ -320,7 +454,7 @@ async fn start_on_dc(
                 "registrar::send_code dc={} recaptcha_challenge_received",
                 dc_id
             );
-            let token = solve_recaptcha(config, challenge, cancellation).await?;
+            let token = solve_recaptcha(config, challenge, antisafety_proxy, cancellation).await?;
             let protected_inner = tl::wrap_with_recaptcha(&token, &inner);
             super::diagnostics::observe(
                 "send_code_recaptcha_invoke",
@@ -346,6 +480,35 @@ async fn start_on_dc(
     Ok((client, sent_code))
 }
 
+async fn connect_and_auth(
+    address: &str,
+    proxy: Option<&ProxyConfig>,
+    cancellation: Option<&AtomicBool>,
+) -> Result<(MtpTransport, crate::mtproto::auth::DhResult), String> {
+    for attempt in 0..3 {
+        if is_cancelled(cancellation) {
+            return Err("stopped".to_string());
+        }
+        let result = async {
+            let mut transport = super::diagnostics::observe(
+                "connect",
+                MtpTransport::connect(address, proxy).await,
+            )?;
+            let dh = super::diagnostics::observe("dh", perform_dh(&mut transport).await)?;
+            Ok::<_, String>((transport, dh))
+        }
+        .await;
+        match result {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < 2 && crate::mtproto::is_network_error(&error) => {
+                tokio::time::sleep(Duration::from_secs(attempt + 1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("bounded connection attempts return a result")
+}
+
 async fn invoke_send_code(
     client: &mut MtpClient,
     inner: &[u8],
@@ -366,12 +529,13 @@ async fn invoke_send_code(
 async fn solve_recaptcha(
     config: &AntiSafetyConfig,
     challenge: RecaptchaChallenge,
+    http_proxy: Option<&str>,
     cancellation: Option<&AtomicBool>,
 ) -> Result<String, String> {
     if is_cancelled(cancellation) {
         return Err("stopped".to_string());
     }
-    let client = AntiSafetyClient::new(config.clone())?;
+    let client = AntiSafetyClient::new_with_proxy(config.clone(), http_proxy)?;
     let mut state = RecaptchaState::Creating;
     dbg_log!("registrar::recaptcha state={state:?}");
     let task_client = client.clone();
@@ -470,6 +634,10 @@ fn normalize_phone(phone: &str) -> Result<String, String> {
     Ok(phone)
 }
 
+fn is_matching_self_user(user_id: i64, phone: &str, expected_phone: &str) -> bool {
+    user_id > 0 && normalize_phone(phone).ok().as_deref() == Some(expected_phone)
+}
+
 fn validate_code(code: &str) -> Result<(), String> {
     if code.trim().is_empty() || code.len() > 256 || code.chars().any(char::is_control) {
         return Err("invalid verification code".to_string());
@@ -505,6 +673,13 @@ mod tests {
     }
 
     #[test]
+    fn only_recovers_registration_for_the_expected_phone() {
+        assert!(is_matching_self_user(42, "+1 (202) 555-0100", "12025550100"));
+        assert!(!is_matching_self_user(0, "+1 (202) 555-0100", "12025550100"));
+        assert!(!is_matching_self_user(42, "+1 (202) 555-0101", "12025550100"));
+    }
+
+    #[test]
     fn parses_recaptcha_challenge_without_retaining_rpc_prefix() {
         assert_eq!(
             parse_recaptcha_challenge("RPC 400: RECAPTCHA_CHECK_login__site-key"),
@@ -514,6 +689,9 @@ mod tests {
             })
         );
         assert_eq!(parse_recaptcha_challenge("RECAPTCHA_CHECK_login"), None);
-        assert_eq!(parse_recaptcha_challenge("RECAPTCHA_CHECK___site-key"), None);
+        assert_eq!(
+            parse_recaptcha_challenge("RECAPTCHA_CHECK___site-key"),
+            None
+        );
     }
 }

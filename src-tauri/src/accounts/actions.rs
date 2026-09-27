@@ -1134,6 +1134,55 @@ fn random_background_colors() -> Vec<i32> {
     palettes[rand::random::<usize>() % palettes.len()].to_vec()
 }
 
+pub(crate) async fn set_random_emoji_avatar(client: &mut MtpClient) -> Result<(), String> {
+    let data = client.invoke(&tl::build_get_default_profile_photo_emojis()).await?;
+    let ids = tl::parse_emoji_list(&data)?;
+    if ids.is_empty() { return Err("no default profile photo emojis".to_string()); }
+    let mut last_error = None;
+    for _ in 0..3 {
+        let emoji_id = ids[rand::random::<usize>() % ids.len()];
+        let colors = random_background_colors();
+        match client.invoke(&tl::build_photos_upload_emoji_avatar(emoji_id, &colors)).await {
+            Ok(_) => return Ok(()),
+            Err(error) if error.contains("EMOJI_MARKUP_INVALID") => last_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "could not set emoji avatar".to_string()))
+}
+
+pub(crate) async fn set_username(client: &mut MtpClient, mode: &str, prefix: &str, from_list: Option<&str>) -> Result<String, String> {
+    let mut last_error = None;
+    for _ in 0..if mode == "from_list" { 1 } else { 5 } {
+        let username = match mode {
+            "from_list" => from_list.ok_or("username list is empty")?.to_string(),
+            "prefix_random" => {
+                let suffix_len = 32usize.saturating_sub(prefix.chars().count()).saturating_sub(1).min(6).max(3);
+                let suffix: String = (0..suffix_len).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect();
+                format!("{prefix}_{suffix}")
+            }
+            _ => {
+                let length = 5 + rand::random::<usize>() % 4;
+                (0..length).map(|_| (b'a' + rand::random::<u8>() % 26) as char).collect()
+            }
+        };
+        match client.invoke(&tl::build_account_update_username(&username)).await {
+            Ok(_) => return Ok(username),
+            Err(error) if error.contains("USERNAME_OCCUPIED") || error.contains("USERNAME_INVALID") || error.contains("USERNAME_PURCHASE_AVAILABLE") => last_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "could not set username".to_string()))
+}
+
+pub(crate) async fn set_photo_from_path(client: &mut MtpClient, path: &str) -> Result<(), String> {
+    upload_and_set_photo(client, path).await
+}
+
+pub(crate) fn photos_from_folder(folder: &str) -> Vec<String> {
+    load_photo_paths(folder)
+}
+
 
 async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), String> {
     let data = std::fs::read(path).map_err(|e| format!("read file: {e}"))?;
@@ -1313,16 +1362,23 @@ fn serialize_input_privacy_value_disallow_all() -> Vec<u8> {
 }
 
 
-fn download_random_face() -> Result<Vec<u8>, String> {
+pub(crate) fn download_random_face() -> Result<Vec<u8>, String> {
     let resp = ureq::get("https://thispersondoesnotexist.com/")
         .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .call()
         .map_err(|e| format!("HTTP: {e}"))?;
     let body = resp.into_body().read_to_vec().map_err(|e| format!("read body: {e}"))?;
-    if body.len() < 1000 {
+    if body.len() < 1000 || !body.starts_with(&[0xff, 0xd8, 0xff]) {
         return Err(t("actions_response_too_small"));
     }
     Ok(body)
+}
+
+pub(crate) async fn set_generated_face_avatar(client: &mut MtpClient) -> Result<(), String> {
+    let data = tokio::task::spawn_blocking(download_random_face)
+        .await
+        .map_err(|_| "face image worker failed" )??;
+    upload_and_set_photo_bytes(client, &data, "thispersondoesnotexist.jpg").await
 }
 
 async fn upload_and_set_photo_bytes(client: &mut MtpClient, data: &[u8], filename: &str) -> Result<(), String> {

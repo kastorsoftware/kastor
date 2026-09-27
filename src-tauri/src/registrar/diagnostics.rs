@@ -34,6 +34,10 @@ pub(crate) fn error_summary(error: &str) -> String {
         "other"
     };
     let mut summary = format!("category={category}");
+    let remote = remote_code(error);
+    if remote != "unrecognized" {
+        summary.push_str(&format!(" code={remote}"));
+    }
     if let Some(start) = error
         .find("0x")
         .filter(|_| lower.contains("constructor") || lower.contains("ctor"))

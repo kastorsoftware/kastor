@@ -8,6 +8,7 @@ use crate::registrar::profile::{ProfileGeneratorConfig, RegistrationProfile};
 use crate::registrar::sms::{
     create_provider, SmsCountry, SmsOperator, SmsPrice, SmsProviderConfig, SmsProviderKind,
 };
+use crate::proxy::ProxyList;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,7 +309,7 @@ pub async fn registrar_sms_prices(
 }
 
 async fn sms_catalog_call<T, F>(
-    config: SmsProviderConfig,
+    mut config: SmsProviderConfig,
     operation_name: &'static str,
     operation: F,
 ) -> Result<T, String>
@@ -320,6 +321,7 @@ where
         + Send
         + 'static,
 {
+    config.http_proxy = ProxyList::load().get_random().map(crate::proxy::ProxyConfig::to_string_repr);
     let kind = config.kind;
     dbg_log!(
         "registrar::catalog provider={:?} operation={} started",

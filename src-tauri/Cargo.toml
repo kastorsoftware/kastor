@@ -1,6 +1,6 @@
 [package]
 name = "kastor"
-version = "1.0.3"
+version = "1.0.9"
 edition = "2021"
 
 [build-dependencies]
@@ -20,6 +20,8 @@ base64 = "0.22"
 uuid = { version = "1", features = ["v4"], default-features = false }
 dirs = "5"
 aes = "0.8"
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
 sha2 = "0.10"
 sha1 = "0.10"
 hmac = "0.12"

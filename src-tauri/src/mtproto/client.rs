@@ -29,7 +29,9 @@ const NETWORK_ERRORS: &[&str] = &[
     "read data failed",
     "write failed",
     "flush failed",
-    "early eof",
+    "eof",
+    "connect (5 attempts)",
+    "reconnect:",
     "connection reset",
     "broken pipe",
     "os error 10053",
@@ -692,4 +694,17 @@ fn extract_wait_from_error(msg: &str) -> Option<u64> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn treats_eof_and_failed_reconnect_as_network_errors() {
+        assert!(is_network_error("read length failed: early eof"));
+        assert!(is_network_error("unexpected EOF"));
+        assert!(is_network_error("connect (5 attempts): reconnect: proxy unavailable"));
+        assert!(!is_network_error("RPC 400: PHONE_CODE_INVALID"));
+    }
 }

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+use rand::seq::SliceRandom;
 use tauri::{Emitter, Manager};
 
 use crate::accounts::storage::AccountStorage;
@@ -15,10 +16,10 @@ use crate::registrar::db::{registrar_directory, RegistrarDatabase, RegistrationR
 use crate::registrar::flow::{
     RegistrationCodeRequest, RegistrationIdentity, RegistrationOutcome, RegistrationSession,
 };
-use crate::registrar::profile::RegistrationProfile;
+use crate::registrar::profile::{fetch_latest_android_versions, RegistrationProfile};
 use crate::registrar::sms::{
     create_provider, ActivationAction, ActivationStatus, NumberRequest, SmsErrorKind,
-    SmsProviderConfig,
+    SmsProviderConfig, SmsProviderKind,
 };
 
 const MAX_ATTEMPTS: usize = 100_000;
@@ -66,12 +67,42 @@ pub struct RegistrarTaskConfig {
     pub two_fa_password: Option<String>,
     #[serde(default)]
     pub antisafety: Option<AntiSafetyConfig>,
+    #[serde(default)]
+    pub email_premium: bool,
+    #[serde(default)]
+    pub allow_email_fallback: bool,
+    #[serde(default)]
+    pub max_consecutive_failures: Option<usize>,
     #[serde(default = "yes")]
     pub send_push: bool,
     #[serde(default = "yes")]
     pub add_to_panel: bool,
     #[serde(default)]
     pub open_results: bool,
+    #[serde(default)]
+    pub hide_phone_number: bool,
+    #[serde(default)]
+    pub hide_online_status: bool,
+    #[serde(default)]
+    pub set_avatar: bool,
+    #[serde(default = "default_avatar_mode")]
+    pub avatar_mode: String,
+    #[serde(default)]
+    pub avatar_path: String,
+    #[serde(default)]
+    pub set_username: bool,
+    #[serde(default = "default_username_mode")]
+    pub username_mode: String,
+    #[serde(default)]
+    pub username_prefix: String,
+    #[serde(default)]
+    pub username_list_path: String,
+    #[serde(default)]
+    pub manual_locale: bool,
+    #[serde(default = "default_registration_language")]
+    pub registration_language: String,
+    #[serde(default)]
+    pub timezone_offset_seconds: i32,
 }
 
 fn one() -> usize {
@@ -81,11 +112,17 @@ fn yes() -> bool {
     true
 }
 fn poll_interval() -> u64 {
-    5
+    3
 }
 fn code_timeout() -> u64 {
     300
 }
+fn default_avatar_mode() -> String { "emoji".to_string() }
+fn default_username_mode() -> String { "random".to_string() }
+fn default_registration_language() -> String { "en".to_string() }
+
+#[derive(Clone)]
+struct ProxyLocale { language: String, timezone_offset_seconds: i32 }
 
 impl RegistrarTaskConfig {
     fn validate(&self) -> Result<(), String> {
@@ -98,16 +135,22 @@ impl RegistrarTaskConfig {
         {
             return Err("invalid account count".into());
         }
-        if !(1..=20).contains(&self.concurrency)
+        if !(1..=100).contains(&self.concurrency)
             || !(2..=60).contains(&self.poll_interval_secs)
             || !(30..=900).contains(&self.code_timeout_secs)
         {
             return Err("invalid concurrency, polling interval or SMS timeout".into());
         }
+        if self
+            .max_consecutive_failures
+            .is_some_and(|count| count == 0 || count > MAX_ATTEMPTS)
+        {
+            return Err("invalid consecutive failure limit".into());
+        }
         if self.number_request.country.trim().is_empty()
             || !matches!(
                 self.number_request.service.to_lowercase().as_str(),
-                "tg" | "telegram"
+                "tg" | "tgs" | "telegram"
             )
             || self
                 .countries
@@ -121,6 +164,12 @@ impl RegistrarTaskConfig {
             self.number_request.max_price,
             &self.expected_prices,
         )?;
+        if self.sms_provider.kind == SmsProviderKind::OnlineSim
+            && (self.number_request.max_price.is_some()
+                || self.stop_on_price_change)
+        {
+            return Err("registrar.onlineSimPriceLimitUnsupported".into());
+        }
         if self.stop_on_price_change && self.expected_prices.is_empty() {
             return Err(
                 "load current Telegram prices before enabling price-change protection".into(),
@@ -135,7 +184,7 @@ impl RegistrarTaskConfig {
         }
         validate_required_push(self.send_push, self.antisafety.as_ref())?;
         for attempt in &self.attempts {
-            attempt.profile.validate()?;
+            attempt.profile.validate_request()?;
             attempt.identity.validate()?;
         }
         create_provider(self.sms_provider.clone()).map_err(|error| error.to_string())?;
@@ -181,9 +230,13 @@ pub struct RegistrarProgress {
 }
 
 struct Context {
+    usernames: Vec<String>,
+    username_index: AtomicUsize,
+    proxy_locales: tokio::sync::Mutex<HashMap<String, ProxyLocale>>,
     app: tauri::AppHandle,
     database: tokio::sync::Mutex<RegistrarDatabase>,
     config: RegistrarTaskConfig,
+    android_app_versions: Vec<String>,
     token: Arc<AtomicBool>,
     progress: tokio::sync::Mutex<RegistrarProgress>,
     output: std::path::PathBuf,
@@ -232,6 +285,32 @@ pub async fn registrar_start(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     config.validate()?;
+    if config.set_avatar && (!matches!(config.avatar_mode.as_str(), "emoji" | "folder" | "single" | "generated") || (!matches!(config.avatar_mode.as_str(), "emoji" | "generated") && config.avatar_path.trim().is_empty())) {
+        return Err("registrar.avatarRequired".into());
+    }
+    if config.set_avatar && ((config.avatar_mode == "single" && !std::path::Path::new(&config.avatar_path).is_file()) || (config.avatar_mode == "folder" && crate::accounts::actions::photos_from_folder(&config.avatar_path).is_empty())) {
+        return Err("registrar.avatarRequired".into());
+    }
+    if config.set_username && !matches!(config.username_mode.as_str(), "random" | "from_list" | "prefix_random") {
+        return Err("invalid username mode".into());
+    }
+    if config.set_username && config.username_mode == "prefix_random" && (config.username_prefix.is_empty() || config.username_prefix.len() > 30 || !config.username_prefix.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')) {
+        return Err("registrar.invalidUsernamePrefix".into());
+    }
+    let usernames = if config.set_username && config.username_mode == "from_list" {
+        let text = std::fs::read_to_string(&config.username_list_path).map_err(|_| "registrar.usernameFileRequired")?;
+        let mut values = Vec::new();
+        for line in text.lines().map(str::trim).filter(|line| !line.is_empty()) {
+            let value = line.trim_start_matches('@').to_string();
+            if !(5..=32).contains(&value.len()) || !value.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'_') { return Err("registrar.invalidUsernameFile".into()); }
+            if !values.iter().any(|existing: &String| existing.eq_ignore_ascii_case(&value)) { values.push(value); }
+        }
+        if values.is_empty() { return Err("registrar.usernameFileRequired".into()); }
+        values
+    } else { Vec::new() };
+    let android_app_versions = tokio::task::spawn_blocking(fetch_latest_android_versions)
+        .await
+        .map_err(|_| "Telegram Android releases worker failed")??;
     let task_id = uuid::Uuid::new_v4().to_string();
     let (database, _) = RegistrarDatabase::create(&task_id)?;
     let output = registrar_directory().join(&task_id);
@@ -259,9 +338,13 @@ pub async fn registrar_start(
         )
         .await;
     let context = Arc::new(Context {
+        usernames,
+        username_index: AtomicUsize::new(0),
+        proxy_locales: tokio::sync::Mutex::new(HashMap::new()),
         app: app.clone(),
         database: tokio::sync::Mutex::new(database),
         config,
+        android_app_versions,
         token,
         progress: tokio::sync::Mutex::new(progress),
         output,
@@ -330,11 +413,25 @@ pub(crate) fn open_directory(path: &str) -> Result<(), String> {
 
 async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
     let config = &context.config;
-    let countries = if config.countries.is_empty() {
+    let mut countries = if config.countries.is_empty() {
         vec![config.number_request.country.clone()]
     } else {
         config.countries.clone()
     };
+    countries.sort_by(|left, right| {
+        config
+            .expected_prices
+            .get(left)
+            .copied()
+            .unwrap_or(f64::INFINITY)
+            .total_cmp(
+                &config
+                    .expected_prices
+                    .get(right)
+                    .copied()
+                    .unwrap_or(f64::INFINITY),
+            )
+    });
     let target = (!config.use_full_balance)
         .then_some(config.attempt_count)
         .flatten();
@@ -350,6 +447,7 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
         config.concurrency
     };
     let mut tasks = tokio::task::JoinSet::new();
+    let sms_config = select_sms_proxy(&config.sms_provider).await?;
     let mut reason = "completed";
     let mut first_error = None;
     let mut consecutive_failures = 0;
@@ -393,7 +491,10 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
             } else {
                 consecutive_failures += 1;
             }
-            if (config.use_full_balance || target.is_some()) && consecutive_failures >= 3 {
+            if config
+                .max_consecutive_failures
+                .is_some_and(|limit| consecutive_failures >= limit)
+            {
                 reason = "repeated_failures";
                 break;
             }
@@ -407,12 +508,13 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
         let guarded = config.use_full_balance
             || config.stop_on_price_change
             || config.min_price.is_some()
-            || request.max_price.is_some();
+            || request.max_price.is_some()
+            || countries.len() > 1;
         if guarded {
             let mut selected = Ok(None);
-            for offset in 0..countries.len() {
-                request.country = countries[(index + offset) % countries.len()].clone();
-                selected = checked_request(config, request.clone()).await;
+            for country in &countries {
+                request.country = country.clone();
+                selected = checked_request(config, &sms_config, request.clone()).await;
                 if !matches!(selected, Ok(None)) {
                     break;
                 }
@@ -442,6 +544,9 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
             break;
         }
         let mut attempt = config.attempts[index % config.attempts.len()].clone();
+        attempt
+            .profile
+            .assign_random_android_client(&context.android_app_versions)?;
         if config.random_names {
             use rand::Rng;
             let mut rng = rand::thread_rng();
@@ -454,7 +559,10 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
         }
         let worker_context = context.clone();
         tasks.spawn(
-            async move { process_attempt(worker_context, index + 1, attempt, request).await },
+            {
+                let sms_config = sms_config.clone();
+                async move { process_attempt(worker_context, index + 1, attempt, request, sms_config).await }
+            },
         );
     }
     while let Some(result) = tasks.join_next().await {
@@ -485,6 +593,7 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
 
 async fn checked_request(
     config: &RegistrarTaskConfig,
+    sms_config: &SmsProviderConfig,
     mut request: NumberRequest,
 ) -> Result<Option<NumberRequest>, String> {
     let country = request.country.clone();
@@ -492,7 +601,7 @@ async fn checked_request(
     let operator = request.operator.clone();
     let min = config.min_price.unwrap_or(0.0);
     let max = request.max_price.unwrap_or(f64::INFINITY);
-    let prices = provider_call(config.sms_provider.clone(), "prices", move |provider| {
+    let prices = provider_call(sms_config.clone(), "prices", move |provider| {
         provider.prices(&service, Some(&country))
     })
     .await?;
@@ -526,16 +635,39 @@ async fn checked_request(
         request.operator = price.operator.clone();
     }
     if config.use_full_balance {
-        let balance = provider_call(config.sms_provider.clone(), "balance", |provider| {
+        let balance = provider_call(sms_config.clone(), "balance", |provider| {
             provider.balance()
         })
         .await?;
         if !balance.is_finite() || balance < price.price {
             return Ok(None);
         }
-        request.max_price = Some(request.max_price.unwrap_or(balance).min(balance));
+        if config.sms_provider.kind != SmsProviderKind::OnlineSim {
+            request.max_price = Some(request.max_price.unwrap_or(balance).min(balance));
+        }
     }
     Ok(Some(request))
+}
+
+async fn select_sms_proxy(config: &SmsProviderConfig) -> Result<SmsProviderConfig, String> {
+    let mut candidates = ProxyList::load().proxies;
+    candidates.shuffle(&mut rand::thread_rng());
+    if candidates.is_empty() {
+        if config.http_proxy.is_some() || crate::settings::AppSettings::load().allow_no_proxy {
+            return Ok(config.clone());
+        }
+        return Err("sms_proxy_unavailable".to_string());
+    }
+    for proxy in candidates {
+        let mut candidate = config.clone();
+        candidate.http_proxy = Some(proxy.to_string_repr());
+        match provider_call(candidate.clone(), "proxy_check", |provider| provider.balance()).await {
+            Ok(_) => return Ok(candidate),
+            Err(error) if error == "sms_transport" || error == "sms_invalidrequest" => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Err("sms_proxy_unavailable".to_string())
 }
 
 async fn process_attempt(
@@ -543,12 +675,21 @@ async fn process_attempt(
     index: usize,
     mut attempt: RegistrationAttempt,
     request: NumberRequest,
+    sms_config: SmsProviderConfig,
 ) -> Result<bool, String> {
     if !context.token.load(Ordering::Relaxed) {
         return Ok(false);
     }
     let config = &context.config;
-    attempt.proxy = ProxyList::load().get_random().cloned();
+    attempt.proxy = crate::proxy::select_proxy_for_account(None)?;
+    if context.config.manual_locale {
+        apply_locale(&mut attempt.profile, &context.config.registration_language, context.config.timezone_offset_seconds);
+    } else if let Some(proxy) = attempt.proxy.as_ref() {
+        match proxy_locale(&context, proxy).await {
+            Ok(locale) => apply_locale(&mut attempt.profile, &locale.language, locale.timezone_offset_seconds),
+            Err(_) => context.log(index, "proxy_locale_unavailable"),
+        }
+    }
     context.log(
         index,
         if attempt.proxy.is_some() {
@@ -570,9 +711,9 @@ async fn process_attempt(
     let record_id = context.database.lock().await.insert(&record)?;
     context.log(index, "buying_number");
     let activation = match provider_call(
-        config.sms_provider.clone(),
+        sms_config.clone(),
         "acquire_number",
-        move |provider| provider.acquire_number(&request),
+        move |provider| acquire_telegram_number(provider, &request),
     )
     .await
     {
@@ -590,7 +731,7 @@ async fn process_attempt(
     record.activation_id = Some(activation.id.clone());
     record.status = "number_acquired".into();
     if let Err(error) = context.record(record_id, &record).await {
-        cancel_activation(config.sms_provider.clone(), activation.id.clone());
+        cancel_activation(sms_config.clone(), activation.id.clone());
         return Err(error);
     }
     if activation.cost.is_some_and(|price| {
@@ -603,7 +744,7 @@ async fn process_attempt(
                     .get(&requested_country)
                     .is_some_and(|expected| (expected - price).abs() > 0.000001))
     }) {
-        cancel_activation(config.sms_provider.clone(), activation.id);
+        cancel_activation(sms_config.clone(), activation.id);
         record.status = "price_rejected".into();
         record.error = Some("Purchased number price is outside the accepted range".into());
         context.record(record_id, &record).await?;
@@ -618,12 +759,13 @@ async fn process_attempt(
         index,
         &attempt,
         &activation,
+        &sms_config,
         record_id,
         &mut record,
     )
     .await;
     if record.account_id.is_none() && record.status != "registration_storage_failed" {
-        cancel_activation(config.sms_provider.clone(), activation.id);
+        cancel_activation(sms_config, activation.id);
     }
     match outcome {
         Ok(success) => Ok(success),
@@ -639,20 +781,51 @@ async fn process_attempt(
                 super::diagnostics::error_summary(&error)
             );
             if record.status != "registration_storage_failed" {
-                record.status = if record.account_id.is_some() {
-                    "registered_with_warnings"
+                let (status, message) = if record.account_id.is_some() {
+                    ("registered_with_warnings", safe_error(&error))
+                } else if error.contains("PHONE_NUMBER_BANNED") {
+                    ("phone_number_banned", "number is blocked by Telegram".to_string())
+                } else if error.contains("AUTH_PAYMENT_REQUIRED") {
+                    (
+                        "premium_required",
+                        "Telegram requires a Premium subscription before registration".to_string(),
+                    )
                 } else {
-                    "registration_failed"
-                }
-                .into();
+                    ("registration_failed", safe_error(&error))
+                };
+                record.status = status.into();
+                record.error = Some(message);
+            } else {
+                record.error = Some(safe_error(&error));
             }
-            record.error = Some(safe_error(&error));
             context.record(record_id, &record).await?;
             context.log(index, &record.status);
             context.log(index, record.error.as_deref().unwrap_or("unknown_error"));
             Ok(record.account_id.is_some())
         }
     }
+}
+
+fn acquire_telegram_number(
+    provider: &dyn crate::registrar::sms::SmsProvider,
+    request: &NumberRequest,
+) -> Result<crate::registrar::sms::Activation, crate::registrar::sms::SmsError> {
+    let aliases = if matches!(request.service.to_ascii_lowercase().as_str(), "tg" | "tgs" | "telegram") {
+        &["tg", "tgs", "telegram"][..]
+    } else {
+        &[request.service.as_str()][..]
+    };
+    let mut last_error = None;
+    for service in aliases {
+        let mut variant = request.clone();
+        variant.service = (*service).to_string();
+        match provider.acquire_number(&variant) {
+            Ok(activation) => return Ok(activation),
+            Err(error) if matches!(error.kind, SmsErrorKind::NoNumbers | SmsErrorKind::InvalidRequest | SmsErrorKind::Unsupported) => last_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.expect("at least one Telegram service alias"))
 }
 
 fn safe_error(error: &str) -> String {
@@ -678,7 +851,9 @@ fn safe_error(error: &str) -> String {
         | "sms_timeout"
         | "unsupported_verification_type"
         | "app_code_rejected"
-        | "activation_unavailable" => error.to_string(),
+        | "activation_unavailable"
+        | "sms_proxy_unavailable"
+        | "email_verification_timeout" => error.to_string(),
         _ => "registration_step_failed".to_string(),
     }
 }
@@ -688,6 +863,7 @@ async fn register_number(
     index: usize,
     attempt: &RegistrationAttempt,
     activation: &crate::registrar::sms::Activation,
+    sms_config: &SmsProviderConfig,
     record_id: i64,
     record: &mut RegistrationRecord,
 ) -> Result<bool, String> {
@@ -701,11 +877,49 @@ async fn register_number(
         proxy: attempt.proxy.clone(),
         code_settings: config.code_settings.clone(),
         antisafety: config.antisafety.clone(),
+        antisafety_proxy: sms_config.http_proxy.clone(),
         cancellation: Some(context.token.clone()),
+        log_target: Some(context.app.clone()),
+        log_prefix: format!(
+            "[{}][{}]",
+            context
+                .output
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy(),
+            index
+        ),
     })
     .await?;
     session.set_output_directory(context.output.clone());
+    let sent_code = if sent_code.code_type == "email_setup" {
+        context.log(index, "setting_up_login_email");
+        setup_login_email(
+            context,
+            index,
+            &mut session,
+            config
+                .antisafety
+                .clone()
+                .ok_or("missing AntiSafety configuration")?,
+            sms_config.http_proxy.as_deref(),
+            config.email_premium,
+            config.allow_email_fallback,
+            &context.token,
+        )
+        .await?
+    } else {
+        sent_code
+    };
     context.log(index, &format!("code_delivery={}", sent_code.code_type));
+    if sent_code.code_type == "email" {
+        let _ = session.cancel().await;
+        record.status = "used_number".into();
+        record.error = Some("Telegram requires the number's existing login email".into());
+        context.record(record_id, record).await?;
+        context.log(index, "used_number");
+        return Ok(false);
+    }
     if sent_code.code_type == "app" && config.reject_app_code {
         let _ = session.cancel().await;
         return Err("app_code_rejected".into());
@@ -720,7 +934,7 @@ async fn register_number(
     let id = activation.id.clone();
     let ready =
         provider_call(
-            config.sms_provider.clone(),
+            sms_config.clone(),
             "mark_ready",
             move |provider| match provider.update_activation(&id, ActivationAction::MarkReady) {
                 Ok(_) => Ok(()),
@@ -751,7 +965,7 @@ async fn register_number(
         }
         let id = activation.id.clone();
         let status = match provider_call(
-            config.sms_provider.clone(),
+            sms_config.clone(),
             "activation_status",
             move |provider| provider.activation_status(&id),
         )
@@ -798,7 +1012,7 @@ async fn register_number(
             if session.is_registered() {
                 record.status = "registration_storage_failed".into();
                 let id = activation.id.clone();
-                if provider_call(config.sms_provider.clone(), "finish", move |provider| {
+                if provider_call(sms_config.clone(), "finish", move |provider| {
                     provider.update_activation(&id, ActivationAction::Finish)
                 })
                 .await
@@ -825,7 +1039,7 @@ async fn register_number(
     record.status = "registered".into();
     let mut warnings = Vec::new();
     let id = activation.id.clone();
-    if provider_call(config.sms_provider.clone(), "finish", move |provider| {
+    if provider_call(sms_config.clone(), "finish", move |provider| {
         provider.update_activation(&id, ActivationAction::Finish)
     })
     .await
@@ -840,6 +1054,33 @@ async fn register_number(
             warnings.push("two_fa_failed");
         }
     }
+    if config.hide_phone_number {
+        context.log(index, "hiding_phone_number");
+        if session.hide_phone_number().await.is_err() {
+            warnings.push("phone_hide_failed");
+        }
+    }
+    if config.hide_online_status {
+        context.log(index, "hiding_online_status");
+        if session.hide_online_status().await.is_err() {
+            warnings.push("online_hide_failed");
+        }
+    }
+    if config.set_avatar {
+        context.log(index, "setting_avatar");
+        if session.set_avatar(&config.avatar_mode, &config.avatar_path).await.is_err() {
+            warnings.push("avatar_set_failed");
+        }
+    }
+    if config.set_username {
+        context.log(index, "setting_username");
+        let from_list = if config.username_mode == "from_list" {
+            context.usernames.get(context.username_index.fetch_add(1, Ordering::Relaxed)).map(String::as_str)
+        } else { None };
+        if session.set_username(&account_id, &config.username_mode, &config.username_prefix, from_list).await.is_err() {
+            warnings.push("username_set_failed");
+        }
+    }
     if config.send_push {
         context.log(index, "registering_push");
         if register_push(
@@ -848,6 +1089,7 @@ async fn register_number(
                 .antisafety
                 .clone()
                 .ok_or("missing Push configuration")?,
+            sms_config.http_proxy.as_deref(),
             &context.token,
         )
         .await
@@ -883,12 +1125,13 @@ async fn register_number(
 async fn register_push(
     session: &mut RegistrationSession,
     config: AntiSafetyConfig,
+    http_proxy: Option<&str>,
     token: &AtomicBool,
 ) -> Result<(), String> {
     if !token.load(Ordering::Relaxed) {
         return Err("stopped".into());
     }
-    let client = AntiSafetyClient::new(config)?;
+    let client = AntiSafetyClient::new_with_proxy(config, http_proxy)?;
     let task_client = client.clone();
     let task = tokio::task::spawn_blocking(move || task_client.create_android_push())
         .await
@@ -915,6 +1158,136 @@ async fn register_push(
             }
             Err(_) => return Err("Push token timeout".into()),
         }
+    }
+}
+
+async fn setup_login_email(
+    context: &Context,
+    index: usize,
+    session: &mut RegistrationSession,
+    config: AntiSafetyConfig,
+    http_proxy: Option<&str>,
+    email_premium: bool,
+    allow_email_fallback: bool,
+    token: &AtomicBool,
+) -> Result<crate::mtproto::tl::SentCode, String> {
+    if !token.load(Ordering::Relaxed) {
+        return Err("stopped".into());
+    }
+    let client = AntiSafetyClient::new_with_proxy(config, http_proxy)?;
+    let task_client = client.clone();
+    let (task, selected_email_premium) = match tokio::task::spawn_blocking(move || task_client.create_email(email_premium))
+        .await
+        .map_err(|_| "Email worker failed")?
+    {
+        Ok(task) => (task, email_premium),
+        Err(error) if allow_email_fallback => {
+            let fallback_client = client.clone();
+            match tokio::task::spawn_blocking(move || fallback_client.create_email(!email_premium))
+                .await
+                .map_err(|_| "Email worker failed")?
+            {
+                Ok(task) => {
+                    context.log(index, "login_email_fallback_type_selected");
+                    (task, !email_premium)
+                }
+                Err(_) => {
+                    context.log(
+                        index,
+                        &format!(
+                            "login_email_create_failed: {}",
+                            super::diagnostics::error_summary(&error)
+                        ),
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        Err(error) => {
+            context.log(
+                index,
+                &format!(
+                    "login_email_create_failed: {}",
+                    super::diagnostics::error_summary(&error)
+                ),
+            );
+            dbg_log!(
+                "registrar::login_email stage=create failed {}",
+                super::diagnostics::error_summary(&error)
+            );
+            return Err(error);
+        }
+    };
+    if let Err(error) = session.request_login_email_verification(&task.email).await {
+        let summary = super::diagnostics::error_summary(&error);
+        context.log(
+            index,
+            &format!(
+                "login_email_send_code_failed: {} ({summary})",
+                login_email_error_description(&error)
+            ),
+        );
+        dbg_log!(
+            "registrar::login_email stage=send_code failed {}",
+            super::diagnostics::error_summary(&error)
+        );
+        return Err(error);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        if !token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        let task_client = client.clone();
+        let id = task.id.clone();
+        let result = tokio::task::spawn_blocking(move || task_client.get_email(&id, selected_email_premium))
+            .await
+            .map_err(|_| "Email worker failed")?;
+        match result {
+            Ok(code) => match session.confirm_login_email_verification(&code).await {
+                Ok(sent_code) => return Ok(sent_code),
+                Err(error) => {
+                    context.log(
+                        index,
+                        &format!(
+                            "login_email_verify_failed: {} ({})",
+                            login_email_error_description(&error),
+                            super::diagnostics::error_summary(&error)
+                        ),
+                    );
+                    dbg_log!(
+                        "registrar::login_email stage=verify failed {}",
+                        super::diagnostics::error_summary(&error)
+                    );
+                    return Err(error);
+                }
+            },
+            Err(_) if tokio::time::Instant::now() < deadline => {
+                for _ in 0..5 {
+                    if !token.load(Ordering::Relaxed) {
+                        return Err("stopped".into());
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+            Err(_) => {
+                context.log(index, "login_email_get_code_failed: verification code timeout");
+                dbg_log!("registrar::login_email stage=get_code failed category=timeout");
+                return Err("email_verification_timeout".into());
+            }
+        }
+    }
+}
+
+fn login_email_error_description(error: &str) -> &'static str {
+    if error.contains("EMAIL_NOT_ALLOWED") {
+        "Telegram does not allow this email address"
+    } else if error.contains("EMAIL_INVALID") {
+        "Telegram rejected an invalid email address"
+    } else if error.contains("EMAIL_VERIFY_EXPIRED") {
+        "Telegram email verification code expired"
+    } else {
+        "Telegram email verification failed"
     }
 }
 
@@ -1009,6 +1382,29 @@ where
     })
     .await
     .map_err(|_| "SMS worker failed".to_string())?
+}
+
+fn apply_locale(profile: &mut RegistrationProfile, language: &str, timezone_offset_seconds: i32) {
+    profile.lang_code = language.to_string();
+    profile.system_lang_code = if language == "ru" { "ru-RU".to_string() } else { "en-US".to_string() };
+    profile.timezone_offset_seconds = timezone_offset_seconds.clamp(-43_200, 50_400);
+}
+
+async fn proxy_locale(context: &Context, proxy: &ProxyConfig) -> Result<ProxyLocale, String> {
+    let key = proxy.to_string_repr();
+    if let Some(value) = context.proxy_locales.lock().await.get(&key).cloned() { return Ok(value); }
+    let proxy_value = key.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let proxy = ureq::Proxy::new(&proxy_value).map_err(|_| "invalid proxy")?;
+        let agent = ureq::Agent::config_builder().https_only(true).timeout_global(Some(Duration::from_secs(15))).proxy(Some(proxy)).build().new_agent();
+        let response: serde_json::Value = agent.get("https://ipwho.is/").call().map_err(|_| "geo request failed")?.body_mut().read_json().map_err(|_| "invalid geo response")?;
+        if response.get("success").and_then(|value| value.as_bool()) != Some(true) { return Err("geo lookup failed"); }
+        let country = response.get("country_code").and_then(|value| value.as_str()).unwrap_or("");
+        let offset = response.pointer("/timezone/offset").and_then(|value| value.as_i64()).ok_or("timezone missing")? as i32;
+        Ok(ProxyLocale { language: if country == "RU" { "ru".to_string() } else { "en".to_string() }, timezone_offset_seconds: offset })
+    }).await.map_err(|_| "geo worker failed")??;
+    context.proxy_locales.lock().await.insert(key, result.clone());
+    Ok(result)
 }
 
 fn cancel_activation(config: SmsProviderConfig, activation_id: String) {

@@ -69,12 +69,20 @@ pub struct AntiSafetyClient {
 
 impl AntiSafetyClient {
     pub fn new(config: AntiSafetyConfig) -> Result<Self, String> {
+        Self::new_with_proxy(config, None)
+    }
+
+    pub fn new_with_proxy(config: AntiSafetyConfig, http_proxy: Option<&str>) -> Result<Self, String> {
         validate_secret(&config.api_key, "API key")?;
         validate_value(&config.aid, "AID", 128)?;
+        let proxy = http_proxy
+            .map(|value| ureq::Proxy::new(value).map_err(|_| "invalid AntiSafety proxy".to_string()))
+            .transpose()?;
         let agent = ureq::Agent::config_builder()
             .https_only(true)
             .http_status_as_error(false)
             .timeout_global(Some(Duration::from_secs(30)))
+            .proxy(proxy)
             .build()
             .new_agent();
         Ok(Self {
@@ -226,13 +234,19 @@ impl AntiSafetyClient {
             .into_body()
             .read_to_string()
             .map_err(|error| format!("read AntiSafety response: {error}"))?;
-        if !(200..300).contains(&status) {
-            return Err(format!("AntiSafety returned HTTP {status}"));
-        }
         let response: ApiResponse = serde_json::from_str(&body)
             .map_err(|error| format!("parse AntiSafety response: {error}"))?;
+        if !(200..300).contains(&status) {
+            return Err(response
+                .error_code()
+                .map(|code| format!("ANTI_SAFETY_HTTP_{status}_{code}"))
+                .unwrap_or_else(|| format!("ANTI_SAFETY_HTTP_{status}")));
+        }
         if response.status != "ok" {
-            return Err("AntiSafety rejected the request".to_string());
+            return Err(response
+                .error_code()
+                .map(|code| format!("ANTI_SAFETY_{code}"))
+                .unwrap_or_else(|| "AntiSafety rejected the request".to_string()));
         }
         Ok(response)
     }
@@ -257,6 +271,42 @@ struct ApiResponse {
     result: Option<Value>,
     #[serde(default)]
     r#type: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+    #[serde(default)]
+    message: Option<String>,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+impl ApiResponse {
+    fn error_code(&self) -> Option<String> {
+        self.error
+            .as_deref()
+            .or(self.message.as_deref())
+            .or(self.detail.as_deref())
+            .map(str::trim)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.len() <= 64
+                    && value
+                        .bytes()
+                        .all(|byte| {
+                            byte.is_ascii_alphanumeric()
+                                || byte == b'_'
+                                || byte == b'-'
+                                || byte == b' '
+                        })
+            })
+            .map(|value| {
+                value
+                    .split(|character: char| character == '_' || character == '-' || character.is_ascii_whitespace())
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_ascii_uppercase)
+                    .collect::<Vec<_>>()
+                    .join("_")
+            })
+    }
 }
 
 impl ApiResponse {
@@ -327,5 +377,17 @@ mod tests {
             aid: "aid".to_string(),
         })
         .is_err());
+    }
+
+    #[test]
+    fn exposes_only_safe_error_codes() {
+        let safe: ApiResponse = serde_json::from_str(r#"{"status":"error","error":"email_out_of_stock"}"#).unwrap();
+        assert_eq!(safe.error_code().as_deref(), Some("EMAIL_OUT_OF_STOCK"));
+
+        let unsafe_value: ApiResponse = serde_json::from_str(
+            r#"{"status":"error","message":"request failed: api_key=secret"}"#,
+        )
+        .unwrap();
+        assert_eq!(unsafe_value.error_code(), None);
     }
 }
