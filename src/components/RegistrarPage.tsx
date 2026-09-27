@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { CircleHelp, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
+import { CircleHelp, FileText, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
 import { optionalPrice } from "@/lib/registrarSettings";
 
@@ -77,6 +78,8 @@ export function RegistrarPage() {
   const [registrarPassword, setRegistrarPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [settingsPasswordError, setSettingsPasswordError] = useState("");
+  const [resetConfirmation, setResetConfirmation] = useState(false);
+  const [resettingSettings, setResettingSettings] = useState(false);
   const [antiSafetyHelpOpen, setAntiSafetyHelpOpen] = useState(false);
   const [launchNoticeOpen, setLaunchNoticeOpen] = useState(false);
   const [launchNoticeRead, setLaunchNoticeRead] = useState(false);
@@ -155,6 +158,22 @@ export function RegistrarPage() {
       setSettingsLock("unlocked");
       setPasswordConfirmation("");
     } catch (error) { setSettingsPasswordError(error instanceof Error ? error.message : t("registrar.settingsUnlockFailed")); }
+  };
+
+  const resetSettings = async () => {
+    setResettingSettings(true);
+    setSettingsPasswordError("");
+    try {
+      await invoke("registrar_settings_reset");
+      setRegistrarPassword("");
+      setPasswordConfirmation("");
+      setResetConfirmation(false);
+      setSettingsLock("setup");
+    } catch (error) {
+      setSettingsPasswordError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setResettingSettings(false);
+    }
   };
 
   useEffect(() => {
@@ -308,7 +327,7 @@ export function RegistrarPage() {
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
       if (!antiSafetyKey.trim() || !antiSafetyAid.trim()) throw new Error("registrar.pushCredentialsRequired");
-      if (setAvatar && avatarMode !== "emoji" && !avatarPath) throw new Error("registrar.avatarRequired");
+      if (setAvatar && (avatarMode === "folder" || avatarMode === "single") && !avatarPath) throw new Error("registrar.avatarRequired");
       if (setUsername && usernameMode === "from_list" && !usernameListPath) throw new Error("registrar.usernameFileRequired");
       if (manualLocale && (!Number.isInteger(Number(timezoneOffset)) || Number(timezoneOffset) < -12 || Number(timezoneOffset) > 14)) throw new Error("registrar.invalidTimezone");
       if (failureStop && (!Number.isInteger(Number(failureLimit)) || Number(failureLimit) < 1)) throw new Error("registrar.invalidFailureLimit");
@@ -400,9 +419,7 @@ export function RegistrarPage() {
       <Section icon={WalletCards} title={t("registrar.smsSection")}>
         <div className="grid gap-5 lg:grid-cols-2">
           <Field label={t("registrar.provider")}>
-            <select value={provider} onChange={(event) => setProvider(event.target.value)} className={selectClass}>
-              {providers.map((item) => <option key={item.kind} value={item.kind}>{item.label}</option>)}
-            </select>
+            <RegistrarSelect label={t("registrar.provider")} value={provider} onChange={setProvider} options={providers.map((item) => ({ value: item.kind, label: item.label }))} />
           </Field>
           <Field label={t("registrar.apiKey")}>
             <input value={apiKey} onChange={(event) => setApiKey(event.target.value)} type="password" autoComplete="off" className={inputClass} placeholder="••••••••••••" />
@@ -450,10 +467,7 @@ export function RegistrarPage() {
         <div className="mt-5 grid gap-5 border-t border-border pt-5 lg:grid-cols-2">
           <Field label={t("registrar.quantity")}>
             <div className="flex gap-2">
-              <select value={countMode} onChange={(event) => setCountMode(event.target.value as "count" | "budget")} className="h-9 w-44 rounded-md border border-input bg-background px-3 text-sm outline-none focus:border-primary/50">
-                <option value="count">{t("registrar.exactCount")}</option>
-                <option value="budget">{t("registrar.fullBalance")}</option>
-              </select>
+              <RegistrarSelect label={t("registrar.quantity")} value={countMode} onChange={(value) => setCountMode(value as "count" | "budget")} className="w-44" options={[{ value: "count", label: t("registrar.exactCount") }, { value: "budget", label: t("registrar.fullBalance") }]} />
               {countMode === "count" && <input value={count} onChange={(event) => setCount(event.target.value)} min="1" type="number" className={inputClass} />}
             </div>
             {countMode === "budget" && <p className="mt-2 text-xs text-muted-foreground">{t("registrar.budgetHint")}</p>}
@@ -476,24 +490,21 @@ export function RegistrarPage() {
             <ToggleRow checked={hideOnlineStatus} onChange={setHideOnlineStatus} label={t("registrar.hideOnlineStatus")} />
             <ToggleRow checked={setAvatar} onChange={setSetAvatar} label={t("registrar.setAvatar")} />
             {setAvatar && <div className="space-y-2 pl-7">
-              <select value={avatarMode} onChange={(event) => { setAvatarMode(event.target.value as AvatarMode); setAvatarPath(""); }} className={selectClass}>
-                <option value="folder">{t("registrar.avatarFolder")}</option>
-                <option value="single">{t("registrar.avatarSingle")}</option>
-                <option value="generated">{t("registrar.avatarGenerated")}</option>
-                <option value="emoji">{t("registrar.avatarEmoji")}</option>
-              </select>
-              {avatarMode !== "emoji" && avatarMode !== "generated" && <><button type="button" onClick={() => void selectProfileResource("avatar")} className="rounded-md border border-border px-3 py-2 text-sm">{t(avatarMode === "folder" ? "registrar.chooseFolder" : "registrar.chooseFile")}</button><p className="break-all text-xs text-muted-foreground">{avatarPath || t("registrar.noFile")}</p></>}
+              <div className="flex flex-wrap items-center gap-2">
+                {([["folder", "registrar.avatarFolder"], ["single", "registrar.avatarSingle"], ["generated", "registrar.avatarGenerated"], ["emoji", "registrar.avatarEmoji"]] as const).map(([mode, label]) => <ModeButton key={mode} active={avatarMode === mode} onClick={() => { setAvatarMode(mode); setAvatarPath(""); }}>{t(label)}</ModeButton>)}
+              </div>
+              {(avatarMode === "folder" || avatarMode === "single") && <PickerButton onClick={() => void selectProfileResource("avatar")} icon={avatarMode === "folder" ? "folder" : "file"} label={t(avatarMode === "folder" ? "registrar.chooseFolder" : "registrar.chooseFile")} value={avatarPath} />}
               {avatarMode === "generated" && <p className="text-xs text-muted-foreground">{t("registrar.avatarGeneratedHint")}</p>}
             </div>}
             <ToggleRow checked={setUsername} onChange={setSetUsername} label={t("registrar.setUsername")} />
             {setUsername && <div className="space-y-2 pl-7">
-              <select value={usernameMode} onChange={(event) => setUsernameMode(event.target.value as UsernameMode)} className={selectClass}>
-                <option value="random">{t("accountActions.usernameRandom")}</option>
-                <option value="from_list">{t("accountActions.usernameFromList")}</option>
-                <option value="prefix_random">{t("accountActions.usernamePrefixRandom")}</option>
-              </select>
-              {usernameMode === "prefix_random" && <input value={usernamePrefix} onChange={(event) => setUsernamePrefix(event.target.value)} className={inputClass} placeholder={t("accountActions.prefixPlaceholder")} />}
-              {usernameMode === "from_list" && <><button type="button" onClick={() => void selectProfileResource("username")} className="rounded-md border border-border px-3 py-2 text-sm">{t("registrar.chooseFile")}</button><p className="break-all text-xs text-muted-foreground">{usernameListPath || t("registrar.noFile")}</p><p className="text-xs text-muted-foreground">{t("registrar.usernameFileHint")}</p></>}
+              <div className="flex flex-wrap items-center gap-2">
+                <ModeButton active={usernameMode === "random"} onClick={() => setUsernameMode("random")}>{t("accountActions.usernameRandom")}</ModeButton>
+                <ModeButton active={usernameMode === "from_list"} onClick={() => setUsernameMode("from_list")}>{t("accountActions.usernameFromList")}</ModeButton>
+                <ModeButton active={usernameMode === "prefix_random"} onClick={() => setUsernameMode("prefix_random")}>{t("accountActions.usernamePrefixRandom")}</ModeButton>
+              </div>
+              {usernameMode === "prefix_random" && <input value={usernamePrefix} onChange={(event) => setUsernamePrefix(event.target.value)} className={`${inputClass} max-w-xs`} placeholder={t("accountActions.prefixPlaceholder")} />}
+              {usernameMode === "from_list" && <><PickerButton onClick={() => void selectProfileResource("username")} icon="file" label={t("accountActions.usernameListLabel")} value={usernameListPath} /><p className="text-xs text-muted-foreground">{t("registrar.usernameFileHint")}</p></>}
             </div>}
             <ToggleRow checked={rejectAppCode} onChange={setRejectAppCode} label={t("registrar.rejectAppCode")} />
           </div>
@@ -504,9 +515,8 @@ export function RegistrarPage() {
           <div className="mt-4 grid gap-4">
             <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
             <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs text-muted-foreground"><span>Basic</span><span>Premium</span></div>
-              <input aria-label={t("registrar.emailPremium")} type="range" min="0" max="1" step="1" value={emailPremium ? 1 : 0} onChange={(event) => setEmailPremium(event.target.value === "1")} className="h-3 w-full cursor-pointer appearance-none rounded-full bg-muted accent-primary [&::-moz-range-thumb]:h-5 [&::-moz-range-thumb]:w-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-primary [&::-webkit-slider-thumb]:h-5 [&::-webkit-slider-thumb]:w-5 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary" />
+            <div className="space-y-3">
+              <div className="flex items-center gap-2.5 text-xs font-medium"><span className={!emailPremium ? "text-primary" : "text-muted-foreground"}>Basic</span><button type="button" role="switch" aria-label={t("registrar.emailPremium")} aria-checked={emailPremium} onClick={() => setEmailPremium((current) => !current)} className={`relative h-6 w-11 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${emailPremium ? "border-primary bg-primary" : "border-border bg-muted"}`}><span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-background shadow-sm transition-transform ${emailPremium ? "left-[22px]" : "left-0.5"}`} /></button><span className={emailPremium ? "text-primary" : "text-muted-foreground"}>Premium</span></div>
               <ToggleRow checked={allowEmailFallback} onChange={setAllowEmailFallback} label={t("registrar.emailFallback")} />
             </div>
             <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="w-fit rounded-md border border-border bg-background px-3 py-2 text-sm hover:border-primary/50">{t("registrar.whatIsThis")}</button>
@@ -548,10 +558,7 @@ export function RegistrarPage() {
           <Field className="flex h-full flex-col" label={t("common.threads")} hint={t("registrar.concurrencyHint")}><input type="number" min="1" max="100" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className={inputClass}/></Field>
           <Field className="flex h-full flex-col" label={t("registrar.pollInterval")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
           <Field className="flex h-full flex-col" label={t("registrar.failureLimit")}>
-            <select value={failureStop ? "limit" : "never"} onChange={(event) => setFailureStop(event.target.value === "limit")} className={selectClass}>
-              <option value="never">{t("registrar.neverStop")}</option>
-              <option value="limit">{t("registrar.stopAtFailures")}</option>
-            </select>
+            <RegistrarSelect label={t("registrar.failureLimit")} value={failureStop ? "limit" : "never"} onChange={(value) => setFailureStop(value === "limit")} options={[{ value: "never", label: t("registrar.neverStop") }, { value: "limit", label: t("registrar.stopAtFailures") }]} />
             {failureStop && <input type="number" min="1" value={failureLimit} onChange={(event) => setFailureLimit(event.target.value)} className={`${inputClass} mt-2`} placeholder="1" />}
           </Field>
         </div>
@@ -559,7 +566,7 @@ export function RegistrarPage() {
       <Section icon={Smartphone} title={t("registrar.registrationLocale")}>
         <p className="text-xs text-muted-foreground">{t("registrar.autoLocaleHint")}</p>
         <div className="mt-4"><ToggleRow checked={manualLocale} onChange={setManualLocale} label={t("registrar.manualLocale")} /></div>
-        {manualLocale && <div className="mt-4 grid gap-4 md:grid-cols-2"><Field label={t("registrar.registrationLanguage")}><select value={registrationLanguage} onChange={(event) => setRegistrationLanguage(event.target.value as "ru" | "en")} className={selectClass}><option value="en">English</option><option value="ru">Русский</option></select></Field><Field label={t("registrar.timezone")}><select value={timezoneOffset} onChange={(event) => setTimezoneOffset(event.target.value)} className={selectClass}>{Array.from({ length: 27 }, (_, index) => index - 12).map((offset) => <option key={offset} value={offset}>{`UTC${offset >= 0 ? "+" : ""}${offset}`}</option>)}</select></Field></div>}
+        {manualLocale && <div className="mt-4 grid gap-4 md:grid-cols-2"><Field label={t("registrar.registrationLanguage")}><RegistrarSelect label={t("registrar.registrationLanguage")} value={registrationLanguage} onChange={(value) => setRegistrationLanguage(value as "ru" | "en")} options={[{ value: "en", label: "English" }, { value: "ru", label: "Русский" }]} /></Field><Field label={t("registrar.timezone")}><RegistrarSelect label={t("registrar.timezone")} value={timezoneOffset} onChange={setTimezoneOffset} options={Array.from({ length: 27 }, (_, index) => index - 12).map((offset) => ({ value: String(offset), label: `UTC${offset >= 0 ? "+" : ""}${offset}` }))} /></Field></div>}
       </Section>
       </fieldset>
 
@@ -581,14 +588,45 @@ export function RegistrarPage() {
         return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
       }).join("\n")}</pre>}
       {antiSafetyHelpOpen && <RegistrarModal title="Placeholder" onClose={() => setAntiSafetyHelpOpen(false)}><p>Placeholder</p></RegistrarModal>}
-      {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t("registrar.settingsPasswordTitle")} onClose={() => {}}><p>{t("registrar.settingsPasswordWarning")}</p><div className="mt-4 space-y-3"><input value={registrarPassword} onChange={(event) => setRegistrarPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPassword")} />{settingsLock === "setup" && <input value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPasswordConfirm")} />}{settingsPasswordError && <p className="text-sm text-destructive">{settingsPasswordError}</p>}<button type="button" onClick={() => void unlockSettings()} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary">{settingsLock === "setup" ? t("registrar.settingsPasswordCreate") : t("registrar.settingsPasswordUnlock")}</button></div></RegistrarModal>}
+      {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t("registrar.settingsPasswordTitle")} onClose={() => {}}>
+        <p>{t("registrar.settingsPasswordWarning")}</p>
+        <div className="mt-4 space-y-3">
+          <input value={registrarPassword} onChange={(event) => setRegistrarPassword(event.target.value)} type="password" autoComplete={settingsLock === "setup" ? "new-password" : "current-password"} className={inputClass} placeholder={t("registrar.settingsPassword")} />
+          {settingsLock === "setup" && <input value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPasswordConfirm")} />}
+          {settingsPasswordError && <p role="alert" className="text-sm text-destructive">{settingsPasswordError}</p>}
+          {resetConfirmation && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{t("registrar.settingsResetWarning")}</p>}
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" disabled={resettingSettings} onClick={() => void unlockSettings()} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary disabled:opacity-50">{settingsLock === "setup" ? t("registrar.settingsPasswordCreate") : t("registrar.settingsPasswordUnlock")}</button>
+            {settingsLock === "locked" && !resetConfirmation && <button type="button" onClick={() => setResetConfirmation(true)} className="rounded-md border border-destructive/50 px-4 py-2 text-sm text-destructive">{t("registrar.settingsReset")}</button>}
+            {resetConfirmation && <><button type="button" disabled={resettingSettings} onClick={() => void resetSettings()} className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive disabled:opacity-50">{t("registrar.settingsResetConfirm")}</button><button type="button" disabled={resettingSettings} onClick={() => setResetConfirmation(false)} className="rounded-md border border-border px-4 py-2 text-sm">{t("common.cancel")}</button></>}
+          </div>
+        </div>
+      </RegistrarModal>}
       {launchNoticeOpen && <RegistrarModal title="Placeholder" onClose={() => {}}><div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} className="max-h-60 overflow-y-auto whitespace-pre-wrap pr-2">{"Placeholder\n\n".repeat(40)}</div><div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary disabled:opacity-50">{t("registrar.understood")}</button></div></RegistrarModal>}
     </div>
   );
 }
 
 const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:border-primary/50";
-const selectClass = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm outline-none transition focus:border-primary/50";
+
+function RegistrarSelect({ label, value, onChange, options, className = "w-full" }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; className?: string }) {
+  return <Select value={value} onValueChange={onChange}>
+    <SelectTrigger aria-label={label} className={`${className} bg-background shadow-none focus:ring-0 focus:border-primary/50`}><SelectValue placeholder={label} /></SelectTrigger>
+    <SelectContent position="popper" sideOffset={8} className="max-h-64 border-border bg-card text-foreground shadow-lg data-[side=bottom]:translate-y-0 [&_[data-radix-select-viewport]]:!h-auto">
+      {options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
+    </SelectContent>
+  </Select>;
+}
+
+function ModeButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return <button type="button" onClick={onClick} className={`rounded-md border px-3 py-1 text-xs font-medium transition ${active ? "border-primary/50 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/30"}`}>{children}</button>;
+}
+
+function PickerButton({ onClick, icon, label, value }: { onClick: () => void; icon: "file" | "folder"; label: string; value: string }) {
+  const t = useT();
+  const Icon = icon === "folder" ? FolderOpen : FileText;
+  return <div className="flex items-center gap-2"><button type="button" onClick={onClick} className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium transition hover:border-primary/50"><Icon className="h-3.5 w-3.5" />{label}</button><span className="max-w-[180px] truncate text-xs text-muted-foreground" title={value || undefined}>{value ? value.split(/[/\\]/).pop() : t("common.notSelected")}</span></div>;
+}
 
 function Section({ icon: Icon, title, children, headingClassName = "mb-5" }: { icon: typeof WalletCards; title: string; children: React.ReactNode; headingClassName?: string }) {
   return <section className="rounded-xl border border-border bg-card p-6"><div className={`${headingClassName} flex items-center gap-2`}><Icon className="h-4 w-4 text-primary" /><h2 className="text-base font-semibold">{title}</h2></div>{children}</section>;

@@ -767,7 +767,7 @@ export function AccountsPage() {
                 <ChevronDown className="h-3.5 w-3.5" />
               </button>
               {validateAllDropdownOpen && (
-                <div className="absolute top-full right-0 mt-1 z-50 w-64 rounded-md border border-border bg-card shadow-lg py-2 px-3 space-y-2.5"
+                <div className="absolute top-full right-0 mt-2 z-50 w-64 rounded-md border border-border bg-card shadow-lg py-2 px-3 space-y-2.5"
                      onClick={(e) => e.stopPropagation()}>
                   <label className="flex items-center gap-2 text-sm text-muted-foreground font-medium cursor-pointer">
                     <input

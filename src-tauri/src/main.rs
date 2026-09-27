@@ -375,6 +375,7 @@ fn main() {
             registrar::settings::registrar_settings_state,
             registrar::settings::registrar_settings_unlock,
             registrar::settings::registrar_settings_save,
+            registrar::settings::registrar_settings_reset,
             registrar::manual::registrar_manual_send_code,
             registrar::manual::registrar_manual_complete,
             registrar::manual::registrar_manual_resend_code,

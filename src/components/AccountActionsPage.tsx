@@ -219,6 +219,15 @@ export function AccountActionsPage() {
       if (key === "deleteAccount" && value) {
         return { ...defaultConfig, deleteAccount: true };
       }
+      if (value && (key === "setPhoto" || key === "setAutoPhoto" || key === "setEmojiAvatar" || key === "deleteAllPhotos")) {
+        return {
+          ...next,
+          setPhoto: key === "setPhoto",
+          setAutoPhoto: key === "setAutoPhoto",
+          setEmojiAvatar: key === "setEmojiAvatar",
+          deleteAllPhotos: key === "deleteAllPhotos",
+        };
+      }
       return next;
     });
   };
@@ -313,9 +322,11 @@ export function AccountActionsPage() {
           </ActionRow>
 
           {/* set photo */}
-          <ActionRow checked={config.setPhoto} onChange={(v) => set("setPhoto", v)} label={t("accountActions.setPhoto")} disabled={config.deleteAccount || config.deleteAllPhotos || config.setEmojiAvatar}>
+          <ActionRow checked={config.setPhoto} onChange={(v) => set("setPhoto", v)} label={t("accountActions.setPhoto")} disabled={config.deleteAccount || config.deleteAllPhotos || config.setEmojiAvatar || config.setAutoPhoto}>
             <PickerButton onClick={() => selectFolder("photoFolderPath")} icon="folder" label={t("accountActions.photoFolder")} value={config.photoFolderPath} />
           </ActionRow>
+
+          <ActionRow checked={config.setAutoPhoto} onChange={(v) => set("setAutoPhoto", v)} label={t("accountActions.generatedPhoto")} disabled={config.deleteAccount || config.deleteAllPhotos || config.setEmojiAvatar || config.setPhoto} />
 
           {/* change name */}
           <ActionRow checked={config.changeName} onChange={(v) => set("changeName", v)} label={t("accountActions.changeName")} disabled={config.deleteAccount}>
@@ -353,10 +364,10 @@ export function AccountActionsPage() {
           <ActionRow checked={config.deleteBio} onChange={(v) => set("deleteBio", v)} label={t("accountActions.deleteBio")} disabled={config.deleteAccount || config.changeBio} />
 
           {/* delete all photos */}
-          <ActionRow checked={config.deleteAllPhotos} onChange={(v) => set("deleteAllPhotos", v)} label={t("accountActions.deleteAllPhotos")} disabled={config.deleteAccount || config.setPhoto || config.setEmojiAvatar} />
+          <ActionRow checked={config.deleteAllPhotos} onChange={(v) => set("deleteAllPhotos", v)} label={t("accountActions.deleteAllPhotos")} disabled={config.deleteAccount || config.setPhoto || config.setAutoPhoto || config.setEmojiAvatar} />
 
           {/* emoji avatar */}
-          <ActionRow checked={config.setEmojiAvatar} onChange={(v) => set("setEmojiAvatar", v)} label={t("accountActions.emojiAvatar")} disabled={config.deleteAccount || config.setPhoto || config.deleteAllPhotos} />
+          <ActionRow checked={config.setEmojiAvatar} onChange={(v) => set("setEmojiAvatar", v)} label={t("accountActions.emojiAvatar")} disabled={config.deleteAccount || config.setPhoto || config.setAutoPhoto || config.deleteAllPhotos} />
 
           {/* birthday */}
           <ActionRow checked={config.setBirthday} onChange={(v) => set("setBirthday", v)} label={t("accountActions.setBirthday")} disabled={config.deleteAccount}>

@@ -98,6 +98,23 @@ pub fn registrar_settings_save(password: String, settings: Value) -> Result<(), 
     replace_settings_file(&temporary, &target)
 }
 
+#[tauri::command]
+pub fn registrar_settings_reset() -> Result<(), String> {
+    let _guard = SETTINGS_FILE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    remove_settings_files(&path())
+}
+
+fn remove_settings_files(target: &std::path::Path) -> Result<(), String> {
+    for file in [target.with_extension("tmp"), target.with_extension("bak"), target.to_path_buf()] {
+        match std::fs::remove_file(file) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("cannot reset registrar settings".to_string()),
+        }
+    }
+    Ok(())
+}
+
 fn replace_settings_file(temporary: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
     if !target.exists() {
         return std::fs::rename(temporary, target)
@@ -154,6 +171,22 @@ mod tests {
         std::fs::write(target.with_extension("bak"), b"previous").unwrap();
         recover_settings_file(&target).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"previous");
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn reset_removes_settings_and_recovery_files() {
+        let directory = std::env::temp_dir().join(format!("registrar-settings-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let target = directory.join("settings.json");
+        for file in [&target, &target.with_extension("bak"), &target.with_extension("tmp")] {
+            std::fs::write(file, b"old").unwrap();
+        }
+        remove_settings_files(&target).unwrap();
+        remove_settings_files(&target).unwrap();
+        assert!(!target.exists());
+        assert!(!target.with_extension("bak").exists());
+        assert!(!target.with_extension("tmp").exists());
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

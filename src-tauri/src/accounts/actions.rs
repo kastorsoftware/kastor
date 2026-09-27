@@ -511,14 +511,9 @@ async fn process_account(
 
     5 => { // set auto-generated photo
         emit(format!("{} {}", prefix, t("actions_gen_photo")));
-        match download_random_face() {
-            Ok(image_data) => {
-                match upload_and_set_photo_bytes(&mut client, &image_data, "auto_photo.jpg").await {
-                    Ok(_) => emit(format!("{} {}", prefix, t("actions_autophoto_set"))),
-                    Err(e) => action_err!(e, "{} {}", prefix, t_with("actions_photo_ul_error", &[("error", &e)])),
-                }
-            }
-            Err(e) => emit(format!("{} {}", prefix, t_with("actions_photo_dl_error", &[("error", &e)]))),
+        match set_generated_face_avatar(&mut client).await {
+            Ok(_) => emit(format!("{} {}", prefix, t("actions_autophoto_set"))),
+            Err(e) => action_err!(e, "{} {}", prefix, t_with("actions_photo_error", &[("error", &e)])),
         }
         rate_limit().await;
         if config.delay_between_min > 0 || config.delay_between_max > 0 { delay_between_actions(&mut client, config.delay_between_min, config.delay_between_max).await; }
