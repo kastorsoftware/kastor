@@ -22,6 +22,8 @@ use crate::registrar::sms::{
 };
 
 const MAX_ATTEMPTS: usize = 100_000;
+const CANCEL_RETRY_DELAY: Duration = Duration::from_secs(121);
+const CANCEL_RETRIES: usize = 3;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RegistrationAttempt {
@@ -1007,7 +1009,7 @@ async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
                     .map(|_| ())
             })
         },
-        || tokio::time::sleep(Duration::from_secs(120)),
+        || tokio::time::sleep(CANCEL_RETRY_DELAY),
     )
     .await;
     if let Err(error) = result {
@@ -1018,22 +1020,33 @@ async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
     }
 }
 
-async fn cancel_with_retry<F, Fut, W, Wait>(mut cancel: F, wait: W) -> Result<(), String>
+async fn cancel_with_retry<F, Fut, W, Wait>(mut cancel: F, mut wait: W) -> Result<(), String>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<(), String>>,
-    W: FnOnce() -> Wait,
+    W: FnMut() -> Wait,
     Wait: std::future::Future<Output = ()>,
 {
-    match cancel().await {
-        Err(error) if error == "sms_tooearlytocancel" => {
-            dbg_log!("registrar::activation cancellation deferred retry_after_secs=120");
-            // Cleanup remains active after Stop: the purchased reservation still needs cancellation.
-            wait().await;
-            dbg_log!("registrar::activation cancellation retry started");
-            cancel().await
+    let mut retries = 0;
+    loop {
+        match cancel().await {
+            Err(error) if error == "sms_tooearlytocancel" && retries < CANCEL_RETRIES => {
+                retries += 1;
+                dbg_log!(
+                    "registrar::activation cancellation deferred retry={}/{} retry_after_secs={}",
+                    retries,
+                    CANCEL_RETRIES,
+                    CANCEL_RETRY_DELAY.as_secs()
+                );
+                // Cleanup remains active after Stop: the reservation still needs cancellation.
+                wait().await;
+                dbg_log!(
+                    "registrar::activation cancellation retry={} started",
+                    retries
+                );
+            }
+            result => return result,
         }
-        result => result,
     }
 }
 
@@ -1061,7 +1074,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn early_cancellation_waits_and_retries_once() {
+    async fn early_cancellation_stops_retrying_after_success() {
         let attempts = std::cell::Cell::new(0);
         let waited = std::cell::Cell::new(false);
         let result = cancel_with_retry(
@@ -1105,13 +1118,47 @@ mod tests {
             assert_eq!(
                 attempts.get(),
                 if error == "sms_tooearlytocancel" {
-                    2
+                    4
                 } else {
                     1
                 }
             );
-            assert_eq!(waits.get(), usize::from(error == "sms_tooearlytocancel"));
+            assert_eq!(
+                waits.get(),
+                if error == "sms_tooearlytocancel" {
+                    3
+                } else {
+                    0
+                }
+            );
         }
+    }
+
+    #[tokio::test]
+    async fn cancellation_waits_before_each_of_three_retries() {
+        let attempts = std::cell::Cell::new(0);
+        let waits = std::cell::Cell::new(0);
+        assert_eq!(CANCEL_RETRY_DELAY.as_secs(), 121);
+        let result = cancel_with_retry(
+            || {
+                assert_eq!(attempts.get(), waits.get());
+                let attempt = attempts.get();
+                attempts.set(attempt + 1);
+                std::future::ready(if attempt < 3 {
+                    Err("sms_tooearlytocancel".into())
+                } else {
+                    Ok(())
+                })
+            },
+            || {
+                waits.set(waits.get() + 1);
+                std::future::ready(())
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(attempts.get(), 4);
+        assert_eq!(waits.get(), 3);
     }
 
     #[test]
