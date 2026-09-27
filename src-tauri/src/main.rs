@@ -38,7 +38,6 @@ mod warmer;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
-use tauri::Manager;
 
 use queue::TaskQueue;
 use crate::i18n::t;
@@ -282,15 +281,6 @@ fn get_quick_actions() -> Vec<QuickAction> {
 }
 
 #[tauri::command]
-fn show_window(window: tauri::Window) {
-    dbg_log!("show_window called");
-    if let Some(w) = window.get_webview_window("main") {
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
-}
-
-#[tauri::command]
 async fn get_task_queue(queue: tauri::State<'_, TaskQueue>) -> Result<Vec<queue::TaskInfo>, String> {
     Ok(queue.get_tasks().await)
 }
@@ -341,7 +331,6 @@ fn main() {
             check_installed_tools,
             get_stats,
             get_quick_actions,
-            show_window,
             accounts::commands::open_accounts_folder,
             accounts::commands::open_file_in_editor,
             accounts::commands::launch_telegram,

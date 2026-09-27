@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
@@ -13,13 +13,6 @@ const IS_DEV = !("__TAURI_INTERNALS__" in window);
 
 function App() {
   const [showToolsRec, setShowToolsRec] = useState(false);
-  const shown = useRef(false);
-
-  useEffect(() => {
-    if (shown.current || IS_DEV) return;
-    shown.current = true;
-    requestAnimationFrame(() => invoke("show_window"));
-  }, []);
 
   useEffect(() => {
     if (!localStorage.getItem("tools_rec_skipped")) setShowToolsRec(true);
