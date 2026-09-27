@@ -1098,6 +1098,28 @@ async fn register_number(
             warnings.push("push_failed");
         }
     }
+    context.log(index, "loading_initial_dialogs");
+    if let Err(error) = session.load_initial_dialogs().await {
+        context.log(
+            index,
+            &format!(
+                "initial_dialogs_failed: {}",
+                super::diagnostics::error_summary(&error)
+            ),
+        );
+        warnings.push("initial_dialogs_failed");
+    }
+    context.log(index, "loading_initial_contacts");
+    if let Err(error) = session.load_initial_contacts().await {
+        context.log(
+            index,
+            &format!(
+                "initial_contacts_failed: {}",
+                super::diagnostics::error_summary(&error)
+            ),
+        );
+        warnings.push("initial_contacts_failed");
+    }
     if config.add_to_panel {
         context.log(index, "adding_to_panel");
         let source = AccountStorage::new(&context.output);

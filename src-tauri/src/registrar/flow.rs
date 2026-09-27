@@ -188,6 +188,18 @@ impl RegistrationSession {
         Ok(())
     }
 
+    pub async fn load_initial_dialogs(&mut self) -> Result<(), String> {
+        let request = tl::build_get_dialogs_with_folder(0, 100);
+        let response = self.client.invoke(&request).await?;
+        crate::mtproto::tl_gen::parse_messages_getDialogs(&response).map(|_| ())
+    }
+
+    pub async fn load_initial_contacts(&mut self) -> Result<(), String> {
+        let request = tl::build_contacts_get_contacts();
+        let response = self.client.invoke(&request).await?;
+        crate::mtproto::tl_gen::parse_contacts_getContacts(&response).map(|_| ())
+    }
+
     pub async fn hide_phone_number(&mut self) -> Result<(), String> {
         self.set_privacy(crate::mtproto::tl_gen::INPUT_PRIVACY_KEY_PHONE_NUMBER)
             .await
@@ -441,6 +453,10 @@ async fn start_on_dc(
         client.set_log_target("registrar-log", handle.clone());
         client.set_log_prefix(log_prefix);
     }
+    load_phone_screen_data(&mut client, profile, cancellation).await;
+    if is_cancelled(cancellation) {
+        return Err("stopped".to_string());
+    }
     let inner =
         tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
     let response = match invoke_send_code(&mut client, &inner, profile).await {
@@ -478,6 +494,48 @@ async fn start_on_dc(
         sent_code.code_type
     );
     Ok((client, sent_code))
+}
+
+async fn load_phone_screen_data(
+    client: &mut MtpClient,
+    profile: &RegistrationProfile,
+    cancellation: Option<&AtomicBool>,
+) {
+    let requests: [(&str, Vec<u8>, fn(&[u8]) -> Result<(), String>); 2] = [
+        (
+            "nearest_dc",
+            crate::mtproto::tl_gen::build_help_getNearestDc(),
+            |response| crate::mtproto::tl_gen::parse_help_getNearestDc(response).map(|_| ()),
+        ),
+        (
+            "countries_list",
+            crate::mtproto::tl_gen::build_help_getCountriesList(&profile.lang_code, 0),
+            |response| crate::mtproto::tl_gen::parse_help_getCountriesList(response).map(|_| ()),
+        ),
+    ];
+    for (stage, request, parse) in requests {
+        if is_cancelled(cancellation) {
+            return;
+        }
+        let wrapped = tl::wrap_init_connection(
+            &request,
+            profile.api_id,
+            &profile.device_model,
+            &profile.system_version,
+            &profile.app_version,
+            &profile.system_lang_code,
+            &profile.lang_code,
+        );
+        let result = client.invoke(&wrapped).await.and_then(|response| parse(&response).map(|_| ()));
+        match result {
+            Ok(()) => dbg_log!("registrar::phone_screen stage={} completed", stage),
+            Err(error) => dbg_log!(
+                "registrar::phone_screen stage={} failed {}",
+                stage,
+                super::diagnostics::error_summary(&error)
+            ),
+        }
+    }
 }
 
 async fn connect_and_auth(
