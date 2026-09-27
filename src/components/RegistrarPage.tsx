@@ -46,10 +46,6 @@ export function RegistrarPage() {
   const [useSmsProxy, setUseSmsProxy] = useState(false);
   const [smsProxy, setSmsProxy] = useState("");
   const [rejectAppCode, setRejectAppCode] = useState(true);
-  const [telegramProxies, setTelegramProxies] = useState("");
-  const [deviceModel, setDeviceModel] = useState("Desktop");
-  const [systemVersion, setSystemVersion] = useState("Windows");
-  const [appVersion, setAppVersion] = useState("");
   const [concurrency, setConcurrency] = useState("1");
   const [pollInterval, setPollInterval] = useState("5");
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -98,8 +94,6 @@ export function RegistrarPage() {
       if (!disposed) setListenersReady(true);
     };
     void setup().catch(() => { if (!disposed) setRequestError("registrar.eventsError"); });
-    void invoke<string>("get_version").then((version) => { if (!disposed) setAppVersion(version); })
-      .catch(() => { if (!disposed) setRequestError("registrar.versionUnavailable"); });
     return () => { disposed = true; cleanups.forEach((cleanup) => cleanup()); };
   }, []);
 
@@ -219,14 +213,13 @@ export function RegistrarPage() {
         ? await invoke<Identity[]>("registrar_read_names", { path: namesFile })
         : [{ first_name: nameMode === "random" ? crypto.randomUUID().replace(/-/g, "").slice(0, 10) : firstName.trim(), last_name: lastName.trim() }];
       if (!identities.length || identities.some((identity) => !identity.first_name)) throw new Error("registrar.namesRequired");
-      const proxies = await invoke<unknown[]>("registrar_parse_proxies", { proxies: telegramProxies });
-      const attempts = Array.from({ length: Math.max(pairs.length, identities.length, proxies.length, 1) }, (_, index) => ({
+      const attempts = Array.from({ length: Math.max(pairs.length, identities.length, 1) }, (_, index) => ({
         profile: {
-          ...pairs[index % pairs.length], device_model: deviceModel, system_version: systemVersion,
-          app_version: appVersion, system_lang_code: navigator.language, lang_code: navigator.language.split("-")[0],
+          ...pairs[index % pairs.length], device_model: "Android", system_version: "SDK 35",
+          app_version: "0", system_lang_code: navigator.language, lang_code: navigator.language.split("-")[0],
           timezone_offset_seconds: -new Date().getTimezoneOffset() * 60,
         },
-        identity: identities[index % identities.length], proxy: proxies.length ? proxies[index % proxies.length] : null,
+        identity: identities[index % identities.length], proxy: null,
       }));
       const expectedPrices: Record<string, number> = {};
       for (const price of prices) {
@@ -384,11 +377,6 @@ export function RegistrarPage() {
             {nameMode === "random" && <p className="mt-3 text-xs text-muted-foreground">{t("registrar.randomNamesHint")}</p>}
           </div>
         </div>
-        <div className="mt-5 grid gap-4 md:grid-cols-3">
-          <Field label={t("registrar.deviceModel")}><input value={deviceModel} onChange={(event) => setDeviceModel(event.target.value)} className={inputClass}/></Field>
-          <Field label={t("registrar.systemVersion")}><input value={systemVersion} onChange={(event) => setSystemVersion(event.target.value)} className={inputClass}/></Field>
-          <Field label={t("registrar.appVersion")}><input value={appVersion} onChange={(event) => setAppVersion(event.target.value)} className={inputClass}/></Field>
-        </div>
       </Section>
 
       <div className="grid gap-6 xl:grid-cols-2">
@@ -403,7 +391,6 @@ export function RegistrarPage() {
         <Section icon={Smartphone} title={t("registrar.proxySection")}>
           <ToggleRow checked={useSmsProxy} onChange={setUseSmsProxy} label={t("registrar.useSmsProxy")} />
           {useSmsProxy && <Field label={t("registrar.proxy")} hint="socks5://user:password@host:port"><textarea value={smsProxy} onChange={(event) => setSmsProxy(event.target.value)} rows={3} className={`${textareaClass} mt-3`} placeholder="socks5://127.0.0.1:1080" /></Field>}
-          <div className="mt-4"><Field label={t("registrar.telegramProxies")} hint={t("registrar.telegramProxiesHint")}><textarea value={telegramProxies} onChange={(event) => setTelegramProxies(event.target.value)} rows={3} className={textareaClass}/></Field></div>
         </Section>
       </div>
       <Section icon={CircleHelp} title={t("registrar.execution")}>

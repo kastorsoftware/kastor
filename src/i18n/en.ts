@@ -85,7 +85,7 @@ export const en = {
       philippines: "Philippines",
       brazil: "Brazil",
     },
-    description: "Register using the selected SMS provider and save sessions, JSON and TData. reCAPTCHA is not used.",
+    description: "Register using the selected SMS provider and save sessions, JSON and TData.",
     status: "Backend connected",
     smsSection: "SMS provider and numbers",
     provider: "SMS provider",

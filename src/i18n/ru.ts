@@ -85,7 +85,7 @@ export const ru = {
       philippines: "Филиппины",
       brazil: "Бразилия",
     },
-    description: "Регистрация через выбранный SMS-сервис с сохранением сессий, JSON и TData. reCAPTCHA не используется.",
+    description: "Регистрация через выбранный SMS-сервис с сохранением сессий, JSON и TData.",
     status: "Бэкенд подключён",
     smsSection: "SMS-сервис и номера",
     provider: "SMS-сервис",
