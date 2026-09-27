@@ -580,7 +580,7 @@ async fn process_attempt(
     record.activation_id = Some(activation.id.clone());
     record.status = "number_acquired".into();
     if let Err(error) = context.record(record_id, &record).await {
-        cancel_activation(config.sms_provider.clone(), activation.id.clone()).await;
+        cancel_activation(config.sms_provider.clone(), activation.id.clone());
         return Err(error);
     }
     if activation.cost.is_some_and(|price| {
@@ -593,7 +593,7 @@ async fn process_attempt(
                     .get(&requested_country)
                     .is_some_and(|expected| (expected - price).abs() > 0.000001))
     }) {
-        cancel_activation(config.sms_provider.clone(), activation.id).await;
+        cancel_activation(config.sms_provider.clone(), activation.id);
         record.status = "price_rejected".into();
         record.error = Some("Purchased number price is outside the accepted range".into());
         context.record(record_id, &record).await?;
@@ -613,7 +613,7 @@ async fn process_attempt(
     )
     .await;
     if record.account_id.is_none() && record.status != "registration_storage_failed" {
-        cancel_activation(config.sms_provider.clone(), activation.id).await;
+        cancel_activation(config.sms_provider.clone(), activation.id);
     }
     match outcome {
         Ok(success) => Ok(success),
@@ -1001,25 +1001,28 @@ where
     .map_err(|_| "SMS worker failed".to_string())?
 }
 
-async fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
-    let result = cancel_with_retry(
-        || {
-            let id = activation_id.clone();
-            provider_call(config.clone(), "cancel", move |provider| {
-                provider
-                    .update_activation(&id, ActivationAction::Cancel)
-                    .map(|_| ())
-            })
-        },
-        || tokio::time::sleep(CANCEL_RETRY_DELAY),
-    )
-    .await;
-    if let Err(error) = result {
-        dbg_log!(
-            "registrar::activation cancellation failed category={}",
-            error
-        );
-    }
+fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
+    // Providers may reject early cancellation. Keep their retry window out of the registration task.
+    let _ = tokio::spawn(async move {
+        let result = cancel_with_retry(
+            || {
+                let id = activation_id.clone();
+                provider_call(config.clone(), "cancel", move |provider| {
+                    provider
+                        .update_activation(&id, ActivationAction::Cancel)
+                        .map(|_| ())
+                })
+            },
+            || tokio::time::sleep(CANCEL_RETRY_DELAY),
+        )
+        .await;
+        if let Err(error) = result {
+            dbg_log!(
+                "registrar::activation cancellation failed category={}",
+                error
+            );
+        }
+    });
 }
 
 async fn cancel_with_retry<F, Fut, W, Wait>(mut cancel: F, mut wait: W) -> Result<(), String>
