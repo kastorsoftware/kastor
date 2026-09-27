@@ -1048,6 +1048,7 @@ async fn register_number(
         warnings.push("provider_finish_failed");
     }
     context.record(record_id, record).await?;
+    super::flow::pause_for_registration_transition().await;
     if let Some(password) = &config.two_fa_password {
         context.log(index, "setting_2fa");
         if session.set_two_fa(&account_id, password).await.is_err() {
@@ -1055,24 +1056,28 @@ async fn register_number(
         }
     }
     if config.hide_phone_number {
+        super::flow::pause_for_registration_transition().await;
         context.log(index, "hiding_phone_number");
         if session.hide_phone_number().await.is_err() {
             warnings.push("phone_hide_failed");
         }
     }
     if config.hide_online_status {
+        super::flow::pause_for_registration_transition().await;
         context.log(index, "hiding_online_status");
         if session.hide_online_status().await.is_err() {
             warnings.push("online_hide_failed");
         }
     }
     if config.set_avatar {
+        super::flow::pause_for_registration_transition().await;
         context.log(index, "setting_avatar");
         if session.set_avatar(&config.avatar_mode, &config.avatar_path).await.is_err() {
             warnings.push("avatar_set_failed");
         }
     }
     if config.set_username {
+        super::flow::pause_for_registration_transition().await;
         context.log(index, "setting_username");
         let from_list = if config.username_mode == "from_list" {
             context.usernames.get(context.username_index.fetch_add(1, Ordering::Relaxed)).map(String::as_str)
@@ -1098,6 +1103,7 @@ async fn register_number(
             warnings.push("push_failed");
         }
     }
+    super::flow::pause_for_registration_transition().await;
     context.log(index, "loading_initial_dialogs");
     if let Err(error) = session.load_initial_dialogs().await {
         context.log(
@@ -1109,6 +1115,7 @@ async fn register_number(
         );
         warnings.push("initial_dialogs_failed");
     }
+    super::flow::pause_for_registration_transition().await;
     context.log(index, "loading_initial_contacts");
     if let Err(error) = session.load_initial_contacts().await {
         context.log(

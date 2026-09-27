@@ -7,6 +7,7 @@ use crate::mtproto::tl::{self, AuthCodeSettings, AuthorizedUser, SentCode};
 use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
 use crate::registrar::profile::RegistrationProfile;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -16,6 +17,17 @@ use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
 
 const RECAPTCHA_TIMEOUT: Duration = Duration::from_secs(120);
 const RECAPTCHA_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const TRANSITION_DELAY_MIN_MS: u64 = 300;
+const TRANSITION_DELAY_MAX_MS: u64 = 900;
+
+pub(crate) async fn pause_for_registration_transition() {
+    tokio::time::sleep(registration_transition_delay()).await;
+}
+
+fn registration_transition_delay() -> Duration {
+    let milliseconds = rand::thread_rng().gen_range(TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS);
+    Duration::from_millis(milliseconds)
+}
 
 pub struct RegistrationSession {
     client: MtpClient,
@@ -457,6 +469,10 @@ async fn start_on_dc(
     if is_cancelled(cancellation) {
         return Err("stopped".to_string());
     }
+    pause_for_registration_transition().await;
+    if is_cancelled(cancellation) {
+        return Err("stopped".to_string());
+    }
     let inner =
         tl::build_auth_send_code_with_settings(phone, profile.api_id, &profile.api_hash, settings);
     let response = match invoke_send_code(&mut client, &inner, profile).await {
@@ -710,6 +726,15 @@ fn is_unoccupied(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn registration_transition_delay_has_jitter_and_minimum() {
+        let delays: Vec<_> = (0..32).map(|_| registration_transition_delay()).collect();
+        assert!(delays.iter().all(|delay| {
+            (TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS).contains(&(delay.as_millis() as u64))
+        }));
+        assert!(delays.windows(2).any(|pair| pair[0] != pair[1]));
+    }
 
     #[test]
     fn extracts_phone_migration_target() {
