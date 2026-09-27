@@ -4,7 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { CircleHelp, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
-import { optionalPrice, parseApiPairs } from "@/lib/registrarSettings";
+import { optionalPrice } from "@/lib/registrarSettings";
 
 type NameMode = "same" | "file" | "random";
 
@@ -28,14 +28,13 @@ export function RegistrarPage() {
   const [customEndpoint, setCustomEndpoint] = useState("");
   const [selectedCountries, setSelectedCountries] = useState<string[]>([]);
   const [countMode, setCountMode] = useState<"count" | "budget">("count");
-  const [count, setCount] = useState("10");
+  const [count, setCount] = useState("1");
   const [setTwoFa, setSetTwoFa] = useState(false);
   const [twoFaPassword, setTwoFaPassword] = useState("");
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
-  const [antiSafetyAid, setAntiSafetyAid] = useState("308aba4e-5680-466b-81a5-477ac6befa95");
+  const [antiSafetyAid, setAntiSafetyAid] = useState("");
   const [addToPanel, setAddToPanel] = useState(true);
   const [openResults, setOpenResults] = useState(false);
-  const [apiPairs, setApiPairs] = useState("");
   const [smsTimeout, setSmsTimeout] = useState("300");
   const [stopOnPriceChange, setStopOnPriceChange] = useState(true);
   const [minPrice, setMinPrice] = useState("");
@@ -206,7 +205,7 @@ export function RegistrarPage() {
     setLaunching(true);
     setRequestError("");
     try {
-      const pairs = parseApiPairs(apiPairs);
+      const pairs = [{ api_id: 4, api_hash: "014b35b6184100b085b0d0572f9b5103" }];
       const minimum = optionalPrice(minPrice);
       const maximum = optionalPrice(maxPrice);
       if (minimum !== null && maximum !== null && minimum > maximum) throw new Error("registrar.invalidPrice");
@@ -276,9 +275,6 @@ export function RegistrarPage() {
           <p className="text-sm text-muted-foreground">
             {t("registrar.description")}
           </p>
-        </div>
-        <div className="rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
-          {t("registrar.status")}
         </div>
       </div>
 
@@ -356,7 +352,6 @@ export function RegistrarPage() {
           <div className="space-y-4">
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
-            <div><p className="text-sm font-medium">{t("registrar.sendPush")}</p><p className="mt-1 text-xs text-muted-foreground">{t("registrar.pushHint")}</p></div>
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
             <ToggleRow checked={openResults} onChange={setOpenResults} label={t("registrar.openResults")} />
             <ToggleRow checked={rejectAppCode} onChange={setRejectAppCode} label={t("registrar.rejectAppCode")} />
@@ -377,9 +372,6 @@ export function RegistrarPage() {
 
       <Section icon={Smartphone} title={t("registrar.profileSection")}>
         <div className="grid gap-6 xl:grid-cols-2">
-          <Field label={t("registrar.apiPairs")} hint={t("registrar.apiPairsHint")}>
-            <textarea value={apiPairs} onChange={(event) => setApiPairs(event.target.value)} rows={6} className={textareaClass} placeholder={"12345:0123456789abcdef0123456789abcdef"} />
-          </Field>
           <div>
             <label className="text-sm font-medium">{t("registrar.names")}</label>
             <div className="mt-2 flex flex-wrap gap-2">

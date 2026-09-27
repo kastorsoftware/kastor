@@ -8,7 +8,7 @@ use tauri::{Emitter, Manager};
 
 use crate::accounts::storage::AccountStorage;
 use crate::mtproto::tl::AuthCodeSettings;
-use crate::proxy::ProxyConfig;
+use crate::proxy::{ProxyConfig, ProxyList};
 use crate::queue::TaskQueue;
 use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
 use crate::registrar::db::{registrar_directory, RegistrarDatabase, RegistrationRecord};
@@ -541,13 +541,22 @@ async fn checked_request(
 async fn process_attempt(
     context: Arc<Context>,
     index: usize,
-    attempt: RegistrationAttempt,
+    mut attempt: RegistrationAttempt,
     request: NumberRequest,
 ) -> Result<bool, String> {
     if !context.token.load(Ordering::Relaxed) {
         return Ok(false);
     }
     let config = &context.config;
+    attempt.proxy = ProxyList::load().get_random().cloned();
+    context.log(
+        index,
+        if attempt.proxy.is_some() {
+            "proxy_selected"
+        } else {
+            "proxy_unavailable"
+        },
+    );
     let max_price = request.max_price;
     let requested_country = request.country.clone();
     let mut record = RegistrationRecord {
@@ -576,6 +585,7 @@ async fn process_attempt(
             return Ok(false);
         }
     };
+    context.log(index, "number_purchased");
     record.phone = activation.phone.clone();
     record.activation_id = Some(activation.id.clone());
     record.status = "number_acquired".into();
