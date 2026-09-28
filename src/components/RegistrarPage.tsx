@@ -78,6 +78,7 @@ export function RegistrarPage() {
   const [registrarPassword, setRegistrarPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [settingsPasswordError, setSettingsPasswordError] = useState("");
+  const [settingsPending, setSettingsPending] = useState(false);
   const [resetConfirmation, setResetConfirmation] = useState(false);
   const [resettingSettings, setResettingSettings] = useState(false);
   const [antiSafetyHelpOpen, setAntiSafetyHelpOpen] = useState(false);
@@ -150,14 +151,17 @@ export function RegistrarPage() {
   }, []);
 
   const unlockSettings = async () => {
+    if (settingsPending) return;
     setSettingsPasswordError("");
     if (settingsLock === "setup" && registrarPassword !== passwordConfirmation) { setSettingsPasswordError(t("registrar.passwordMismatch")); return; }
+    setSettingsPending(true);
     try {
       if (settingsLock === "setup") await invoke("registrar_settings_save", { password: registrarPassword, settings: storedSettings() });
       else applyStoredSettings(await invoke<Partial<StoredSettings>>("registrar_settings_unlock", { password: registrarPassword }));
       setSettingsLock("unlocked");
       setPasswordConfirmation("");
     } catch (error) { setSettingsPasswordError(error instanceof Error ? error.message : t("registrar.settingsUnlockFailed")); }
+    finally { setSettingsPending(false); }
   };
 
   const resetSettings = async () => {
@@ -519,7 +523,7 @@ export function RegistrarPage() {
               <div className="flex items-center gap-2.5 text-xs font-medium"><span className={!emailPremium ? "text-primary" : "text-muted-foreground"}>Basic</span><button type="button" role="switch" aria-label={t("registrar.emailPremium")} aria-checked={emailPremium} onClick={() => setEmailPremium((current) => !current)} className={`relative h-6 w-11 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${emailPremium ? "border-primary bg-primary" : "border-border bg-muted"}`}><span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-background shadow-sm transition-transform ${emailPremium ? "left-[22px]" : "left-0.5"}`} /></button><span className={emailPremium ? "text-primary" : "text-muted-foreground"}>Premium</span></div>
               <ToggleRow checked={allowEmailFallback} onChange={setAllowEmailFallback} label={t("registrar.emailFallback")} />
             </div>
-            <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="w-fit rounded-md border border-border bg-background px-3 py-2 text-sm hover:border-primary/50">{t("registrar.whatIsThis")}</button>
+            <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="w-fit rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:border-primary/50">{t("registrar.whatIsThis")}</button>
           </div>
         </Section>
       </div>
@@ -577,7 +581,7 @@ export function RegistrarPage() {
           {progress?.finished && <p className="mt-1 break-all text-xs text-muted-foreground">{progress.results_directory}</p>}
           {requestError && <p role="alert" className="mt-2 text-sm text-destructive">{t(requestError)}</p>}
         </div>
-        {running ? <button type="button" disabled={stopping} onClick={() => void stopTask()} className="flex items-center gap-2 rounded-md border border-destructive/50 px-4 py-2 text-sm disabled:opacity-50"><Square className="h-4 w-4"/>{t(stopping ? "registrar.stopping" : "common.stop")}</button>
+        {running ? <button type="button" disabled={stopping} onClick={() => void stopTask()} className="flex items-center gap-2 rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium disabled:opacity-50"><Square className="h-4 w-4"/>{t(stopping ? "registrar.stopping" : "common.stop")}</button>
           : <button type="button" disabled={launching || pending || !listenersReady || !provider || !apiKey.trim()} onClick={requestStart} className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"><Play className="h-4 w-4" />{t(launching ? "registrar.launching" : "registrar.start")}</button>}
       </div>
       {logs.length > 0 && <pre aria-live="polite" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-xs">{logs.map((line) => {
@@ -588,21 +592,21 @@ export function RegistrarPage() {
         return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
       }).join("\n")}</pre>}
       {antiSafetyHelpOpen && <RegistrarModal title="Placeholder" onClose={() => setAntiSafetyHelpOpen(false)}><p>Placeholder</p></RegistrarModal>}
-      {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t("registrar.settingsPasswordTitle")} onClose={() => {}}>
-        <p>{t("registrar.settingsPasswordWarning")}</p>
+      {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t(settingsLock === "setup" ? "registrar.settingsPasswordTitle" : "registrar.settingsUnlockTitle")} onClose={() => {}}>
+        <p>{t(settingsLock === "setup" ? "registrar.settingsPasswordWarning" : "registrar.settingsUnlockHint")}</p>
         <div className="mt-4 space-y-3">
-          <input value={registrarPassword} onChange={(event) => setRegistrarPassword(event.target.value)} type="password" autoComplete={settingsLock === "setup" ? "new-password" : "current-password"} className={inputClass} placeholder={t("registrar.settingsPassword")} />
-          {settingsLock === "setup" && <input value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPasswordConfirm")} />}
+          <input value={registrarPassword} onChange={(event) => setRegistrarPassword(event.target.value)} disabled={settingsPending} type="password" autoComplete={settingsLock === "setup" ? "new-password" : "current-password"} className={inputClass} placeholder={t("registrar.settingsPassword")} />
+          {settingsLock === "setup" && <input value={passwordConfirmation} onChange={(event) => setPasswordConfirmation(event.target.value)} disabled={settingsPending} type="password" autoComplete="new-password" className={inputClass} placeholder={t("registrar.settingsPasswordConfirm")} />}
           {settingsPasswordError && <p role="alert" className="text-sm text-destructive">{settingsPasswordError}</p>}
           {resetConfirmation && <p className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">{t("registrar.settingsResetWarning")}</p>}
           <div className="flex flex-wrap items-center gap-2">
-            <button type="button" disabled={resettingSettings} onClick={() => void unlockSettings()} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary disabled:opacity-50">{settingsLock === "setup" ? t("registrar.settingsPasswordCreate") : t("registrar.settingsPasswordUnlock")}</button>
-            {settingsLock === "locked" && !resetConfirmation && <button type="button" onClick={() => setResetConfirmation(true)} className="rounded-md border border-destructive/50 px-4 py-2 text-sm text-destructive">{t("registrar.settingsReset")}</button>}
-            {resetConfirmation && <><button type="button" disabled={resettingSettings} onClick={() => void resetSettings()} className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm text-destructive disabled:opacity-50">{t("registrar.settingsResetConfirm")}</button><button type="button" disabled={resettingSettings} onClick={() => setResetConfirmation(false)} className="rounded-md border border-border px-4 py-2 text-sm">{t("common.cancel")}</button></>}
+            <button type="button" disabled={resettingSettings || settingsPending} onClick={() => void unlockSettings()} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{settingsPending ? t("registrar.settingsPasswordWorking") : settingsLock === "setup" ? t("registrar.settingsPasswordCreate") : t("registrar.settingsPasswordUnlock")}</button>
+            {settingsLock === "locked" && !resetConfirmation && <button type="button" disabled={settingsPending} onClick={() => setResetConfirmation(true)} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive disabled:opacity-50">{t("registrar.settingsReset")}</button>}
+            {resetConfirmation && <><button type="button" disabled={resettingSettings || settingsPending} onClick={() => void resetSettings()} className="rounded-md border border-destructive/50 bg-destructive/10 px-4 py-2 text-sm font-medium text-destructive disabled:opacity-50">{t("registrar.settingsResetConfirm")}</button><button type="button" disabled={resettingSettings || settingsPending} onClick={() => setResetConfirmation(false)} className="rounded-md border border-border px-4 py-2 text-sm font-medium disabled:opacity-50">{t("common.cancel")}</button></>}
           </div>
         </div>
       </RegistrarModal>}
-      {launchNoticeOpen && <RegistrarModal title="Placeholder" onClose={() => {}}><div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} className="max-h-60 overflow-y-auto whitespace-pre-wrap pr-2">{"Placeholder\n\n".repeat(40)}</div><div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm text-primary disabled:opacity-50">{t("registrar.understood")}</button></div></RegistrarModal>}
+      {launchNoticeOpen && <RegistrarModal title="Placeholder" onClose={() => {}}><div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} className="max-h-60 overflow-y-auto whitespace-pre-wrap pr-2">{"Placeholder\n\n".repeat(40)}</div><div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{t("registrar.understood")}</button></div></RegistrarModal>}
     </div>
   );
 }
@@ -611,7 +615,7 @@ const inputClass = "h-9 w-full rounded-md border border-input bg-background px-3
 
 function RegistrarSelect({ label, value, onChange, options, className = "w-full" }: { label: string; value: string; onChange: (value: string) => void; options: { value: string; label: string }[]; className?: string }) {
   return <Select value={value} onValueChange={onChange}>
-    <SelectTrigger aria-label={label} className={`${className} bg-background shadow-none focus:ring-0 focus:border-primary/50`}><SelectValue placeholder={label} /></SelectTrigger>
+    <SelectTrigger aria-label={label} className={`${className} bg-background font-medium shadow-none focus:ring-0 focus:border-primary/50`}><SelectValue placeholder={label} /></SelectTrigger>
     <SelectContent position="popper" sideOffset={8} className="max-h-64 border-border bg-card text-foreground shadow-lg data-[side=bottom]:translate-y-0 [&_[data-radix-select-viewport]]:!h-auto">
       {options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}
     </SelectContent>
@@ -645,7 +649,7 @@ function CheckRow({ checked, onChange, label }: { checked: boolean; onChange: ()
 }
 
 function Choice({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return <button type="button" onClick={onClick} className={`rounded-md border px-3 py-1.5 text-sm transition ${active ? "border-primary/50 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>{label}</button>;
+  return <button type="button" onClick={onClick} className={`rounded-md border px-3 py-1.5 text-sm font-medium transition ${active ? "border-primary/50 bg-primary/10 text-primary" : "border-border bg-background text-muted-foreground hover:border-primary/40"}`}>{label}</button>;
 }
 
 function ProviderButton({ label, disabled, onClick }: { label: string; disabled: boolean; onClick: () => void }) {

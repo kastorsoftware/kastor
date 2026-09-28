@@ -1,10 +1,8 @@
 use aes_gcm::{aead::{Aead, KeyInit}, Aes256Gcm, Nonce};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::Sha256;
 
 const FORMAT_VERSION: u8 = 1;
 const PBKDF2_ITERATIONS: u32 = 600_000;
@@ -38,9 +36,7 @@ fn validate_password(password: &str) -> Result<(), String> {
 }
 
 fn derive_key(password: &str, salt: &[u8]) -> [u8; 32] {
-    let mut key = [0_u8; 32];
-    pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, PBKDF2_ITERATIONS, &mut key);
-    key
+    registrar_kdf::derive_key(password.as_bytes(), salt, PBKDF2_ITERATIONS)
 }
 
 #[tauri::command]
@@ -52,8 +48,14 @@ pub fn registrar_settings_state() -> RegistrarSettingsState {
 }
 
 #[tauri::command]
-pub fn registrar_settings_unlock(password: String) -> Result<Value, String> {
-    validate_password(&password)?;
+pub async fn registrar_settings_unlock(password: String) -> Result<Value, String> {
+    tokio::task::spawn_blocking(move || unlock_settings(&password))
+        .await
+        .map_err(|_| "registrar settings worker failed".to_string())?
+}
+
+fn unlock_settings(password: &str) -> Result<Value, String> {
+    validate_password(password)?;
     let _guard = SETTINGS_FILE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let target = path();
     recover_settings_file(&target)?;
@@ -66,7 +68,7 @@ pub fn registrar_settings_unlock(password: String) -> Result<Value, String> {
     let nonce = STANDARD.decode(file.nonce).map_err(|_| "registrar settings file is damaged".to_string())?;
     let ciphertext = STANDARD.decode(file.ciphertext).map_err(|_| "registrar settings file is damaged".to_string())?;
     if salt.len() != 16 || nonce.len() != 12 { return Err("registrar settings file is damaged".to_string()); }
-    let key = derive_key(&password, &salt);
+    let key = derive_key(password, &salt);
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "cannot initialize registrar settings encryption".to_string())?;
     let plaintext = cipher.decrypt(Nonce::from_slice(&nonce), ciphertext.as_ref())
         .map_err(|_| "incorrect registrar password or damaged settings".to_string())?;
@@ -74,8 +76,14 @@ pub fn registrar_settings_unlock(password: String) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn registrar_settings_save(password: String, settings: Value) -> Result<(), String> {
-    validate_password(&password)?;
+pub async fn registrar_settings_save(password: String, settings: Value) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || save_settings(&password, settings))
+        .await
+        .map_err(|_| "registrar settings worker failed".to_string())?
+}
+
+fn save_settings(password: &str, settings: Value) -> Result<(), String> {
+    validate_password(password)?;
     let _guard = SETTINGS_FILE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if !settings.is_object() { return Err("invalid registrar settings".to_string()); }
     let plaintext = serde_json::to_vec(&settings).map_err(|_| "cannot serialize registrar settings".to_string())?;
@@ -83,7 +91,7 @@ pub fn registrar_settings_save(password: String, settings: Value) -> Result<(), 
     let mut nonce = [0_u8; 12];
     rand::thread_rng().fill_bytes(&mut salt);
     rand::thread_rng().fill_bytes(&mut nonce);
-    let key = derive_key(&password, &salt);
+    let key = derive_key(password, &salt);
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| "cannot initialize registrar settings encryption".to_string())?;
     let ciphertext = cipher.encrypt(Nonce::from_slice(&nonce), plaintext.as_ref())
         .map_err(|_| "cannot encrypt registrar settings".to_string())?;
@@ -151,6 +159,14 @@ fn recover_settings_file(target: &std::path::Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn derives_existing_password_key() {
+        assert_eq!(
+            hex::encode(derive_key("example-password-1", &[0_u8; 16])),
+            "2f1ef52e5126e84dee2a6db6ca3429725547044f064abb092d2c7d90dc06677a"
+        );
+    }
 
     #[test]
     fn failed_replacement_preserves_existing_settings() {
