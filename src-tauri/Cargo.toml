@@ -40,7 +40,7 @@ futures-util = "0.3"
 symphonia = { version = "0.5", features = ["mp3", "wav", "isomp4", "aac"] }
 ogg-opus = "0.1"
 rubato = "0.14"
-imap = "2.4.1"
+imap = "=3.0.0-alpha.15"
 native-tls = "0.2"
 mailparse = "0.16"
 
