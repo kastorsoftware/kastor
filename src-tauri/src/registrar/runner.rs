@@ -894,16 +894,10 @@ async fn process_attempt(
             if record.status != "registration_storage_failed" && error != "used_number" {
                 let (status, message) = if record.account_id.is_some() {
                     ("registered_with_warnings", safe_error(&error))
-                } else if error.contains("PHONE_NUMBER_BANNED") {
-                    (
-                        "phone_number_banned",
-                        "number is blocked by Telegram".to_string(),
-                    )
-                } else if error.contains("AUTH_PAYMENT_REQUIRED") {
-                    (
-                        "premium_required",
-                        "Telegram requires a Premium subscription before registration".to_string(),
-                    )
+                } else if telegram_rpc_code(&error) == Some("PHONE_NUMBER_BANNED") {
+                    ("phone_number_banned", safe_error(&error))
+                } else if telegram_rpc_code(&error) == Some("AUTH_PAYMENT_REQUIRED") {
+                    ("premium_required", safe_error(&error))
                 } else {
                     ("registration_failed", safe_error(&error))
                 };
@@ -963,15 +957,6 @@ fn safe_error(error: &str) -> String {
     {
         return error.to_string();
     }
-    if let Some(code) = error.split_whitespace().find(|part| {
-        part.len() <= 128
-            && part.contains('_')
-            && part.chars().all(|character| {
-                character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
-            })
-    }) {
-        return code.to_string();
-    }
     match error {
         "stopped"
         | "sms_timeout"
@@ -981,9 +966,60 @@ fn safe_error(error: &str) -> String {
         | "sms_proxy_unavailable"
         | "email_verification_timeout"
         | RECAPTCHA_ANTISAFETY_REQUIRED
-        | "re_registration_retry_limit" => error.to_string(),
-        _ => "registration_step_failed".to_string(),
+        | "re_registration_retry_limit" => return error.to_string(),
+        _ => {}
     }
+    if let Some(code) = telegram_rpc_code(error) {
+        for prefix in ["FLOOD_WAIT_", "FLOOD_PREMIUM_WAIT_"] {
+            if let Some(seconds) = code.strip_prefix(prefix) {
+                if let Ok(seconds) = seconds.parse::<u64>() {
+                    return format!("telegram_flood_wait:{seconds}");
+                }
+            }
+        }
+        return match code {
+            "FLOOD_WAIT" | "FLOOD_PREMIUM_WAIT" => "telegram_flood_wait_unknown",
+            "PHONE_NUMBER_BANNED" => "telegram_phone_banned",
+            "PHONE_NUMBER_FLOOD" | "PHONE_PASSWORD_FLOOD" => "telegram_number_rate_limited",
+            "PHONE_NUMBER_INVALID" => "telegram_phone_invalid",
+            "PHONE_NUMBER_OCCUPIED" => "telegram_phone_occupied",
+            "PHONE_CODE_INVALID" | "PHONE_CODE_EMPTY" => "telegram_code_invalid",
+            "PHONE_CODE_EXPIRED" | "PHONE_CODE_HASH_EMPTY" | "PHONE_HASH_EXPIRED" => {
+                "telegram_code_expired"
+            }
+            "API_ID_INVALID" | "API_ID_PUBLISHED_FLOOD" => "telegram_api_invalid",
+            "SMS_CODE_CREATE_FAILED" | "SEND_CODE_UNAVAILABLE" => "telegram_sms_unavailable",
+            "UPDATE_APP_TO_LOGIN" => "telegram_client_outdated",
+            "AUTH_RESTART" | "SIGN_IN_FAILED" => "telegram_auth_retry",
+            "AUTH_PAYMENT_REQUIRED" => "telegram_premium_required",
+            "PHONE_NUMBER_APP_SIGNUP_FORBIDDEN" => "telegram_app_signup_forbidden",
+            "EMAIL_NOT_ALLOWED" | "EMAIL_INVALID" => "telegram_email_rejected",
+            "EMAIL_CODE_INVALID" => "telegram_email_code_invalid",
+            "EMAIL_VERIFY_EXPIRED" | "EMAIL_CODE_EXPIRED" => "telegram_email_code_expired",
+            "USERNAME_OCCUPIED" | "USERNAME_PURCHASE_AVAILABLE" => "telegram_username_occupied",
+            "USERNAME_INVALID" => "telegram_username_invalid",
+            "FIRSTNAME_INVALID" | "LASTNAME_INVALID" => "telegram_name_invalid",
+            "SESSION_PASSWORD_NEEDED" => "telegram_2fa_required",
+            "PASSWORD_HASH_INVALID" => "telegram_2fa_invalid",
+            _ => "registration_step_failed",
+        }
+        .to_string();
+    }
+    "registration_step_failed".to_string()
+}
+
+fn telegram_rpc_code(error: &str) -> Option<&str> {
+    let payload = if error.starts_with("RPC ") || error.starts_with("rpc error ") {
+        error.split_once(": ")?.1
+    } else {
+        error
+    };
+    let code = payload
+        .split(|character: char| {
+            !character.is_ascii_uppercase() && !character.is_ascii_digit() && character != '_'
+        })
+        .next()?;
+    (code.len() <= 128 && code.contains('_')).then_some(code)
 }
 
 async fn open_registration_session(
@@ -996,6 +1032,7 @@ async fn open_registration_session(
     record: &mut RegistrationRecord,
 ) -> Result<RegistrationSession, String> {
     let config = &context.config;
+    context.log(index, "requesting_telegram_code");
     let (mut session, sent_code) = RegistrationSession::start(RegistrationCodeRequest {
         phone: activation.phone.clone(),
         profile: attempt.profile.clone(),
@@ -1030,7 +1067,15 @@ async fn open_registration_session(
     } else {
         sent_code
     };
-    context.log(index, &format!("code_delivery={}", sent_code.code_type));
+    context.log(
+        index,
+        match sent_code.code_type.as_str() {
+            "sms" | "sms_word" | "sms_phrase" => "code_delivery_sms",
+            "app" => "code_delivery_app",
+            "email" => "code_delivery_email",
+            _ => "code_delivery_other",
+        },
+    );
     if sent_code.code_type == "email" {
         let _ = session.cancel().await;
         record.status = "used_number".into();
@@ -1225,32 +1270,35 @@ async fn register_number(
     super::flow::pause_for_registration_transition().await;
     if let Some(password) = &config.two_fa_password {
         context.log(index, "setting_2fa");
-        if session.set_two_fa(&account_id, password).await.is_err() {
+        if let Err(error) = session.set_two_fa(&account_id, password).await {
+            context.log(index, &safe_error(&error));
             warnings.push("two_fa_failed");
         }
     }
     if config.hide_phone_number {
         super::flow::pause_for_registration_transition().await;
         context.log(index, "hiding_phone_number");
-        if session.hide_phone_number().await.is_err() {
+        if let Err(error) = session.hide_phone_number().await {
+            context.log(index, &safe_error(&error));
             warnings.push("phone_hide_failed");
         }
     }
     if config.hide_online_status {
         super::flow::pause_for_registration_transition().await;
         context.log(index, "hiding_online_status");
-        if session.hide_online_status().await.is_err() {
+        if let Err(error) = session.hide_online_status().await {
+            context.log(index, &safe_error(&error));
             warnings.push("online_hide_failed");
         }
     }
     if config.set_avatar {
         super::flow::pause_for_registration_transition().await;
         context.log(index, "setting_avatar");
-        if session
+        if let Err(error) = session
             .set_avatar(&config.avatar_mode, &config.avatar_path)
             .await
-            .is_err()
         {
+            context.log(index, &safe_error(&error));
             warnings.push("avatar_set_failed");
         }
     }
@@ -1265,7 +1313,7 @@ async fn register_number(
         } else {
             None
         };
-        if session
+        if let Err(error) = session
             .set_username(
                 &account_id,
                 &config.username_mode,
@@ -1273,14 +1321,14 @@ async fn register_number(
                 from_list,
             )
             .await
-            .is_err()
         {
+            context.log(index, &safe_error(&error));
             warnings.push("username_set_failed");
         }
     }
     if config.send_push {
         context.log(index, "registering_push");
-        if register_push(
+        if let Err(error) = register_push(
             &mut session,
             config
                 .antisafety
@@ -1290,33 +1338,29 @@ async fn register_number(
             &context.token,
         )
         .await
-        .is_err()
         {
+            context.log(index, &safe_error(&error));
             warnings.push("push_failed");
         }
     }
     super::flow::pause_for_registration_transition().await;
     context.log(index, "loading_initial_dialogs");
     if let Err(error) = session.load_initial_dialogs().await {
-        context.log(
-            index,
-            &format!(
-                "initial_dialogs_failed: {}",
-                super::diagnostics::error_summary(&error)
-            ),
+        dbg_log!(
+            "registrar::initial_dialogs failed {}",
+            super::diagnostics::error_summary(&error)
         );
+        context.log(index, &safe_error(&error));
         warnings.push("initial_dialogs_failed");
     }
     super::flow::pause_for_registration_transition().await;
     context.log(index, "loading_initial_contacts");
     if let Err(error) = session.load_initial_contacts().await {
-        context.log(
-            index,
-            &format!(
-                "initial_contacts_failed: {}",
-                super::diagnostics::error_summary(&error)
-            ),
+        dbg_log!(
+            "registrar::initial_contacts failed {}",
+            super::diagnostics::error_summary(&error)
         );
+        context.log(index, &safe_error(&error));
         warnings.push("initial_contacts_failed");
     }
     if config.add_to_panel {
@@ -1539,14 +1583,7 @@ async fn setup_login_email(
                 continue;
             }
             Err(error) => {
-                context.log(
-                    index,
-                    &format!(
-                        "login_email_send_code_failed: {} ({})",
-                        login_email_error_description(&error),
-                        super::diagnostics::error_summary(&error)
-                    ),
-                );
+                context.log(index, &safe_error(&error));
                 return Err(error);
             }
         }
@@ -1577,18 +1614,6 @@ async fn setup_login_email(
 
 fn is_email_rejected(error: &str) -> bool {
     error.contains("EMAIL_NOT_ALLOWED") || error.contains("EMAIL_INVALID")
-}
-
-fn login_email_error_description(error: &str) -> &'static str {
-    if error.contains("EMAIL_NOT_ALLOWED") {
-        "Telegram does not allow this email address"
-    } else if error.contains("EMAIL_INVALID") {
-        "Telegram rejected an invalid email address"
-    } else if error.contains("EMAIL_VERIFY_EXPIRED") {
-        "Telegram email verification code expired"
-    } else {
-        "Telegram email verification failed"
-    }
 }
 
 fn copy_to_panel(source: &AccountStorage, account_id: &str) -> Result<(), String> {
@@ -1935,12 +1960,40 @@ mod tests {
         );
         assert_eq!(
             safe_error("rpc error 400: PHONE_CODE_INVALID"),
-            "PHONE_CODE_INVALID"
+            "telegram_code_invalid"
         );
         assert_eq!(safe_error("sms_transport"), "sms_transport");
         assert_eq!(
             safe_error(RECAPTCHA_ANTISAFETY_REQUIRED),
             RECAPTCHA_ANTISAFETY_REQUIRED
+        );
+    }
+
+    #[test]
+    fn telegram_errors_are_readable_without_exposing_remote_payloads() {
+        assert_eq!(
+            safe_error("RPC 420: FLOOD_WAIT_123"),
+            "telegram_flood_wait:123"
+        );
+        assert_eq!(
+            safe_error("FLOOD_PREMIUM_WAIT_45"),
+            "telegram_flood_wait:45"
+        );
+        assert_eq!(
+            safe_error("RPC 400: PHONE_NUMBER_FLOOD"),
+            "telegram_number_rate_limited"
+        );
+        assert_eq!(
+            safe_error("RPC 400: USERNAME_OCCUPIED"),
+            "telegram_username_occupied"
+        );
+        assert_eq!(
+            safe_error("RPC 400: UNKNOWN_SECRET_value"),
+            "registration_step_failed"
+        );
+        assert_eq!(
+            safe_error("RPC 420: FLOOD_WAIT_123_secret"),
+            "registration_step_failed"
         );
     }
 

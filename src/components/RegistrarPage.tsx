@@ -613,6 +613,8 @@ export function RegistrarPage() {
       {logs.length > 0 && <pre aria-live="polite" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-xs">{logs.map((line) => {
         const split = line.indexOf("] ");
         const message = line.slice(split + 2);
+        const floodWait = /^telegram_flood_wait:(\d+)$/.exec(message);
+        if (split >= 0 && floodWait) return line.slice(0, split + 2) + t("registrar.stages.telegram_flood_wait", { seconds: floodWait[1] });
         const key = `registrar.stages.${message}`;
         const translated = t(key);
         return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
