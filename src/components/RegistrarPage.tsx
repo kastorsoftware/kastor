@@ -615,6 +615,8 @@ export function RegistrarPage() {
         const message = line.slice(split + 2);
         const floodWait = /^telegram_flood_wait:(\d+)$/.exec(message);
         if (split >= 0 && floodWait) return line.slice(0, split + 2) + t("registrar.stages.telegram_flood_wait", { seconds: floodWait[1] });
+        const unknownRpc = /^telegram_unknown_rpc:([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)$/.exec(message);
+        if (split >= 0 && unknownRpc) return line.slice(0, split + 2) + t("registrar.stages.telegram_unknown_rpc", { code: unknownRpc[1] });
         const key = `registrar.stages.${message}`;
         const translated = t(key);
         return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;

@@ -105,6 +105,7 @@ export const ru = {
       registration_step_failed: "Ошибка на текущем этапе регистрации",
       telegram_flood_wait: "Telegram ограничил запросы: подождите {seconds} сек.",
       telegram_flood_wait_unknown: "Telegram ограничил запросы; повторите позже",
+      telegram_unknown_rpc: "Telegram вернул ошибку: {code}",
       telegram_phone_banned: "Telegram заблокировал этот номер; нужен другой номер",
       telegram_number_rate_limited: "Слишком много попыток для этого номера; попробуйте позже или другой номер",
       telegram_phone_invalid: "Telegram отклонил номер как некорректный",

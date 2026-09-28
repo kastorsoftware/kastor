@@ -105,6 +105,7 @@ export const en = {
       registration_step_failed: "Current registration step failed",
       telegram_flood_wait: "Telegram rate-limited requests: wait {seconds} seconds.",
       telegram_flood_wait_unknown: "Telegram rate-limited requests; try again later",
+      telegram_unknown_rpc: "Telegram returned an error: {code}",
       telegram_phone_banned: "Telegram banned this number; use another number",
       telegram_number_rate_limited: "Too many attempts for this number; try later or use another number",
       telegram_phone_invalid: "Telegram rejected the phone number as invalid",

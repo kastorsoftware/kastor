@@ -977,7 +977,7 @@ fn safe_error(error: &str) -> String {
                 }
             }
         }
-        return match code {
+        let message = match code {
             "FLOOD_WAIT" | "FLOOD_PREMIUM_WAIT" => "telegram_flood_wait_unknown",
             "PHONE_NUMBER_BANNED" => "telegram_phone_banned",
             "PHONE_NUMBER_FLOOD" | "PHONE_PASSWORD_FLOOD" => "telegram_number_rate_limited",
@@ -1002,8 +1002,13 @@ fn safe_error(error: &str) -> String {
             "SESSION_PASSWORD_NEEDED" => "telegram_2fa_required",
             "PASSWORD_HASH_INVALID" => "telegram_2fa_invalid",
             _ => "registration_step_failed",
+        };
+        if message != "registration_step_failed" {
+            return message.to_string();
         }
-        .to_string();
+        if is_safe_unknown_rpc_code(error, code) {
+            return format!("telegram_unknown_rpc:{code}");
+        }
     }
     "registration_step_failed".to_string()
 }
@@ -1020,6 +1025,25 @@ fn telegram_rpc_code(error: &str) -> Option<&str> {
         })
         .next()?;
     (code.len() <= 128 && code.contains('_')).then_some(code)
+}
+
+fn is_safe_unknown_rpc_code(error: &str, code: &str) -> bool {
+    let payload = if error.starts_with("RPC ") || error.starts_with("rpc error ") {
+        error.split_once(": ").map(|(_, payload)| payload)
+    } else {
+        None
+    };
+    payload == Some(code)
+        && code.len() <= 64
+        && code.as_bytes().first().is_some_and(u8::is_ascii_uppercase)
+        && !code.starts_with("RECAPTCHA_CHECK_")
+        && code.split('_').count() >= 2
+        && code.split('_').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        })
 }
 
 async fn open_registration_session(
@@ -1989,6 +2013,14 @@ mod tests {
         );
         assert_eq!(
             safe_error("RPC 400: UNKNOWN_SECRET_value"),
+            "registration_step_failed"
+        );
+        assert_eq!(
+            safe_error("RPC 400: SOME_NEW_ERROR"),
+            "telegram_unknown_rpc:SOME_NEW_ERROR"
+        );
+        assert_eq!(
+            safe_error("RPC 400: RECAPTCHA_CHECK_LOGIN__SITEKEY"),
             "registration_step_failed"
         );
         assert_eq!(
