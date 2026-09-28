@@ -6,6 +6,7 @@ use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl::{self, AuthCodeSettings, AuthorizedUser, SentCode};
 use crate::mtproto::transport::MtpTransport;
 use crate::proxy::ProxyConfig;
+use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
 use crate::registrar::profile::RegistrationProfile;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -13,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
+pub(crate) const RECAPTCHA_ANTISAFETY_REQUIRED: &str = "recaptcha_antisafety_required";
 
 const RECAPTCHA_TIMEOUT: Duration = Duration::from_secs(120);
 const RECAPTCHA_POLL_INTERVAL: Duration = Duration::from_secs(5);
@@ -562,7 +563,7 @@ async fn start_on_dc(
             let Some(challenge) = parse_recaptcha_challenge(&error) else {
                 return Err(error);
             };
-            let config = antisafety.ok_or("AntiSafety credentials are required for reCAPTCHA")?;
+            let config = antisafety.ok_or(RECAPTCHA_ANTISAFETY_REQUIRED)?;
             dbg_log!(
                 "registrar::send_code dc={} recaptcha_challenge_received",
                 dc_id

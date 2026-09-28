@@ -16,6 +16,7 @@ use crate::registrar::db::{registrar_directory, RegistrarDatabase, RegistrationR
 use crate::registrar::email::{EmailSource, MailboxAccount};
 use crate::registrar::flow::{
     RegistrationCodeRequest, RegistrationIdentity, RegistrationOutcome, RegistrationSession,
+    RECAPTCHA_ANTISAFETY_REQUIRED,
 };
 use crate::registrar::profile::{fetch_latest_android_versions, RegistrationProfile};
 use crate::registrar::sms::{
@@ -979,6 +980,7 @@ fn safe_error(error: &str) -> String {
         | "activation_unavailable"
         | "sms_proxy_unavailable"
         | "email_verification_timeout"
+        | RECAPTCHA_ANTISAFETY_REQUIRED
         | "re_registration_retry_limit" => error.to_string(),
         _ => "registration_step_failed".to_string(),
     }
@@ -1936,6 +1938,10 @@ mod tests {
             "PHONE_CODE_INVALID"
         );
         assert_eq!(safe_error("sms_transport"), "sms_transport");
+        assert_eq!(
+            safe_error(RECAPTCHA_ANTISAFETY_REQUIRED),
+            RECAPTCHA_ANTISAFETY_REQUIRED
+        );
     }
 
     #[test]

@@ -90,6 +90,7 @@ export const en = {
       registration_storage_failed: "Telegram created the account, but saving failed; check the results folder",
       progress_save_failed: "Could not save task progress",
       registration_step_failed: "Current registration step failed",
+      recaptcha_antisafety_required: "Telegram requested reCAPTCHA, but AntiSafety is unavailable. Try a higher-quality proxy or a number from another country, or enable “Pretend to be a mobile device” to solve it through AntiSafety.",
       sms_timeout: "SMS timeout",
       stopped: "Stopped",
       app_code_rejected: "Number rejected: code was sent to the app",

@@ -90,6 +90,7 @@ export const ru = {
       registration_storage_failed: "Telegram создал аккаунт, но сохранение файлов завершилось ошибкой; проверьте папку результатов",
       progress_save_failed: "Не удалось сохранить прогресс задачи",
       registration_step_failed: "Ошибка на текущем этапе регистрации",
+      recaptcha_antisafety_required: "Telegram запросил reCAPTCHA, но AntiSafety недоступен. Попробуйте более качественный прокси или номер другой страны либо включите «Притворяться мобильным устройством», чтобы пройти проверку через AntiSafety.",
       sms_timeout: "Истёк таймаут SMS",
       stopped: "Остановлено",
       app_code_rejected: "Номер отклонён: код отправлен в приложение",
