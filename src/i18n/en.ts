@@ -75,6 +75,8 @@ export const en = {
       username_set_failed: "Account created, but the username could not be set",
       proxy_locale_unavailable: "Could not determine proxy location; original language and time zone were kept",
       number_purchased: "Number obtained",
+      number_already_in_accounts: "Number already exists in Accounts; activation cancelled",
+      duplicate_check_failed: "Could not inspect stored account numbers; activation cancelled",
       setting_up_login_email: "Setting up login e-mail…",
       login_email_fallback_type_selected: "Selected fallback e-mail type",
       login_email_trying_another: "Telegram rejected the email; trying another",

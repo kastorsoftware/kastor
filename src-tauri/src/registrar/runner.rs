@@ -820,6 +820,30 @@ async fn process_attempt(
         cancel_activation(sms_config.clone(), activation.id.clone());
         return Err(error);
     }
+    let phone = activation.phone.clone();
+    let already_in_accounts = tokio::task::spawn_blocking(move || {
+        crate::accounts::commands::get_storage_pub().contains_phone(&phone)
+    })
+    .await;
+    match already_in_accounts {
+        Ok(Ok(true)) => {
+            cancel_activation(sms_config, activation.id);
+            record.status = "number_already_in_accounts".into();
+            record.error = Some("Number already exists in Accounts".into());
+            context.record(record_id, &record).await?;
+            context.log(index, "number_already_in_accounts");
+            return Ok(false);
+        }
+        Ok(Ok(false)) => {}
+        _ => {
+            cancel_activation(sms_config, activation.id);
+            record.status = "duplicate_check_failed".into();
+            record.error = Some("Failed to inspect stored accounts".into());
+            context.record(record_id, &record).await?;
+            context.log(index, "duplicate_check_failed");
+            return Err("Failed to inspect stored accounts".into());
+        }
+    }
     if activation.cost.is_some_and(|price| {
         !price.is_finite()
             || price < config.min_price.unwrap_or(0.0)

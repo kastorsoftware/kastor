@@ -75,6 +75,8 @@ export const ru = {
       username_set_failed: "Аккаунт создан, но username не удалось установить",
       proxy_locale_unavailable: "Не удалось определить гео прокси; оставлены исходные язык и часовой пояс",
       number_purchased: "Номер получен",
+      number_already_in_accounts: "Номер уже есть в разделе «Аккаунты»; активация отменена",
+      duplicate_check_failed: "Не удалось проверить номера в сохранённых аккаунтах; активация отменена",
       setting_up_login_email: "Настройка почты для входа…",
       login_email_fallback_type_selected: "Выбран резервный тип почты",
       login_email_trying_another: "Telegram отклонил почту; пробуем следующую",
