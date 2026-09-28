@@ -2,6 +2,7 @@ pub mod antisafety;
 pub mod sms;
 pub mod commands;
 pub mod db;
+pub mod email;
 pub mod flow;
 pub mod manual;
 pub mod profile;

@@ -11,6 +11,7 @@ import { optionalPrice } from "@/lib/registrarSettings";
 type NameMode = "same" | "file" | "random";
 type AvatarMode = "emoji" | "folder" | "single" | "generated";
 type UsernameMode = "random" | "from_list" | "prefix_random";
+type EmailSource = "anti_safety" | "firstmail" | "gmx";
 
 type Provider = { kind: string; label: string; requires_endpoint: boolean };
 type Country = { id: string; name: string };
@@ -19,7 +20,7 @@ type Progress = { task_id: string; total: number | null; processed: number; regi
 type Identity = { first_name: string; last_name: string };
 type StoredSettings = {
   provider: string; apiKey: string; customEndpoint: string; selectedCountries: string[]; countMode: "count" | "budget"; count: string;
-  setTwoFa: boolean; twoFaPassword: string; reRegisterExisting: boolean; antiSafetyKey: string; antiSafetyAid: string; emailPremium: boolean; allowEmailFallback: boolean;
+  setTwoFa: boolean; twoFaPassword: string; reRegisterExisting: boolean; mobileDevice: boolean; antiSafetyKey: string; antiSafetyAid: string; emailSource: EmailSource; emailFilePath: string; emailPremium: boolean; allowEmailFallback: boolean;
   addToPanel: boolean; openResults: boolean; hidePhoneNumber: boolean; hideOnlineStatus: boolean; setAvatar: boolean; setUsername: boolean; smsTimeout: string; stopOnPriceChange: boolean; minPrice: string; maxPrice: string;
   nameMode: NameMode; firstName: string; lastName: string; namesFile: string; rejectAppCode: boolean; concurrency: string; pollInterval: string;
   failureStop: boolean; failureLimit: string;
@@ -45,8 +46,11 @@ export function RegistrarPage() {
   const [setTwoFa, setSetTwoFa] = useState(false);
   const [twoFaPassword, setTwoFaPassword] = useState("");
   const [reRegisterExisting, setReRegisterExisting] = useState(true);
+  const [mobileDevice, setMobileDevice] = useState(true);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
+  const [emailSource, setEmailSource] = useState<EmailSource>("anti_safety");
+  const [emailFilePath, setEmailFilePath] = useState("");
   const [emailPremium, setEmailPremium] = useState(false);
   const [allowEmailFallback, setAllowEmailFallback] = useState(false);
   const [addToPanel, setAddToPanel] = useState(true);
@@ -97,8 +101,8 @@ export function RegistrarPage() {
   const running = progress !== null && !progress.finished;
 
   const storedSettings = (): StoredSettings => ({
-    provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, reRegisterExisting, antiSafetyKey, antiSafetyAid,
-    emailPremium, allowEmailFallback, addToPanel, openResults, hidePhoneNumber, hideOnlineStatus, setAvatar, setUsername, smsTimeout, stopOnPriceChange, minPrice, maxPrice, nameMode,
+    provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, reRegisterExisting, mobileDevice, antiSafetyKey, antiSafetyAid,
+    emailSource, emailFilePath, emailPremium, allowEmailFallback, addToPanel, openResults, hidePhoneNumber, hideOnlineStatus, setAvatar, setUsername, smsTimeout, stopOnPriceChange, minPrice, maxPrice, nameMode,
     firstName, lastName, namesFile, rejectAppCode, concurrency, pollInterval, failureStop, failureLimit,
     avatarMode, avatarPath, usernameMode, usernamePrefix, usernameListPath,
     manualLocale, registrationLanguage, timezoneOffset,
@@ -114,8 +118,11 @@ export function RegistrarPage() {
     if (typeof settings.setTwoFa === "boolean") setSetTwoFa(settings.setTwoFa);
     if (typeof settings.twoFaPassword === "string") setTwoFaPassword(settings.twoFaPassword);
     if (typeof settings.reRegisterExisting === "boolean") setReRegisterExisting(settings.reRegisterExisting);
+    if (typeof settings.mobileDevice === "boolean") setMobileDevice(settings.mobileDevice);
     if (typeof settings.antiSafetyKey === "string") setAntiSafetyKey(settings.antiSafetyKey);
     if (typeof settings.antiSafetyAid === "string") setAntiSafetyAid(settings.antiSafetyAid);
+    if (settings.emailSource && ["anti_safety", "firstmail", "gmx"].includes(settings.emailSource)) setEmailSource(settings.emailSource);
+    if (typeof settings.emailFilePath === "string") setEmailFilePath(settings.emailFilePath);
     if (typeof settings.emailPremium === "boolean") setEmailPremium(settings.emailPremium);
     if (typeof settings.allowEmailFallback === "boolean") setAllowEmailFallback(settings.allowEmailFallback);
     if (typeof settings.addToPanel === "boolean") setAddToPanel(settings.addToPanel);
@@ -321,6 +328,13 @@ export function RegistrarPage() {
     if (typeof path === "string") setNamesFile(path);
   };
 
+  const selectEmailFile = async () => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const path = await open({ multiple: false, filters: [{ name: "Text", extensions: ["txt"] }] });
+    if (typeof path === "string") setEmailFilePath(path);
+  };
+
   const startTask = async () => {
     setLaunching(true);
     setRequestError("");
@@ -333,7 +347,8 @@ export function RegistrarPage() {
       if (countMode === "count" && (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000)) throw new Error("registrar.invalidCount");
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
-      if (!antiSafetyKey.trim() || !antiSafetyAid.trim()) throw new Error("registrar.pushCredentialsRequired");
+      if ((mobileDevice || emailSource === "anti_safety") && (!antiSafetyKey.trim() || !antiSafetyAid.trim())) throw new Error("registrar.pushCredentialsRequired");
+      if (emailSource !== "anti_safety" && !emailFilePath) throw new Error("registrar.emailFileRequired");
       if (setAvatar && (avatarMode === "folder" || avatarMode === "single") && !avatarPath) throw new Error("registrar.avatarRequired");
       if (setUsername && usernameMode === "from_list" && !usernameListPath) throw new Error("registrar.usernameFileRequired");
       if (manualLocale && (!Number.isInteger(Number(timezoneOffset)) || Number(timezoneOffset) < -12 || Number(timezoneOffset) > 14)) throw new Error("registrar.invalidTimezone");
@@ -366,8 +381,9 @@ export function RegistrarPage() {
         attempts, attempt_count: countMode === "count" ? quantity : null, random_names: nameMode === "random",
         countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
         min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
-        two_fa_password: setTwoFa ? twoFaPassword : null, re_register_existing: reRegisterExisting, send_push: true,
-        antisafety: { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() },
+        two_fa_password: setTwoFa ? twoFaPassword : null, re_register_existing: reRegisterExisting, send_push: mobileDevice,
+        antisafety: mobileDevice || emailSource === "anti_safety" ? { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() } : null,
+        email_source: emailSource, email_file_path: emailSource === "anti_safety" ? null : emailFilePath,
         email_premium: emailPremium,
         allow_email_fallback: allowEmailFallback,
         max_consecutive_failures: failureStop ? Number(failureLimit) : null,
@@ -492,6 +508,7 @@ export function RegistrarPage() {
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
             <ToggleRow checked={reRegisterExisting} onChange={setReRegisterExisting} label={t("registrar.reRegisterExisting")} help={t("registrar.reRegisterExistingHint")} />
+            <ToggleRow checked={mobileDevice} onChange={setMobileDevice} label={t("registrar.mobileDevice")} help={t("registrar.mobileDeviceHint")} />
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
             <ToggleRow checked={openResults} onChange={setOpenResults} label={t("registrar.openResults")} />
             <ToggleRow checked={hidePhoneNumber} onChange={setHidePhoneNumber} label={t("registrar.hidePhoneNumber")} />
@@ -518,19 +535,30 @@ export function RegistrarPage() {
           </div>
         </Section>
 
-        <Section icon={Smartphone} title={t("registrar.antiSafety")}>
-          <p className="-mt-2 text-xs text-muted-foreground">{t("registrar.antiSafetyHint")}</p>
-          <div className="mt-4 grid gap-4">
-            <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
-            <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
-            <div className="space-y-3">
+        <Section icon={Smartphone} title={t("registrar.emailSection")}>
+          <div className="space-y-4">
+            <Field label={t("registrar.emailSource")}><RegistrarSelect label={t("registrar.emailSource")} value={emailSource} onChange={(value) => setEmailSource(value as EmailSource)} options={[{ value: "anti_safety", label: "AntiSafety" }, { value: "firstmail", label: "Firstmail" }, { value: "gmx", label: "GMX.de" }]} /></Field>
+            {emailSource === "anti_safety" ? <div className="space-y-3">
               <div className="flex items-center gap-2.5 text-xs font-medium"><span className={!emailPremium ? "text-primary" : "text-muted-foreground"}>Basic</span><button type="button" role="switch" aria-label={t("registrar.emailPremium")} aria-checked={emailPremium} onClick={() => setEmailPremium((current) => !current)} className={`relative h-6 w-11 rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${emailPremium ? "border-primary bg-primary" : "border-border bg-muted"}`}><span className={`absolute top-0.5 h-[18px] w-[18px] rounded-full bg-background shadow-sm transition-transform ${emailPremium ? "left-[22px]" : "left-0.5"}`} /></button><span className={emailPremium ? "text-primary" : "text-muted-foreground"}>Premium</span></div>
               <ToggleRow checked={allowEmailFallback} onChange={setAllowEmailFallback} label={t("registrar.emailFallback")} />
-            </div>
-            <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="w-fit rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:border-primary/50">{t("registrar.whatIsThis")}</button>
+            </div> : <div className="space-y-2">
+              <PickerButton onClick={() => void selectEmailFile()} icon="file" label={t("registrar.chooseFile")} value={emailFilePath} />
+              <p className="text-xs text-muted-foreground">{t("registrar.emailFileHint")}</p>
+              {emailSource === "firstmail" && <p className="text-xs text-muted-foreground">{t("registrar.firstmailHint")}</p>}
+              {emailSource === "gmx" && <p className="text-xs text-muted-foreground">{t("registrar.gmxHint")}</p>}
+            </div>}
           </div>
         </Section>
       </div>
+
+      {(mobileDevice || emailSource === "anti_safety") && <Section icon={Smartphone} title={t("registrar.antiSafety")} headingClassName="mb-3">
+        <p className="text-xs text-muted-foreground">{t("registrar.antiSafetyHint")}</p>
+        <div className="mt-3 grid gap-4 md:grid-cols-2">
+          <Field label={t("registrar.antiSafetyKey")}><input value={antiSafetyKey} onChange={(event) => setAntiSafetyKey(event.target.value)} type="password" autoComplete="off" className={inputClass} /></Field>
+          <Field label="AID"><input value={antiSafetyAid} onChange={(event) => setAntiSafetyAid(event.target.value)} className={inputClass} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" /></Field>
+        </div>
+        <button type="button" onClick={() => setAntiSafetyHelpOpen(true)} className="mt-3 w-fit rounded-md border border-border bg-background px-3 py-2 text-sm font-medium hover:border-primary/50">{t("registrar.whatIsThis")}</button>
+      </Section>}
 
       <Section icon={Smartphone} title={t("registrar.namesSection")} headingClassName="mb-3">
         <div className="grid gap-4 xl:grid-cols-2">

@@ -13,6 +13,7 @@ use crate::proxy::{ProxyConfig, ProxyList};
 use crate::queue::TaskQueue;
 use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
 use crate::registrar::db::{registrar_directory, RegistrarDatabase, RegistrationRecord};
+use crate::registrar::email::{EmailSource, MailboxAccount};
 use crate::registrar::flow::{
     RegistrationCodeRequest, RegistrationIdentity, RegistrationOutcome, RegistrationSession,
 };
@@ -74,6 +75,10 @@ pub struct RegistrarTaskConfig {
     pub email_premium: bool,
     #[serde(default)]
     pub allow_email_fallback: bool,
+    #[serde(default)]
+    pub email_source: EmailSource,
+    #[serde(default)]
+    pub email_file_path: Option<String>,
     #[serde(default)]
     pub max_consecutive_failures: Option<usize>,
     #[serde(default = "yes")]
@@ -193,7 +198,12 @@ impl RegistrarTaskConfig {
         {
             return Err("2FA password must contain from 1 to 256 bytes".into());
         }
-        validate_required_push(self.send_push, self.antisafety.as_ref())?;
+        validate_antisafety(self.send_push, self.email_source, self.antisafety.as_ref())?;
+        if self.email_source != EmailSource::AntiSafety
+            && self.email_file_path.as_deref().is_none_or(str::is_empty)
+        {
+            return Err("registrar.emailFileRequired".into());
+        }
         for attempt in &self.attempts {
             attempt.profile.validate_request()?;
             attempt.identity.validate()?;
@@ -203,12 +213,16 @@ impl RegistrarTaskConfig {
     }
 }
 
-fn validate_required_push(enabled: bool, config: Option<&AntiSafetyConfig>) -> Result<(), String> {
-    if !enabled {
-        return Err("Push is required for registration".into());
+fn validate_antisafety(
+    send_push: bool,
+    email_source: EmailSource,
+    config: Option<&AntiSafetyConfig>,
+) -> Result<(), String> {
+    if send_push || email_source == EmailSource::AntiSafety {
+        let config = config.ok_or("AntiSafety credentials are required")?;
+        AntiSafetyClient::new(config.clone()).map(|_| ())?;
     }
-    let config = config.ok_or("AntiSafety credentials are required for Push")?;
-    AntiSafetyClient::new(config.clone()).map(|_| ())
+    Ok(())
 }
 
 fn validate_prices(
@@ -241,6 +255,8 @@ pub struct RegistrarProgress {
 }
 
 struct Context {
+    mailboxes: Vec<MailboxAccount>,
+    mailbox_index: AtomicUsize,
     usernames: Vec<String>,
     username_index: AtomicUsize,
     proxy_locales: tokio::sync::Mutex<HashMap<String, ProxyLocale>>,
@@ -296,6 +312,15 @@ pub async fn registrar_start(
     app: tauri::AppHandle,
 ) -> Result<String, String> {
     config.validate()?;
+    let mailboxes = if config.email_source == EmailSource::AntiSafety {
+        Vec::new()
+    } else {
+        let path = config
+            .email_file_path
+            .as_deref()
+            .ok_or("registrar.emailFileRequired")?;
+        MailboxAccount::load_file(std::path::Path::new(path), config.email_source)?
+    };
     if config.set_avatar
         && (!matches!(
             config.avatar_mode.as_str(),
@@ -389,6 +414,8 @@ pub async fn registrar_start(
         )
         .await;
     let context = Arc::new(Context {
+        mailboxes,
+        mailbox_index: AtomicUsize::new(0),
         usernames,
         username_index: AtomicUsize::new(0),
         proxy_locales: tokio::sync::Mutex::new(HashMap::new()),
@@ -970,13 +997,7 @@ async fn open_registration_session(
             context,
             index,
             &mut session,
-            config
-                .antisafety
-                .clone()
-                .ok_or("missing AntiSafety configuration")?,
             sms_config.http_proxy.as_deref(),
-            config.email_premium,
-            config.allow_email_fallback,
             &context.token,
         )
         .await?
@@ -1335,129 +1356,201 @@ async fn register_push(
     }
 }
 
+enum EmailCandidate {
+    AntiSafety {
+        client: AntiSafetyClient,
+        id: String,
+        premium: bool,
+        address: String,
+    },
+    Imap {
+        account: MailboxAccount,
+        baseline: u32,
+        seen: std::collections::HashSet<u32>,
+    },
+}
+
+impl EmailCandidate {
+    fn address(&self) -> &str {
+        match self {
+            Self::AntiSafety { address, .. } => address,
+            Self::Imap { account, .. } => &account.address,
+        }
+    }
+
+    async fn poll_code(&mut self) -> Result<Option<String>, String> {
+        match self {
+            Self::AntiSafety {
+                client,
+                id,
+                premium,
+                ..
+            } => {
+                let client = client.clone();
+                let id = id.clone();
+                let premium = *premium;
+                tokio::task::spawn_blocking(move || client.get_email(&id, premium))
+                    .await
+                    .map_err(|_| "Email worker failed".to_string())?
+                    .map(Some)
+                    .or(Ok(None))
+            }
+            Self::Imap {
+                account,
+                baseline,
+                seen,
+            } => {
+                let account = account.clone();
+                let baseline = *baseline;
+                let mut polled = std::mem::take(seen);
+                let result = tokio::task::spawn_blocking(move || {
+                    let result = account.code_after(baseline, &mut polled);
+                    (result, polled)
+                })
+                .await
+                .map_err(|_| "IMAP worker failed".to_string())?;
+                *seen = result.1;
+                result.0
+            }
+        }
+    }
+}
+
+async fn next_email_candidate(
+    context: &Context,
+    index: usize,
+    http_proxy: Option<&str>,
+) -> Result<EmailCandidate, String> {
+    match context.config.email_source {
+        EmailSource::AntiSafety => {
+            let config = context
+                .config
+                .antisafety
+                .clone()
+                .ok_or("missing AntiSafety configuration")?;
+            let client = AntiSafetyClient::new_with_proxy(config, http_proxy)?;
+            let premium = context.config.email_premium;
+            let task_client = client.clone();
+            let result = tokio::task::spawn_blocking(move || task_client.create_email(premium))
+                .await
+                .map_err(|_| "Email worker failed")?;
+            let (task, premium) = match result {
+                Ok(task) => (task, premium),
+                Err(_) if context.config.allow_email_fallback => {
+                    let fallback_client = client.clone();
+                    let task =
+                        tokio::task::spawn_blocking(move || fallback_client.create_email(!premium))
+                            .await
+                            .map_err(|_| "Email worker failed")??;
+                    context.log(index, "login_email_fallback_type_selected");
+                    (task, !premium)
+                }
+                Err(error) => return Err(error),
+            };
+            Ok(EmailCandidate::AntiSafety {
+                client,
+                id: task.id,
+                premium,
+                address: task.email,
+            })
+        }
+        EmailSource::Firstmail | EmailSource::Gmx => {
+            let position = context.mailbox_index.fetch_add(1, Ordering::Relaxed);
+            let account = context
+                .mailboxes
+                .get(position)
+                .ok_or("registrar.emailAccountsExhausted")?
+                .clone();
+            let baseline = tokio::task::spawn_blocking({
+                let account = account.clone();
+                move || account.latest_uid()
+            })
+            .await
+            .map_err(|_| "IMAP worker failed")??;
+            Ok(EmailCandidate::Imap {
+                account,
+                baseline,
+                seen: std::collections::HashSet::new(),
+            })
+        }
+    }
+}
+
 async fn setup_login_email(
     context: &Context,
     index: usize,
     session: &mut RegistrationSession,
-    config: AntiSafetyConfig,
     http_proxy: Option<&str>,
-    email_premium: bool,
-    allow_email_fallback: bool,
     token: &AtomicBool,
 ) -> Result<crate::mtproto::tl::SentCode, String> {
-    if !token.load(Ordering::Relaxed) {
-        return Err("stopped".into());
-    }
-    let client = AntiSafetyClient::new_with_proxy(config, http_proxy)?;
-    let task_client = client.clone();
-    let (task, selected_email_premium) =
-        match tokio::task::spawn_blocking(move || task_client.create_email(email_premium))
+    const MAX_EMAIL_CANDIDATES: usize = 10;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    for candidate_index in 0..MAX_EMAIL_CANDIDATES {
+        if !token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err("email_verification_timeout".into());
+        }
+        let mut candidate = match next_email_candidate(context, index, http_proxy).await {
+            Ok(candidate) => candidate,
+            Err(error) if error.starts_with("IMAP ") => {
+                context.log(index, "login_email_mailbox_unavailable");
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if candidate_index > 0 {
+            context.log(index, "login_email_trying_another");
+        }
+        match session
+            .request_login_email_verification(candidate.address())
             .await
-            .map_err(|_| "Email worker failed")?
         {
-            Ok(task) => (task, email_premium),
-            Err(error) if allow_email_fallback => {
-                let fallback_client = client.clone();
-                match tokio::task::spawn_blocking(move || {
-                    fallback_client.create_email(!email_premium)
-                })
-                .await
-                .map_err(|_| "Email worker failed")?
-                {
-                    Ok(task) => {
-                        context.log(index, "login_email_fallback_type_selected");
-                        (task, !email_premium)
-                    }
-                    Err(_) => {
-                        context.log(
-                            index,
-                            &format!(
-                                "login_email_create_failed: {}",
-                                super::diagnostics::error_summary(&error)
-                            ),
-                        );
-                        return Err(error);
-                    }
-                }
+            Ok(()) => {}
+            Err(error) if is_email_rejected(&error) => {
+                context.log(index, "login_email_rejected");
+                continue;
             }
             Err(error) => {
                 context.log(
                     index,
                     &format!(
-                        "login_email_create_failed: {}",
+                        "login_email_send_code_failed: {} ({})",
+                        login_email_error_description(&error),
                         super::diagnostics::error_summary(&error)
                     ),
                 );
-                dbg_log!(
-                    "registrar::login_email stage=create failed {}",
-                    super::diagnostics::error_summary(&error)
-                );
                 return Err(error);
             }
-        };
-    if let Err(error) = session.request_login_email_verification(&task.email).await {
-        let summary = super::diagnostics::error_summary(&error);
-        context.log(
-            index,
-            &format!(
-                "login_email_send_code_failed: {} ({summary})",
-                login_email_error_description(&error)
-            ),
-        );
-        dbg_log!(
-            "registrar::login_email stage=send_code failed {}",
-            super::diagnostics::error_summary(&error)
-        );
-        return Err(error);
-    }
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    loop {
-        if !token.load(Ordering::Relaxed) {
-            return Err("stopped".into());
         }
-        let task_client = client.clone();
-        let id = task.id.clone();
-        let result =
-            tokio::task::spawn_blocking(move || task_client.get_email(&id, selected_email_premium))
-                .await
-                .map_err(|_| "Email worker failed")?;
-        match result {
-            Ok(code) => match session.confirm_login_email_verification(&code).await {
-                Ok(sent_code) => return Ok(sent_code),
-                Err(error) => {
-                    context.log(
-                        index,
-                        &format!(
-                            "login_email_verify_failed: {} ({})",
-                            login_email_error_description(&error),
-                            super::diagnostics::error_summary(&error)
-                        ),
-                    );
-                    dbg_log!(
-                        "registrar::login_email stage=verify failed {}",
-                        super::diagnostics::error_summary(&error)
-                    );
-                    return Err(error);
-                }
-            },
-            Err(_) if tokio::time::Instant::now() < deadline => {
-                for _ in 0..5 {
-                    if !token.load(Ordering::Relaxed) {
-                        return Err("stopped".into());
-                    }
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
+        loop {
+            if !token.load(Ordering::Relaxed) {
+                return Err("stopped".into());
             }
-            Err(_) => {
-                context.log(
-                    index,
-                    "login_email_get_code_failed: verification code timeout",
-                );
-                dbg_log!("registrar::login_email stage=get_code failed category=timeout");
+            if tokio::time::Instant::now() >= deadline {
                 return Err("email_verification_timeout".into());
             }
+            match candidate.poll_code().await? {
+                Some(code) => match session.confirm_login_email_verification(&code).await {
+                    Ok(sent_code) => return Ok(sent_code),
+                    Err(error) if is_email_rejected(&error) => {
+                        context.log(index, "login_email_rejected");
+                        break;
+                    }
+                    Err(error) => return Err(error),
+                },
+                None => {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                }
+            }
         }
     }
+    Err("registrar.emailRejectedLimit".into())
+}
+
+fn is_email_rejected(error: &str) -> bool {
+    error.contains("EMAIL_NOT_ALLOWED") || error.contains("EMAIL_INVALID")
 }
 
 fn login_email_error_description(error: &str) -> &'static str {
@@ -1685,22 +1778,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registration_requires_push_and_antisafety_credentials() {
+    fn antisafety_credentials_are_required_only_for_selected_features() {
         let config = AntiSafetyConfig {
             api_key: "test-key".into(),
             aid: "test-aid".into(),
         };
-        assert!(validate_required_push(false, Some(&config)).is_err());
-        assert!(validate_required_push(true, None).is_err());
-        assert!(validate_required_push(
+        assert!(validate_antisafety(false, EmailSource::Gmx, None).is_ok());
+        assert!(validate_antisafety(true, EmailSource::Gmx, None).is_err());
+        assert!(validate_antisafety(false, EmailSource::AntiSafety, None).is_err());
+        assert!(validate_antisafety(
             true,
+            EmailSource::AntiSafety,
             Some(&AntiSafetyConfig {
                 api_key: "".into(),
                 ..config.clone()
             })
         )
         .is_err());
-        assert!(validate_required_push(true, Some(&config)).is_ok());
+        assert!(validate_antisafety(true, EmailSource::Gmx, Some(&config)).is_ok());
+    }
+
+    #[test]
+    fn only_address_rejections_switch_mailboxes() {
+        assert!(is_email_rejected("RPC 400: EMAIL_NOT_ALLOWED"));
+        assert!(is_email_rejected("RPC 400: EMAIL_INVALID"));
+        assert!(!is_email_rejected("RPC 400: PHONE_HASH_EXPIRED"));
+        assert!(!is_email_rejected("RPC 400: CODE_INVALID"));
     }
 
     #[tokio::test]
