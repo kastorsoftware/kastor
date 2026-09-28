@@ -49,7 +49,7 @@ export function RegistrarPage() {
   const [mobileDevice, setMobileDevice] = useState(true);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
-  const [emailSource, setEmailSource] = useState<EmailSource>("anti_safety");
+  const [emailSource, setEmailSource] = useState<EmailSource>("firstmail");
   const [emailFilePath, setEmailFilePath] = useState("");
   const [emailPremium, setEmailPremium] = useState(false);
   const [allowEmailFallback, setAllowEmailFallback] = useState(false);
@@ -663,7 +663,7 @@ function Section({ icon: Icon, title, children, headingClassName = "mb-5" }: { i
 }
 
 function Field({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
-  return <div className={className}><label className="text-sm font-medium">{label}</label>{hint && <p className="mb-1.5 mt-0.5 text-xs text-muted-foreground">{hint}</p>}<div className={hint ? "" : "mt-auto pt-1.5"}>{children}</div></div>;
+  return <div className={className}><label className="text-sm font-medium">{label}</label>{hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}<div className="mt-auto pt-1.5">{children}</div></div>;
 }
 
 function ToggleRow({ checked, onChange, label, hint, help }: { checked: boolean; onChange: (checked: boolean) => void; label: string; hint?: string; help?: string }) {
