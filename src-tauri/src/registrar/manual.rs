@@ -82,7 +82,7 @@ pub async fn registrar_manual_complete(
     sessions: State<'_, RegistrationSessions>,
 ) -> Result<RegistrationOutcome, String> {
     let mut stored = sessions.take(&session_id).await?;
-    match stored.session.complete(&code, &identity).await {
+    match stored.session.complete(&code, &identity, false).await {
         Ok(outcome) => Ok(outcome),
         Err(error) => {
             sessions.restore(session_id, stored).await;
@@ -97,7 +97,11 @@ pub async fn registrar_manual_resend_code(
     sessions: State<'_, RegistrationSessions>,
 ) -> Result<String, String> {
     let mut stored = sessions.take(&session_id).await?;
-    let result = stored.session.resend().await.map(|sent_code| sent_code.code_type);
+    let result = stored
+        .session
+        .resend()
+        .await
+        .map(|sent_code| sent_code.code_type);
     sessions.restore(session_id, stored).await;
     result
 }

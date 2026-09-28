@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { CircleHelp, FileText, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
 import { optionalPrice } from "@/lib/registrarSettings";
 
@@ -18,7 +19,7 @@ type Progress = { task_id: string; total: number | null; processed: number; regi
 type Identity = { first_name: string; last_name: string };
 type StoredSettings = {
   provider: string; apiKey: string; customEndpoint: string; selectedCountries: string[]; countMode: "count" | "budget"; count: string;
-  setTwoFa: boolean; twoFaPassword: string; antiSafetyKey: string; antiSafetyAid: string; emailPremium: boolean; allowEmailFallback: boolean;
+  setTwoFa: boolean; twoFaPassword: string; reRegisterExisting: boolean; antiSafetyKey: string; antiSafetyAid: string; emailPremium: boolean; allowEmailFallback: boolean;
   addToPanel: boolean; openResults: boolean; hidePhoneNumber: boolean; hideOnlineStatus: boolean; setAvatar: boolean; setUsername: boolean; smsTimeout: string; stopOnPriceChange: boolean; minPrice: string; maxPrice: string;
   nameMode: NameMode; firstName: string; lastName: string; namesFile: string; rejectAppCode: boolean; concurrency: string; pollInterval: string;
   failureStop: boolean; failureLimit: string;
@@ -43,6 +44,7 @@ export function RegistrarPage() {
   const [count, setCount] = useState("1");
   const [setTwoFa, setSetTwoFa] = useState(false);
   const [twoFaPassword, setTwoFaPassword] = useState("");
+  const [reRegisterExisting, setReRegisterExisting] = useState(false);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
   const [emailPremium, setEmailPremium] = useState(false);
@@ -95,7 +97,7 @@ export function RegistrarPage() {
   const running = progress !== null && !progress.finished;
 
   const storedSettings = (): StoredSettings => ({
-    provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, antiSafetyKey, antiSafetyAid,
+    provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, reRegisterExisting, antiSafetyKey, antiSafetyAid,
     emailPremium, allowEmailFallback, addToPanel, openResults, hidePhoneNumber, hideOnlineStatus, setAvatar, setUsername, smsTimeout, stopOnPriceChange, minPrice, maxPrice, nameMode,
     firstName, lastName, namesFile, rejectAppCode, concurrency, pollInterval, failureStop, failureLimit,
     avatarMode, avatarPath, usernameMode, usernamePrefix, usernameListPath,
@@ -111,6 +113,7 @@ export function RegistrarPage() {
     if (typeof settings.count === "string") setCount(settings.count);
     if (typeof settings.setTwoFa === "boolean") setSetTwoFa(settings.setTwoFa);
     if (typeof settings.twoFaPassword === "string") setTwoFaPassword(settings.twoFaPassword);
+    if (typeof settings.reRegisterExisting === "boolean") setReRegisterExisting(settings.reRegisterExisting);
     if (typeof settings.antiSafetyKey === "string") setAntiSafetyKey(settings.antiSafetyKey);
     if (typeof settings.antiSafetyAid === "string") setAntiSafetyAid(settings.antiSafetyAid);
     if (typeof settings.emailPremium === "boolean") setEmailPremium(settings.emailPremium);
@@ -363,7 +366,7 @@ export function RegistrarPage() {
         attempts, attempt_count: countMode === "count" ? quantity : null, random_names: nameMode === "random",
         countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
         min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
-        two_fa_password: setTwoFa ? twoFaPassword : null, send_push: true,
+        two_fa_password: setTwoFa ? twoFaPassword : null, re_register_existing: reRegisterExisting, send_push: true,
         antisafety: { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() },
         email_premium: emailPremium,
         allow_email_fallback: allowEmailFallback,
@@ -488,6 +491,7 @@ export function RegistrarPage() {
           <div className="space-y-4">
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
+            <ToggleRow checked={reRegisterExisting} onChange={setReRegisterExisting} label={t("registrar.reRegisterExisting")} help={t("registrar.reRegisterExistingHint")} />
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
             <ToggleRow checked={openResults} onChange={setOpenResults} label={t("registrar.openResults")} />
             <ToggleRow checked={hidePhoneNumber} onChange={setHidePhoneNumber} label={t("registrar.hidePhoneNumber")} />
@@ -640,8 +644,13 @@ function Field({ label, hint, children, className }: { label: string; hint?: str
   return <div className={className}><label className="text-sm font-medium">{label}</label>{hint && <p className="mb-1.5 mt-0.5 text-xs text-muted-foreground">{hint}</p>}<div className={hint ? "" : "mt-auto pt-1.5"}>{children}</div></div>;
 }
 
-function ToggleRow({ checked, onChange, label, hint }: { checked: boolean; onChange: (checked: boolean) => void; label: string; hint?: string }) {
-  return <label className="grid cursor-pointer grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-3"><input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="m-0 h-4 w-4 rounded border-border accent-primary" /><span className="text-sm font-medium leading-5">{label}</span>{hint && <span className="col-start-2 mt-0.5 text-xs text-muted-foreground">{hint}</span>}</label>;
+function ToggleRow({ checked, onChange, label, hint, help }: { checked: boolean; onChange: (checked: boolean) => void; label: string; hint?: string; help?: string }) {
+  const inputId = useId();
+  return <div className="grid grid-cols-[1rem_minmax(0,1fr)] items-center gap-x-3"><input id={inputId} type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="m-0 h-4 w-4 rounded border-border accent-primary" /><div><div className="flex items-center gap-1.5"><label htmlFor={inputId} className="cursor-pointer text-sm font-medium leading-5">{label}</label>{help && <InfoTooltip text={help} />}</div>{hint && <span className="mt-0.5 block text-xs text-muted-foreground">{hint}</span>}</div></div>;
+}
+
+function InfoTooltip({ text }: { text: string }) {
+  return <TooltipProvider><Tooltip><TooltipTrigger asChild><button type="button" aria-label={text} className="inline-flex rounded-sm text-muted-foreground transition hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"><CircleHelp className="h-4 w-4" /></button></TooltipTrigger><TooltipContent side="right" className="max-w-sm leading-5">{text}</TooltipContent></Tooltip></TooltipProvider>;
 }
 
 function CheckRow({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {

@@ -25,7 +25,8 @@ pub(crate) async fn pause_for_registration_transition() {
 }
 
 fn registration_transition_delay() -> Duration {
-    let milliseconds = rand::thread_rng().gen_range(TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS);
+    let milliseconds =
+        rand::thread_rng().gen_range(TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS);
     Duration::from_millis(milliseconds)
 }
 
@@ -98,6 +99,9 @@ impl RegistrationIdentity {
 pub enum RegistrationOutcome {
     Registered { account_id: String },
     AlreadyRegistered,
+    ReRegistrationRetryRequired,
+    ReRegistrationRequired,
+    ReRegistrationPending,
 }
 
 impl RegistrationSession {
@@ -222,17 +226,33 @@ impl RegistrationSession {
     }
 
     pub async fn set_avatar(&mut self, mode: &str, path: &str) -> Result<(), String> {
-        if mode == "emoji" { return self.set_random_avatar().await; }
-        if mode == "generated" { return crate::accounts::actions::set_generated_face_avatar(&mut self.client).await; }
+        if mode == "emoji" {
+            return self.set_random_avatar().await;
+        }
+        if mode == "generated" {
+            return crate::accounts::actions::set_generated_face_avatar(&mut self.client).await;
+        }
         let photo = if mode == "folder" {
             let photos = crate::accounts::actions::photos_from_folder(path);
-            photos.get(rand::random::<usize>() % photos.len().max(1)).ok_or("avatar folder is empty")?.clone()
-        } else { path.to_string() };
+            photos
+                .get(rand::random::<usize>() % photos.len().max(1))
+                .ok_or("avatar folder is empty")?
+                .clone()
+        } else {
+            path.to_string()
+        };
         crate::accounts::actions::set_photo_from_path(&mut self.client, &photo).await
     }
 
-    pub async fn set_username(&mut self, account_id: &str, mode: &str, prefix: &str, value: Option<&str>) -> Result<(), String> {
-        let username = crate::accounts::actions::set_username(&mut self.client, mode, prefix, value).await?;
+    pub async fn set_username(
+        &mut self,
+        account_id: &str,
+        mode: &str,
+        prefix: &str,
+        value: Option<&str>,
+    ) -> Result<(), String> {
+        let username =
+            crate::accounts::actions::set_username(&mut self.client, mode, prefix, value).await?;
         let path = self.storage().json_path(account_id);
         let mut json = AccountJson::from_file(&path)?;
         json.username = username;
@@ -250,7 +270,10 @@ impl RegistrationSession {
             crate::mtproto::tl_gen::INPUT_PRIVACY_VALUE_DISALLOW_ALL,
         );
         self.client
-            .invoke(&crate::mtproto::tl_gen::build_account_setPrivacy(&key, &[&rule]))
+            .invoke(&crate::mtproto::tl_gen::build_account_setPrivacy(
+                &key,
+                &[&rule],
+            ))
             .await
             .map(|_| ())
     }
@@ -259,6 +282,7 @@ impl RegistrationSession {
         &mut self,
         code: &str,
         identity: &RegistrationIdentity,
+        re_register_existing: bool,
     ) -> Result<RegistrationOutcome, String> {
         validate_code(code)?;
         identity.validate()?;
@@ -268,12 +292,55 @@ impl RegistrationSession {
                 "sign_in_parse",
                 tl::parse_auth_authorization(&response),
             ) {
-                Ok(_) => Ok(RegistrationOutcome::AlreadyRegistered),
+                Ok(_) => self.handle_existing_account(re_register_existing).await,
                 Err(error) if is_unoccupied(&error) => self.sign_up(identity).await,
+                Err(error) if re_register_existing && is_password_required(&error) => {
+                    self.reset_existing_account_password().await
+                }
                 Err(error) => Err(error),
             },
             Err(error) if is_unoccupied(&error) => self.sign_up(identity).await,
+            Err(error) if re_register_existing && is_password_required(&error) => {
+                self.reset_existing_account_password().await
+            }
             Err(error) => Err(error),
+        }
+    }
+
+    async fn handle_existing_account(
+        &mut self,
+        re_register_existing: bool,
+    ) -> Result<RegistrationOutcome, String> {
+        if !re_register_existing {
+            return Ok(RegistrationOutcome::AlreadyRegistered);
+        }
+
+        let response = self
+            .client
+            .invoke(&tl::build_account_delete(
+                "Re-registering this phone number",
+            ))
+            .await?;
+        if !crate::mtproto::tl_gen::parse_account_deleteAccount(&response)? {
+            return Err("Telegram rejected deletion of the existing account".to_string());
+        }
+        Ok(RegistrationOutcome::ReRegistrationRequired)
+    }
+
+    async fn reset_existing_account_password(&mut self) -> Result<RegistrationOutcome, String> {
+        let response = self
+            .client
+            .invoke(&tl::build_account_reset_password())
+            .await?;
+        match crate::mtproto::tl_gen::parse_account_resetPassword(&response)? {
+            crate::mtproto::tl_gen::TlAccountResetPasswordResult::Ok => {
+                // A new sign-in is required after Telegram has removed the 2FA password.
+                Ok(RegistrationOutcome::ReRegistrationRetryRequired)
+            }
+            crate::mtproto::tl_gen::TlAccountResetPasswordResult::RequestedWait { .. }
+            | crate::mtproto::tl_gen::TlAccountResetPasswordResult::FailedWait { .. } => {
+                Ok(RegistrationOutcome::ReRegistrationPending)
+            }
         }
     }
 
@@ -330,7 +397,10 @@ impl RegistrationSession {
         Ok(())
     }
 
-    pub async fn confirm_login_email_verification(&mut self, code: &str) -> Result<SentCode, String> {
+    pub async fn confirm_login_email_verification(
+        &mut self,
+        code: &str,
+    ) -> Result<SentCode, String> {
         if code.trim().is_empty() || code.len() > 64 || code.contains(['\r', '\n', '\0']) {
             return Err("invalid email verification code".to_string());
         }
@@ -340,7 +410,8 @@ impl RegistrationSession {
         );
         let verification = crate::mtproto::tl_gen::serialize_emailVerificationCode(code);
         let request = crate::mtproto::tl_gen::build_account_verifyEmail(&purpose, &verification);
-        let response = super::diagnostics::observe("verify_email", self.client.invoke(&request).await)?;
+        let response =
+            super::diagnostics::observe("verify_email", self.client.invoke(&request).await)?;
         match super::diagnostics::observe(
             "verify_email_parse",
             crate::mtproto::tl_gen::parse_account_verifyEmail(&response),
@@ -364,13 +435,15 @@ impl RegistrationSession {
             &identity.first_name,
             &identity.last_name,
         );
-        let result = match super::diagnostics::observe("sign_up_invoke", self.client.invoke(&request).await) {
-            Ok(response) => super::diagnostics::observe(
-                "sign_up_parse",
-                tl::parse_auth_authorization(&response),
-            ),
-            Err(error) => Err(error),
-        };
+        let result =
+            match super::diagnostics::observe("sign_up_invoke", self.client.invoke(&request).await)
+            {
+                Ok(response) => super::diagnostics::observe(
+                    "sign_up_parse",
+                    tl::parse_auth_authorization(&response),
+                ),
+                Err(error) => Err(error),
+            };
         let user = match result {
             Ok(user) => user,
             Err(error) => self.recover_registered_user(&error).await?,
@@ -380,27 +453,35 @@ impl RegistrationSession {
             .map(|account_id| RegistrationOutcome::Registered { account_id })
     }
 
-    async fn recover_registered_user(&mut self, original_error: &str) -> Result<AuthorizedUser, String> {
+    async fn recover_registered_user(
+        &mut self,
+        original_error: &str,
+    ) -> Result<AuthorizedUser, String> {
         for _ in 0..3 {
-            let result = self.client.get_me(
-                self.profile.api_id,
-                &self.profile.device_model,
-                &self.profile.system_version,
-                &self.profile.app_version,
-                &self.profile.system_lang_code,
-                &self.profile.lang_code,
-            ).await;
+            let result = self
+                .client
+                .get_me(
+                    self.profile.api_id,
+                    &self.profile.device_model,
+                    &self.profile.system_version,
+                    &self.profile.app_version,
+                    &self.profile.system_lang_code,
+                    &self.profile.lang_code,
+                )
+                .await;
             match result {
                 Ok(user) if is_matching_self_user(user.id, &user.phone, &self.phone) => {
-                        dbg_log!("registrar::sign_up recovered authorized session after ambiguous response");
-                        return Ok(AuthorizedUser {
-                            user_id: user.id,
-                            phone: user.phone,
-                            first_name: user.first_name,
-                            last_name: user.last_name,
-                            username: user.username,
-                            is_premium: user.premium,
-                        });
+                    dbg_log!(
+                        "registrar::sign_up recovered authorized session after ambiguous response"
+                    );
+                    return Ok(AuthorizedUser {
+                        user_id: user.id,
+                        phone: user.phone,
+                        first_name: user.first_name,
+                        last_name: user.last_name,
+                        username: user.username,
+                        is_premium: user.premium,
+                    });
                 }
                 Ok(_) => break,
                 Err(error) if !crate::mtproto::client::is_network_error(&error) => break,
@@ -542,7 +623,10 @@ async fn load_phone_screen_data(
             &profile.system_lang_code,
             &profile.lang_code,
         );
-        let result = client.invoke(&wrapped).await.and_then(|response| parse(&response).map(|_| ()));
+        let result = client
+            .invoke(&wrapped)
+            .await
+            .and_then(|response| parse(&response).map(|_| ()));
         match result {
             Ok(()) => dbg_log!("registrar::phone_screen stage={} completed", stage),
             Err(error) => dbg_log!(
@@ -723,6 +807,10 @@ fn is_unoccupied(error: &str) -> bool {
     error.contains("PHONE_NUMBER_UNOCCUPIED") || error == "SIGN_UP_REQUIRED"
 }
 
+fn is_password_required(error: &str) -> bool {
+    error.contains("SESSION_PASSWORD_NEEDED")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -731,7 +819,8 @@ mod tests {
     fn registration_transition_delay_has_jitter_and_minimum() {
         let delays: Vec<_> = (0..32).map(|_| registration_transition_delay()).collect();
         assert!(delays.iter().all(|delay| {
-            (TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS).contains(&(delay.as_millis() as u64))
+            (TRANSITION_DELAY_MIN_MS..=TRANSITION_DELAY_MAX_MS)
+                .contains(&(delay.as_millis() as u64))
         }));
         assert!(delays.windows(2).any(|pair| pair[0] != pair[1]));
     }
@@ -752,14 +841,28 @@ mod tests {
     fn accepts_signup_required_and_network_migration() {
         assert!(is_unoccupied("SIGN_UP_REQUIRED"));
         assert!(!is_unoccupied("PHONE_CODE_INVALID"));
+        assert!(is_password_required("RPC 400: SESSION_PASSWORD_NEEDED"));
+        assert!(!is_password_required("PHONE_CODE_INVALID"));
         assert_eq!(phone_migrate_dc("NETWORK_MIGRATE_3"), Some(3));
     }
 
     #[test]
     fn only_recovers_registration_for_the_expected_phone() {
-        assert!(is_matching_self_user(42, "+1 (202) 555-0100", "12025550100"));
-        assert!(!is_matching_self_user(0, "+1 (202) 555-0100", "12025550100"));
-        assert!(!is_matching_self_user(42, "+1 (202) 555-0101", "12025550100"));
+        assert!(is_matching_self_user(
+            42,
+            "+1 (202) 555-0100",
+            "12025550100"
+        ));
+        assert!(!is_matching_self_user(
+            0,
+            "+1 (202) 555-0100",
+            "12025550100"
+        ));
+        assert!(!is_matching_self_user(
+            42,
+            "+1 (202) 555-0101",
+            "12025550100"
+        ));
     }
 
     #[test]
