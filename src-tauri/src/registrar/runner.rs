@@ -64,7 +64,7 @@ pub struct RegistrarTaskConfig {
     pub stop_on_price_change: bool,
     #[serde(default = "yes")]
     pub reject_app_code: bool,
-    #[serde(default)]
+    #[serde(default = "yes")]
     pub re_register_existing: bool,
     #[serde(default)]
     pub two_fa_password: Option<String>,

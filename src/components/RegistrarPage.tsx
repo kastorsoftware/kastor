@@ -44,7 +44,7 @@ export function RegistrarPage() {
   const [count, setCount] = useState("1");
   const [setTwoFa, setSetTwoFa] = useState(false);
   const [twoFaPassword, setTwoFaPassword] = useState("");
-  const [reRegisterExisting, setReRegisterExisting] = useState(false);
+  const [reRegisterExisting, setReRegisterExisting] = useState(true);
   const [antiSafetyKey, setAntiSafetyKey] = useState("");
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
   const [emailPremium, setEmailPremium] = useState(false);
@@ -422,7 +422,7 @@ export function RegistrarPage() {
         </div>
       </div>
 
-      <fieldset disabled={running || launching} className="space-y-6 disabled:opacity-70">
+      <fieldset disabled={running || launching} className="space-y-4 disabled:opacity-70">
       <Section icon={WalletCards} title={t("registrar.smsSection")}>
         <div className="grid gap-5 lg:grid-cols-2">
           <Field label={t("registrar.provider")}>
@@ -486,7 +486,7 @@ export function RegistrarPage() {
         </div>
       </Section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <Section icon={ShieldCheck} title={t("registrar.resultSection")}>
           <div className="space-y-4">
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
@@ -533,7 +533,7 @@ export function RegistrarPage() {
       </div>
 
       <Section icon={Smartphone} title={t("registrar.namesSection")} headingClassName="mb-3">
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           <div>
             <label className="text-sm font-medium">{t("registrar.names")}</label>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -548,24 +548,18 @@ export function RegistrarPage() {
         </div>
       </Section>
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <Section icon={CircleHelp} title={t("registrar.priceSection")}>
-          <ToggleRow checked={stopOnPriceChange} onChange={setStopOnPriceChange} label={t("registrar.stopOnPriceChange")} />
-          {stopOnPriceChange && <div className="mt-4 grid grid-cols-2 gap-4">
-            <Field label={t("registrar.minPrice")}><input value={minPrice} onChange={(event) => setMinPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
-            <Field label={t("registrar.maxPrice")}><input value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
-          </div>}
-        </Section>
-
-        <Section icon={Smartphone} title={t("registrar.proxySection")}>
-          <p className="text-xs text-muted-foreground">{t("registrar.randomSmsProxyHint")}</p>
-        </Section>
-      </div>
+      <Section icon={CircleHelp} title={t("registrar.priceSection")}>
+        <ToggleRow checked={stopOnPriceChange} onChange={setStopOnPriceChange} label={t("registrar.stopOnPriceChange")} />
+        {stopOnPriceChange && <div className="mt-4 grid grid-cols-2 gap-4">
+          <Field label={t("registrar.minPrice")}><input value={minPrice} onChange={(event) => setMinPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
+          <Field label={t("registrar.maxPrice")}><input value={maxPrice} onChange={(event) => setMaxPrice(event.target.value)} type="number" min="0" step="0.01" className={inputClass} placeholder="0.00" /></Field>
+        </div>}
+      </Section>
       <Section icon={CircleHelp} title={t("registrar.execution")}>
         <div className="grid gap-4 md:grid-cols-3">
           <Field className="flex h-full flex-col" label={t("common.threads")} hint={t("registrar.concurrencyHint")}><input type="number" min="1" max="100" value={concurrency} onChange={(event) => setConcurrency(event.target.value)} className={inputClass}/></Field>
-          <Field className="flex h-full flex-col" label={t("registrar.pollInterval")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
-          <Field className="flex h-full flex-col" label={t("registrar.failureLimit")}>
+          <Field className="flex h-full flex-col" label={t("registrar.pollInterval")} hint={t("registrar.pollIntervalHint")}><input type="number" min="2" max="60" value={pollInterval} onChange={(event) => setPollInterval(event.target.value)} className={inputClass}/></Field>
+          <Field className="flex h-full flex-col" label={t("registrar.failureLimit")} hint={t("registrar.failureLimitHint")}>
             <RegistrarSelect label={t("registrar.failureLimit")} value={failureStop ? "limit" : "never"} onChange={(value) => setFailureStop(value === "limit")} options={[{ value: "never", label: t("registrar.neverStop") }, { value: "limit", label: t("registrar.stopAtFailures") }]} />
             {failureStop && <input type="number" min="1" value={failureLimit} onChange={(event) => setFailureLimit(event.target.value)} className={`${inputClass} mt-2`} placeholder="1" />}
           </Field>
