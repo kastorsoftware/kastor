@@ -17,7 +17,7 @@ function manualChunks(id: string): string | undefined {
   if (id.includes("/embla-carousel")) return "vendor-carousel";
   if (id.includes("/react-hook-form/") || id.includes("/@hookform/") || id.includes("/zod/")) return "vendor-forms";
   if (id.includes("/cmdk/") || id.includes("/sonner/") || id.includes("/vaul/")) return "vendor-ui";
-  if (id.includes("/react/") || id.includes("/react-dom/") || id.includes("/scheduler/")) return "vendor-react";
+  if (/\/node_modules\/(?:react|react-dom|scheduler)\//.test(id)) return "vendor-react";
 
   return "vendor";
 }
