@@ -137,11 +137,21 @@ impl MailboxAccount {
 fn parse_accounts(content: &str, source: EmailSource) -> Result<Vec<MailboxAccount>, String> {
     let mut accounts = Vec::new();
     let mut unique = HashSet::new();
+    let mut firstmail_header = source == EmailSource::Firstmail
+        && content
+            .lines()
+            .map(|line| line.trim().trim_start_matches('\u{feff}'))
+            .find(|line| !line.is_empty())
+            .is_some_and(|line| line.starts_with("Order #"));
     for line in content
         .lines()
-        .map(str::trim)
+        .map(|line| line.trim().trim_start_matches('\u{feff}'))
         .filter(|line| !line.is_empty())
     {
+        if firstmail_header && is_firstmail_header_line(line) {
+            continue;
+        }
+        firstmail_header = false;
         let (address, password) = line.split_once(':').ok_or("registrar.emailFileInvalid")?;
         let address = address.trim();
         if address.len() > 254
@@ -172,6 +182,21 @@ fn parse_accounts(content: &str, source: EmailSource) -> Result<Vec<MailboxAccou
         return Err("registrar.emailFileRequired".into());
     }
     Ok(accounts)
+}
+
+fn is_firstmail_header_line(line: &str) -> bool {
+    [
+        "Order #",
+        "Shop Order UID:",
+        "Package:",
+        "Quantity:",
+        "Has Real Logins:",
+        "Total:",
+        "Date:",
+    ]
+    .iter()
+    .any(|prefix| line.starts_with(prefix))
+        || (line.len() >= 3 && line.bytes().all(|byte| byte == b'='))
 }
 
 fn parse_telegram_code(raw: &[u8]) -> Option<String> {
@@ -216,6 +241,43 @@ mod tests {
         assert_eq!(accounts[0].password, "pass:with:colon");
         assert!(parse_accounts("a@example.com:pass", EmailSource::Gmx).is_err());
         assert!(parse_accounts("a@gmx.de", EmailSource::Gmx).is_err());
+    }
+
+    #[test]
+    fn firstmail_export_header_is_optional_and_only_skipped_at_the_start() {
+        let export = "Order #20d185e2-b361-4097-9f5e-e1ad1e22832e\r\n\
+Shop Order UID: da20a6f49d8531a65799f52fb13beecf\r\n\
+Package: forever_realnames\r\n\
+Quantity: 1,000 accounts\r\n\
+Has Real Logins: True\r\n\
+Total: 1.70€\r\n\
+Date: 2026-09-29 14:28:54\r\n\
+==================================================\r\n\r\n\
+richardthompkins1938@firstmailmorty.com:f.\r\n";
+        let accounts = parse_accounts(export, EmailSource::Firstmail).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(
+            accounts[0].address,
+            "richardthompkins1938@firstmailmorty.com"
+        );
+        assert_eq!(accounts[0].password, "f.");
+        assert_eq!(
+            parse_accounts("a@firstmailmorty.com:pass", EmailSource::Firstmail)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(parse_accounts(export, EmailSource::Gmx).is_err());
+        assert!(parse_accounts(
+            "Order #1\nUnexpected: value\na@firstmailmorty.com:pass",
+            EmailSource::Firstmail
+        )
+        .is_err());
+        assert!(parse_accounts(
+            "a@firstmailmorty.com:pass\nOrder #1",
+            EmailSource::Firstmail
+        )
+        .is_err());
     }
 
     #[test]
