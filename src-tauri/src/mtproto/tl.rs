@@ -924,6 +924,8 @@ pub fn wrap_init_connection(
 pub struct SentCode {
     pub phone_code_hash: String,
     pub code_type: String,
+    pub next_type: Option<String>,
+    pub timeout_secs: Option<u32>,
 }
 
 pub fn parse_auth_sent_code(data: &[u8]) -> Result<SentCode, String> {
@@ -938,7 +940,7 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
         tl_gen::TlAuthSentCode::PaymentRequired { premium_days, .. } => {
             Err(format!("AUTH_PAYMENT_REQUIRED_{premium_days}_DAYS"))
         }
-        tl_gen::TlAuthSentCode::SentCode { r#type, phone_code_hash, .. } => {
+        tl_gen::TlAuthSentCode::SentCode { r#type, phone_code_hash, next_type, timeout } => {
             let code_type = match tl_gen::deserialize_tl_obj::<tl_gen::TlAuthSentCodeType>(&r#type) {
                 Ok(t) => match t {
                     tl_gen::TlAuthSentCodeType::TypeApp { .. } => "app",
@@ -961,8 +963,41 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
                     }
                 }
             };
-            Ok(SentCode { phone_code_hash, code_type })
+            let next_type = next_type
+                .as_deref()
+                .and_then(|bytes| tl_gen::deserialize_tl_obj::<tl_gen::TlAuthCodeType>(bytes).ok())
+                .map(|kind| match kind {
+                    tl_gen::TlAuthCodeType::TypeSms => "sms",
+                    tl_gen::TlAuthCodeType::TypeCall => "call",
+                    tl_gen::TlAuthCodeType::TypeFlashCall => "flash_call",
+                    tl_gen::TlAuthCodeType::TypeMissedCall => "missed_call",
+                    tl_gen::TlAuthCodeType::TypeFragmentSms => "fragment",
+                }.to_string());
+            let timeout_secs = timeout.and_then(|seconds| u32::try_from(seconds).ok());
+            Ok(SentCode { phone_code_hash, code_type, next_type, timeout_secs })
         }
+    }
+}
+
+#[cfg(test)]
+mod sent_code_tests {
+    use super::*;
+
+    #[test]
+    fn app_code_preserves_sms_resend_option_and_timeout() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0x5e002502u32.to_le_bytes());
+        bytes.extend_from_slice(&((1u32 << 1) | (1u32 << 2)).to_le_bytes());
+        bytes.extend_from_slice(&0x3dbb5986u32.to_le_bytes());
+        bytes.extend_from_slice(&5i32.to_le_bytes());
+        bytes.extend_from_slice(&serialize_string("hash"));
+        bytes.extend_from_slice(&0x72a3158cu32.to_le_bytes());
+        bytes.extend_from_slice(&60i32.to_le_bytes());
+
+        let sent = parse_auth_sent_code_inner(&bytes).unwrap();
+        assert_eq!(sent.code_type, "app");
+        assert_eq!(sent.next_type.as_deref(), Some("sms"));
+        assert_eq!(sent.timeout_secs, Some(60));
     }
 }
 

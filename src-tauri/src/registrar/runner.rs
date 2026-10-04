@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
 use crate::accounts::storage::AccountStorage;
-use crate::mtproto::tl::AuthCodeSettings;
+use crate::mtproto::tl::{AuthCodeSettings, SentCode};
 use crate::proxy::{ProxyConfig, ProxyList};
 use crate::queue::TaskQueue;
 use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
@@ -25,6 +25,7 @@ use crate::registrar::sms::{
 };
 
 const MAX_ATTEMPTS: usize = 100_000;
+const MAX_APP_SMS_FALLBACK_WAIT_SECS: u64 = 900;
 const MAX_REREGISTRATION_RESTARTS: usize = 2;
 const CANCEL_RETRY_DELAY: Duration = Duration::from_secs(121);
 const CANCEL_RETRIES: usize = 3;
@@ -982,7 +983,7 @@ async fn process_attempt(
                     ("registered_with_warnings", safe_error(&error))
                 } else if telegram_rpc_code(&error) == Some("PHONE_NUMBER_BANNED") {
                     ("phone_number_banned", safe_error(&error))
-                } else if telegram_rpc_code(&error) == Some("AUTH_PAYMENT_REQUIRED") {
+                } else if telegram_rpc_code(&error).is_some_and(is_premium_required_code) {
                     ("premium_required", safe_error(&error))
                 } else {
                     ("registration_failed", safe_error(&error))
@@ -1056,6 +1057,9 @@ fn safe_error(error: &str) -> String {
         _ => {}
     }
     if let Some(code) = telegram_rpc_code(error) {
+        if let Some(days) = premium_days_from_code(code) {
+            return format!("telegram_premium_required_days:{days}");
+        }
         for prefix in ["FLOOD_WAIT_", "FLOOD_PREMIUM_WAIT_"] {
             if let Some(seconds) = code.strip_prefix(prefix) {
                 if let Ok(seconds) = seconds.parse::<u64>() {
@@ -1103,6 +1107,18 @@ fn safe_error(error: &str) -> String {
         }
     }
     "registration_step_failed".to_string()
+}
+
+fn is_premium_required_code(code: &str) -> bool {
+    code == "AUTH_PAYMENT_REQUIRED" || premium_days_from_code(code).is_some()
+}
+
+fn premium_days_from_code(code: &str) -> Option<u32> {
+    code.strip_prefix("AUTH_PAYMENT_REQUIRED_")?
+        .strip_suffix("_DAYS")?
+        .parse::<u32>()
+        .ok()
+        .filter(|days| *days > 0 && *days <= 3650)
 }
 
 fn telegram_rpc_code(error: &str) -> Option<&str> {
@@ -1170,7 +1186,7 @@ async fn open_registration_session(
     })
     .await?;
     session.set_output_directory(context.output.clone());
-    let sent_code = if sent_code.code_type == "email_setup" {
+    let mut sent_code = if sent_code.code_type == "email_setup" {
         context.log(index, "setting_up_login_email");
         setup_login_email(
             context,
@@ -1201,8 +1217,41 @@ async fn open_registration_session(
         return Err("used_number".into());
     }
     if sent_code.code_type == "app" && config.reject_app_code {
-        let _ = session.cancel().await;
-        return Err("app_code_rejected".into());
+        if let Some(wait_secs) = app_sms_fallback_delay(&sent_code, MAX_APP_SMS_FALLBACK_WAIT_SECS)
+        {
+            context.log(index, "waiting_for_sms_fallback");
+            for _ in 0..wait_secs {
+                if !context.token.load(Ordering::Relaxed) {
+                    let _ = session.cancel().await;
+                    return Err("stopped".into());
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            context.log(index, "requesting_sms_fallback");
+            sent_code = match session.resend().await {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = session.cancel().await;
+                    return Err(error);
+                }
+            };
+            context.log(
+                index,
+                if matches!(
+                    sent_code.code_type.as_str(),
+                    "sms" | "sms_word" | "sms_phrase"
+                ) {
+                    "code_delivery_sms"
+                } else {
+                    "code_delivery_other"
+                },
+            );
+        }
+        if sent_code.code_type == "app" {
+            context.log(index, "sms_fallback_unavailable");
+            let _ = session.cancel().await;
+            return Err("app_code_rejected".into());
+        }
     }
     if !matches!(
         sent_code.code_type.as_str(),
@@ -1212,6 +1261,14 @@ async fn open_registration_session(
         return Err("unsupported_verification_type".into());
     }
     Ok(session)
+}
+
+fn app_sms_fallback_delay(sent_code: &SentCode, max_wait_secs: u64) -> Option<u64> {
+    if sent_code.code_type != "app" || sent_code.next_type.as_deref() != Some("sms") {
+        return None;
+    }
+    let wait = u64::from(sent_code.timeout_secs?) + 1;
+    (wait <= max_wait_secs).then_some(wait)
 }
 
 async fn wait_for_sms_code(
@@ -1945,6 +2002,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn app_code_resends_only_when_telegram_offers_sms_within_timeout() {
+        let mut sent = SentCode {
+            phone_code_hash: "hash".into(),
+            code_type: "app".into(),
+            next_type: Some("sms".into()),
+            timeout_secs: Some(60),
+        };
+        assert_eq!(app_sms_fallback_delay(&sent, 120), Some(61));
+        assert_eq!(app_sms_fallback_delay(&sent, 30), None);
+        sent.next_type = Some("call".into());
+        assert_eq!(app_sms_fallback_delay(&sent, 120), None);
+        sent.next_type = None;
+        assert_eq!(app_sms_fallback_delay(&sent, 120), None);
+    }
+
+    #[test]
     fn antisafety_credentials_are_required_only_for_selected_features() {
         let config = AntiSafetyConfig {
             api_key: "test-key".into(),
@@ -2087,6 +2160,11 @@ mod tests {
 
     #[test]
     fn telegram_errors_are_readable_without_exposing_remote_payloads() {
+        assert!(is_premium_required_code("AUTH_PAYMENT_REQUIRED_7_DAYS"));
+        assert_eq!(
+            safe_error("AUTH_PAYMENT_REQUIRED_7_DAYS"),
+            "telegram_premium_required_days:7"
+        );
         assert_eq!(safe_error("RPC 500: AUTH_RESTART_2"), "telegram_auth_retry");
         assert_eq!(
             safe_error("RPC 420: FLOOD_WAIT_123"),

@@ -1,7 +1,8 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { CircleHelp, FileText, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { Check, Copy, CircleHelp, FileText, FolderOpen, Play, Square, RefreshCw, ShieldCheck, Smartphone, WalletCards } from "lucide-react";
 import { useT } from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -93,12 +94,38 @@ export function RegistrarPage() {
   const [launchNoticeDismissed, setLaunchNoticeDismissed] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
+  const [logsCopied, setLogsCopied] = useState(false);
+  const [logsCopyError, setLogsCopyError] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [listenersReady, setListenersReady] = useState(false);
   const taskId = useRef<string | null>(sessionStorage.getItem("registrar_task_id"));
   const lastEvent = useRef<Progress | null>(null);
   const running = progress !== null && !progress.finished;
+  const readableLogs = useMemo(() => logs.map((line) => {
+    const split = line.indexOf("] ");
+    const message = line.slice(split + 2);
+    const floodWait = /^telegram_flood_wait:(\d+)$/.exec(message);
+    if (split >= 0 && floodWait) return line.slice(0, split + 2) + t("registrar.stages.telegram_flood_wait", { seconds: floodWait[1] });
+    const premiumDays = /^telegram_premium_required_days:(\d+)$/.exec(message);
+    if (split >= 0 && premiumDays) return line.slice(0, split + 2) + t("registrar.stages.telegram_premium_required_days", { days: premiumDays[1] });
+    const unknownRpc = /^telegram_unknown_rpc:([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)$/.exec(message);
+    if (split >= 0 && unknownRpc) return line.slice(0, split + 2) + t("registrar.stages.telegram_unknown_rpc", { code: unknownRpc[1] });
+    const key = `registrar.stages.${message}`;
+    const translated = t(key);
+    return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
+  }).join("\n"), [logs, t]);
+
+  const copyLogs = async () => {
+    try {
+      await writeText(readableLogs);
+      setLogsCopyError(false);
+      setLogsCopied(true);
+      window.setTimeout(() => setLogsCopied(false), 1500);
+    } catch {
+      setLogsCopyError(true);
+    }
+  };
 
   const storedSettings = (): StoredSettings => ({
     provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, reRegisterExisting, mobileDevice, antiSafetyKey, antiSafetyAid,
@@ -610,17 +637,13 @@ export function RegistrarPage() {
         {running ? <button type="button" disabled={stopping} onClick={() => void stopTask()} className="flex items-center gap-2 rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium disabled:opacity-50"><Square className="h-4 w-4"/>{t(stopping ? "registrar.stopping" : "common.stop")}</button>
           : <button type="button" disabled={launching || pending || !listenersReady || !provider || !apiKey.trim()} onClick={requestStart} className="flex items-center gap-2 rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50"><Play className="h-4 w-4" />{t(launching ? "registrar.launching" : "registrar.start")}</button>}
       </div>
-      {logs.length > 0 && <pre aria-live="polite" className="max-h-72 overflow-auto whitespace-pre-wrap rounded-xl border border-border bg-card p-4 text-xs">{logs.map((line) => {
-        const split = line.indexOf("] ");
-        const message = line.slice(split + 2);
-        const floodWait = /^telegram_flood_wait:(\d+)$/.exec(message);
-        if (split >= 0 && floodWait) return line.slice(0, split + 2) + t("registrar.stages.telegram_flood_wait", { seconds: floodWait[1] });
-        const unknownRpc = /^telegram_unknown_rpc:([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+)$/.exec(message);
-        if (split >= 0 && unknownRpc) return line.slice(0, split + 2) + t("registrar.stages.telegram_unknown_rpc", { code: unknownRpc[1] });
-        const key = `registrar.stages.${message}`;
-        const translated = t(key);
-        return split >= 0 && translated !== key ? line.slice(0, split + 2) + translated : line;
-      }).join("\n")}</pre>}
+      {logs.length > 0 && <div className="rounded-xl border border-border bg-card">
+        <div className="flex items-center justify-end border-b border-border px-3 py-2">
+          {logsCopyError && <span role="alert" className="mr-auto text-xs text-destructive">{t("registrar.copyLogsFailed")}</span>}
+          <button type="button" onClick={() => void copyLogs()} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{logsCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{t(logsCopied ? "registrar.logsCopied" : "registrar.copyLogs")}</button>
+        </div>
+        <pre aria-live="polite" className="max-h-72 cursor-text select-text overflow-auto whitespace-pre-wrap p-4 text-xs">{readableLogs}</pre>
+      </div>}
       {antiSafetyHelpOpen && <RegistrarModal title="Placeholder" onClose={() => setAntiSafetyHelpOpen(false)}><p>Placeholder</p></RegistrarModal>}
       {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t(settingsLock === "setup" ? "registrar.settingsPasswordTitle" : "registrar.settingsUnlockTitle")} onClose={() => {}}>
         <p>{t(settingsLock === "setup" ? "registrar.settingsPasswordWarning" : "registrar.settingsUnlockHint")}</p>
