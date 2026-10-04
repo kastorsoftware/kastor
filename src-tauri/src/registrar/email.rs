@@ -24,12 +24,23 @@ pub enum EmailSource {
 }
 
 impl EmailSource {
-    fn host(self) -> Option<&'static str> {
+    fn host(self, address: &str) -> Option<&'static str> {
         match self {
             Self::AntiSafety => None,
             Self::Firstmail => Some("imap.firstmail.ltd"),
-            Self::Gmx => Some("imap.gmx.net"),
+            Self::Gmx => gmx_host(address),
         }
+    }
+}
+
+fn gmx_host(address: &str) -> Option<&'static str> {
+    let address = address.to_ascii_lowercase();
+    if address.ends_with("@gmx.de") {
+        Some("imap.gmx.net")
+    } else if address.ends_with("@gmx.com") {
+        Some("imap.gmx.com")
+    } else {
+        None
     }
 }
 
@@ -42,7 +53,7 @@ pub struct MailboxAccount {
 
 impl MailboxAccount {
     pub fn load_file(path: &Path, source: EmailSource) -> Result<Vec<Self>, String> {
-        if source.host().is_none() {
+        if source == EmailSource::AntiSafety {
             return Err("email file is not used with AntiSafety".into());
         }
         let metadata = std::fs::metadata(path).map_err(|_| "registrar.emailFileRequired")?;
@@ -100,7 +111,10 @@ impl MailboxAccount {
     }
 
     fn connect(&self) -> Result<Session<TlsStream<TcpStream>>, String> {
-        let host = self.source.host().ok_or("IMAP source is required")?;
+        let host = self
+            .source
+            .host(&self.address)
+            .ok_or("IMAP source is required")?;
         let addresses = (host, IMAP_PORT)
             .to_socket_addrs()
             .map_err(|_| "IMAP host lookup failed")?;
@@ -164,7 +178,7 @@ fn parse_accounts(content: &str, source: EmailSource) -> Result<Vec<MailboxAccou
         {
             return Err("registrar.emailFileInvalid".into());
         }
-        if source == EmailSource::Gmx && !address.to_ascii_lowercase().ends_with("@gmx.de") {
+        if source == EmailSource::Gmx && gmx_host(address).is_none() {
             return Err("registrar.emailFileInvalid".into());
         }
         if unique.insert(address.to_ascii_lowercase()) {
@@ -241,6 +255,21 @@ mod tests {
         assert_eq!(accounts[0].password, "pass:with:colon");
         assert!(parse_accounts("a@example.com:pass", EmailSource::Gmx).is_err());
         assert!(parse_accounts("a@gmx.de", EmailSource::Gmx).is_err());
+    }
+
+    #[test]
+    fn gmx_mailboxes_use_the_host_for_their_domain() {
+        let accounts = parse_accounts("a@gmx.de:pass\nb@GMX.COM:pass\n", EmailSource::Gmx).unwrap();
+        assert_eq!(accounts.len(), 2);
+        assert_eq!(
+            accounts[0].source.host(&accounts[0].address),
+            Some("imap.gmx.net")
+        );
+        assert_eq!(
+            accounts[1].source.host(&accounts[1].address),
+            Some("imap.gmx.com")
+        );
+        assert!(parse_accounts("a@gmx.com.example:pass", EmailSource::Gmx).is_err());
     }
 
     #[test]
