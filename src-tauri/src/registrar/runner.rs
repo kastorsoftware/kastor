@@ -20,7 +20,7 @@ use crate::registrar::flow::{
 };
 use crate::registrar::profile::{fetch_latest_android_versions, RegistrationProfile};
 use crate::registrar::sms::{
-    create_provider, ActivationAction, ActivationStatus, NumberRequest, SmsErrorKind,
+    create_provider, Activation, ActivationAction, ActivationStatus, NumberRequest, SmsErrorKind,
     SmsProviderConfig, SmsProviderKind,
 };
 
@@ -261,6 +261,7 @@ struct Context {
     usernames: Vec<String>,
     username_index: AtomicUsize,
     proxy_locales: tokio::sync::Mutex<HashMap<String, ProxyLocale>>,
+    purchase_gate: tokio::sync::Mutex<Option<String>>,
     app: tauri::AppHandle,
     database: tokio::sync::Mutex<RegistrarDatabase>,
     config: RegistrarTaskConfig,
@@ -420,6 +421,7 @@ pub async fn registrar_start(
         usernames,
         username_index: AtomicUsize::new(0),
         proxy_locales: tokio::sync::Mutex::new(HashMap::new()),
+        purchase_gate: tokio::sync::Mutex::new(None),
         app: app.clone(),
         database: tokio::sync::Mutex::new(database),
         config,
@@ -519,13 +521,8 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
     } else {
         config.attempts.len()
     };
-    // Price and balance checks are serialized with purchases to avoid competing reservations.
-    let workers = if config.use_full_balance || config.stop_on_price_change {
-        1
-    } else {
-        config.concurrency
-    };
-    let mut tasks = tokio::task::JoinSet::new();
+    let workers = config.concurrency;
+    let mut tasks: tokio::task::JoinSet<Result<bool, String>> = tokio::task::JoinSet::new();
     let sms_config = select_sms_proxy(&config.sms_provider).await?;
     let mut reason = "completed";
     let mut first_error = None;
@@ -545,10 +542,10 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
             let success = match tasks.join_next().await {
                 Some(Ok(Ok(success))) => success,
                 Some(Ok(Err(error))) => {
-                    reason = if error == "price_changed" {
-                        "price_changed"
-                    } else {
-                        "failed"
+                    reason = match error.as_str() {
+                        "price_changed" => "price_changed",
+                        "budget_or_price_limit" => "budget_or_price_limit",
+                        _ => "failed",
                     };
                     if reason == "failed" {
                         first_error.get_or_insert(error);
@@ -561,7 +558,9 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
                     false
                 }
             };
-            context.completed(success).await;
+            if reason != "budget_or_price_limit" {
+                context.completed(success).await;
+            }
             if reason != "completed" {
                 break;
             }
@@ -589,7 +588,7 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
             || config.min_price.is_some()
             || request.max_price.is_some()
             || countries.len() > 1;
-        if guarded {
+        if guarded && !config.use_full_balance && !config.stop_on_price_change {
             let mut selected = Ok(None);
             for country in &countries {
                 request.country = country.clone();
@@ -637,18 +636,36 @@ async fn run_task(context: Arc<Context>) -> Result<&'static str, String> {
                 .collect();
         }
         let worker_context = context.clone();
-        tasks.spawn(
-            {
-                let sms_config = sms_config.clone();
-                async move { process_attempt(worker_context, index + 1, attempt, request, sms_config).await }
-            },
-        );
+        let worker_countries = countries.clone();
+        let worker_sms_config = sms_config.clone();
+        tasks.spawn(async move {
+            process_attempt(
+                worker_context,
+                index + 1,
+                attempt,
+                request,
+                worker_countries,
+                worker_sms_config,
+            )
+            .await
+        });
     }
     while let Some(result) = tasks.join_next().await {
         match result {
             Ok(Ok(success)) => context.completed(success).await,
             Ok(Err(error)) => {
-                first_error.get_or_insert(error);
+                match error.as_str() {
+                    "price_changed" => reason = "price_changed",
+                    "budget_or_price_limit" => {
+                        if reason == "completed" {
+                            reason = "budget_or_price_limit";
+                        }
+                        continue;
+                    }
+                    _ => {
+                        first_error.get_or_insert(error);
+                    }
+                }
                 context.completed(false).await;
             }
             Err(_) => {
@@ -751,11 +768,84 @@ async fn select_sms_proxy(config: &SmsProviderConfig) -> Result<SmsProviderConfi
     Err("sms_proxy_unavailable".to_string())
 }
 
+async fn purchase_for_attempt(
+    context: &Context,
+    request: &mut NumberRequest,
+    countries: &[String],
+    sms_config: &SmsProviderConfig,
+) -> Result<Option<Activation>, String> {
+    let protected_purchase = context.config.use_full_balance || context.config.stop_on_price_change;
+    let mut gate = if protected_purchase {
+        Some(context.purchase_gate.lock().await)
+    } else {
+        None
+    };
+    if let Some(reason) = gate.as_ref().and_then(|guard| guard.as_ref()) {
+        return Err(reason.clone());
+    }
+    if protected_purchase {
+        let mut selected = Ok(None);
+        for country in countries {
+            let mut candidate = request.clone();
+            candidate.country = country.clone();
+            selected = checked_request(&context.config, sms_config, candidate).await;
+            if !matches!(selected, Ok(None)) {
+                break;
+            }
+        }
+        match selected {
+            Ok(Some(value)) => *request = value,
+            Ok(None) => {
+                **gate.as_mut().expect("protected purchase holds gate") =
+                    Some("budget_or_price_limit".into());
+                return Ok(None);
+            }
+            Err(error) => {
+                **gate.as_mut().expect("protected purchase holds gate") = Some(error.clone());
+                return Err(error);
+            }
+        }
+    }
+    if !context.token.load(Ordering::Relaxed) {
+        return Err("stopped".into());
+    }
+    let purchase_request = request.clone();
+    let activation = provider_call(sms_config.clone(), "acquire_number", move |provider| {
+        acquire_telegram_number(provider, &purchase_request)
+    })
+    .await
+    .map_err(|_| "purchase_failed".to_string())?;
+    if context.config.stop_on_price_change
+        && purchase_price_rejected(&context.config, request, &activation)
+    {
+        **gate.as_mut().expect("price protection holds gate") = Some("price_changed".into());
+    }
+    Ok(Some(activation))
+}
+
+fn purchase_price_rejected(
+    config: &RegistrarTaskConfig,
+    request: &NumberRequest,
+    activation: &Activation,
+) -> bool {
+    activation.cost.is_some_and(|price| {
+        !price.is_finite()
+            || price < config.min_price.unwrap_or(0.0)
+            || price > request.max_price.unwrap_or(f64::INFINITY)
+            || (config.stop_on_price_change
+                && config
+                    .expected_prices
+                    .get(&request.country)
+                    .is_some_and(|expected| (expected - price).abs() > 0.000001))
+    })
+}
+
 async fn process_attempt(
     context: Arc<Context>,
     index: usize,
     mut attempt: RegistrationAttempt,
-    request: NumberRequest,
+    mut request: NumberRequest,
+    countries: Vec<String>,
     sms_config: SmsProviderConfig,
 ) -> Result<bool, String> {
     if !context.token.load(Ordering::Relaxed) {
@@ -787,40 +877,45 @@ async fn process_attempt(
             "proxy_unavailable"
         },
     );
-    let max_price = request.max_price;
-    let requested_country = request.country.clone();
-    let mut record = RegistrationRecord {
-        phone: String::new(),
-        provider: config.sms_provider.kind.label().into(),
-        activation_id: None,
-        status: "buying_number".into(),
-        account_id: None,
-        error: None,
-    };
-    let record_id = context.database.lock().await.insert(&record)?;
     context.log(index, "buying_number");
-    let activation = match provider_call(sms_config.clone(), "acquire_number", move |provider| {
-        acquire_telegram_number(provider, &request)
-    })
-    .await
-    {
-        Ok(value) => value,
-        Err(_) => {
-            record.status = "purchase_failed".into();
-            record.error = Some("SMS number purchase failed".into());
-            context.record(record_id, &record).await?;
+    let purchase = purchase_for_attempt(&context, &mut request, &countries, &sms_config).await;
+    let activation = match purchase {
+        Ok(Some(activation)) => activation,
+        Ok(None) => {
+            context.log(index, "budget_or_price_limit");
+            return Err("budget_or_price_limit".into());
+        }
+        Err(error) if error == "purchase_failed" => {
+            let record = RegistrationRecord {
+                phone: String::new(),
+                provider: config.sms_provider.kind.label().into(),
+                activation_id: None,
+                status: "purchase_failed".into(),
+                account_id: None,
+                error: Some("SMS number purchase failed".into()),
+            };
+            context.database.lock().await.insert(&record)?;
             context.log(index, "purchase_failed");
             return Ok(false);
         }
+        Err(error) => return Err(error),
     };
     context.log(index, "number_purchased");
-    record.phone = activation.phone.clone();
-    record.activation_id = Some(activation.id.clone());
-    record.status = "number_acquired".into();
-    if let Err(error) = context.record(record_id, &record).await {
-        cancel_activation(sms_config.clone(), activation.id.clone());
-        return Err(error);
-    }
+    let mut record = RegistrationRecord {
+        phone: activation.phone.clone(),
+        provider: config.sms_provider.kind.label().into(),
+        activation_id: Some(activation.id.clone()),
+        status: "number_acquired".into(),
+        account_id: None,
+        error: None,
+    };
+    let record_id = match context.database.lock().await.insert(&record) {
+        Ok(id) => id,
+        Err(error) => {
+            cancel_activation(sms_config.clone(), activation.id);
+            return Err(error);
+        }
+    };
     let phone = activation.phone.clone();
     let already_in_accounts = tokio::task::spawn_blocking(move || {
         crate::accounts::commands::get_storage_pub().contains_phone(&phone)
@@ -845,16 +940,7 @@ async fn process_attempt(
             return Err("Failed to inspect stored accounts".into());
         }
     }
-    if activation.cost.is_some_and(|price| {
-        !price.is_finite()
-            || price < config.min_price.unwrap_or(0.0)
-            || price > max_price.unwrap_or(f64::INFINITY)
-            || (config.stop_on_price_change
-                && config
-                    .expected_prices
-                    .get(&requested_country)
-                    .is_some_and(|expected| (expected - price).abs() > 0.000001))
-    }) {
+    if purchase_price_rejected(config, &request, &activation) {
         cancel_activation(sms_config.clone(), activation.id);
         record.status = "price_rejected".into();
         record.error = Some("Purchased number price is outside the accepted range".into());
@@ -991,6 +1077,12 @@ fn safe_error(error: &str) -> String {
             "SMS_CODE_CREATE_FAILED" | "SEND_CODE_UNAVAILABLE" => "telegram_sms_unavailable",
             "UPDATE_APP_TO_LOGIN" => "telegram_client_outdated",
             "AUTH_RESTART" | "SIGN_IN_FAILED" => "telegram_auth_retry",
+            code if code.strip_prefix("AUTH_RESTART_").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+            }) =>
+            {
+                "telegram_auth_retry"
+            }
             "AUTH_PAYMENT_REQUIRED" => "telegram_premium_required",
             "PHONE_NUMBER_APP_SIGNUP_FORBIDDEN" => "telegram_app_signup_forbidden",
             "EMAIL_NOT_ALLOWED" | "EMAIL_INVALID" => "telegram_email_rejected",
@@ -1995,6 +2087,7 @@ mod tests {
 
     #[test]
     fn telegram_errors_are_readable_without_exposing_remote_payloads() {
+        assert_eq!(safe_error("RPC 500: AUTH_RESTART_2"), "telegram_auth_retry");
         assert_eq!(
             safe_error("RPC 420: FLOOD_WAIT_123"),
             "telegram_flood_wait:123"

@@ -20,6 +20,8 @@ const RECAPTCHA_TIMEOUT: Duration = Duration::from_secs(120);
 const RECAPTCHA_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSITION_DELAY_MIN_MS: u64 = 300;
 const TRANSITION_DELAY_MAX_MS: u64 = 900;
+const MAX_AUTH_RESTARTS: usize = 2;
+const MAX_DC_MIGRATIONS: usize = 4;
 
 pub(crate) async fn pause_for_registration_transition() {
     tokio::time::sleep(registration_transition_delay()).await;
@@ -110,9 +112,13 @@ impl RegistrationSession {
         let phone = normalize_phone(&request.phone)?;
         request.profile.validate()?;
         let mut dc_id = 2;
-        let mut last_error = "Telegram data center migration limit exceeded".to_string();
+        let mut auth_restarts = 0;
+        let mut dc_migrations = 0;
 
-        for _ in 0..=4 {
+        loop {
+            if is_cancelled(request.cancellation.as_deref()) {
+                return Err("stopped".into());
+            }
             match start_on_dc(
                 dc_id,
                 &phone,
@@ -149,6 +155,10 @@ impl RegistrationSession {
                         super::diagnostics::error_summary(&error)
                     );
                     if let Some(migrated_dc) = phone_migrate_dc(&error) {
+                        if dc_migrations >= MAX_DC_MIGRATIONS {
+                            return Err("Telegram data center migration limit exceeded".into());
+                        }
+                        dc_migrations += 1;
                         dbg_log!(
                             "registrar::send_code migrating from_dc={} to_dc={}",
                             dc_id,
@@ -157,12 +167,20 @@ impl RegistrationSession {
                         dc_id = migrated_dc;
                         continue;
                     }
-                    last_error = error;
-                    break;
+                    if is_auth_restart(&error) && auth_restarts < MAX_AUTH_RESTARTS {
+                        auth_restarts += 1;
+                        dbg_log!(
+                            "registrar::send_code dc={} auth_restart retry={}",
+                            dc_id,
+                            auth_restarts
+                        );
+                        tokio::time::sleep(Duration::from_secs(auth_restarts as u64)).await;
+                        continue;
+                    }
+                    return Err(error);
                 }
             }
         }
-        Err(last_error)
     }
 
     pub fn set_output_directory(&mut self, directory: std::path::PathBuf) {
@@ -785,6 +803,16 @@ fn phone_migrate_dc(error: &str) -> Option<i32> {
     (1..=5).contains(&dc_id).then_some(dc_id)
 }
 
+fn is_auth_restart(error: &str) -> bool {
+    let Some(code) = error.strip_prefix("RPC 500: ") else {
+        return false;
+    };
+    code == "AUTH_RESTART"
+        || code.strip_prefix("AUTH_RESTART_").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_digit())
+        })
+}
+
 fn normalize_phone(phone: &str) -> Result<String, String> {
     let phone: String = phone.chars().filter(char::is_ascii_digit).collect();
     if !(5..=15).contains(&phone.len()) {
@@ -815,6 +843,15 @@ fn is_password_required(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_telegram_auth_restart_errors_trigger_authorization_retry() {
+        assert!(is_auth_restart("RPC 500: AUTH_RESTART"));
+        assert!(is_auth_restart("RPC 500: AUTH_RESTART_2"));
+        assert!(!is_auth_restart("RPC 400: AUTH_RESTART"));
+        assert!(!is_auth_restart("RPC 500: AUTH_RESTART_OTHER"));
+        assert!(!is_auth_restart("RPC 500: PHONE_NUMBER_BANNED"));
+    }
 
     #[test]
     fn registration_transition_delay_has_jitter_and_minimum() {
