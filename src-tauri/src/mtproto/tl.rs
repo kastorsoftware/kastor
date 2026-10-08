@@ -1193,15 +1193,34 @@ pub fn build_photos_upload_emoji_avatar(emoji_id: i64, background_colors: &[i32]
 // new_algo params (g, p, salts) come from account.password.new_algo; salt1 must
 // already have the 32 random bytes appended. new_password_hash is the SRP verifier.
 pub fn build_account_set_password(g: u32, p: &[u8], new_salt1: &[u8], new_salt2: &[u8], new_password_hash: &[u8], hint: &str) -> Vec<u8> {
+    build_account_set_password_with_email(g, p, new_salt1, new_salt2, new_password_hash, hint, None)
+}
+
+pub fn build_account_set_password_with_email(g: u32, p: &[u8], new_salt1: &[u8], new_salt2: &[u8], new_password_hash: &[u8], hint: &str, email: Option<&str>) -> Vec<u8> {
     let password = tl_gen::INPUT_CHECK_PASSWORD_EMPTY.to_le_bytes().to_vec();
     let new_settings = tl_gen::serialize_account_passwordInputSettings(
         Some(&tl_gen::serialize_passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow(new_salt1, new_salt2, g as i32, p)),
         Some(new_password_hash),
         Some(hint),
-        None,
+        email,
         None,
     );
     tl_gen::build_account_updatePasswordSettings(&password, &new_settings)
+}
+
+#[cfg(test)]
+mod password_email_tests {
+    use super::*;
+
+    #[test]
+    fn recovery_email_sets_the_optional_tl_flag_without_changing_legacy_requests() {
+        let legacy = build_account_set_password(3, &[1, 2], &[3], &[4], &[5], "");
+        assert_eq!(legacy, build_account_set_password_with_email(3, &[1, 2], &[3], &[4], &[5], "", None));
+        let email = build_account_set_password_with_email(3, &[1, 2], &[3], &[4], &[5], "", Some("recovery@example.test"));
+        assert_eq!(u32::from_le_bytes(legacy[12..16].try_into().unwrap()), 1);
+        assert_eq!(u32::from_le_bytes(email[12..16].try_into().unwrap()), 3);
+        assert!(email.windows(b"recovery@example.test".len()).any(|window| window == b"recovery@example.test"));
+    }
 }
 
 // photos.getUserPhotos#91cd32a8 user_id:InputUser offset:int max_id:long limit:int

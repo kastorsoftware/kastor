@@ -3,6 +3,7 @@ pub mod sms;
 pub mod commands;
 pub mod db;
 pub mod email;
+pub(crate) mod mail_tm;
 pub mod flow;
 pub mod manual;
 pub mod profile;

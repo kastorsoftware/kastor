@@ -1204,6 +1204,19 @@ async fn upload_and_set_photo(client: &mut MtpClient, path: &str) -> Result<(), 
 }
 
 pub(crate) async fn set_2fa_password(client: &mut MtpClient, password: &str) -> Result<(), String> {
+    match set_2fa_password_with_email(client, password, None).await? {
+        PasswordSetup::Applied => Ok(()),
+        PasswordSetup::EmailConfirmationRequired { .. } => Err("2FA email confirmation required".into()),
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PasswordSetup {
+    Applied,
+    EmailConfirmationRequired { code_length: Option<usize> },
+}
+
+pub(crate) async fn set_2fa_password_with_email(client: &mut MtpClient, password: &str, email: Option<&str>) -> Result<PasswordSetup, String> {
     use crate::mtproto::auth::compute_new_password_verifier;
 
     let pw_req = tl::build_account_get_password();
@@ -1226,13 +1239,45 @@ pub(crate) async fn set_2fa_password(client: &mut MtpClient, password: &str) -> 
     // new_password_hash is the SRP verifier v = g^x mod p
     let verifier = compute_new_password_verifier(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, password)?;
 
-    let req = tl::build_account_set_password(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, &verifier, "");
+    let req = if email.is_some() {
+        tl::build_account_set_password_with_email(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, &verifier, "", email)
+    } else {
+        tl::build_account_set_password(pw_info.new_g, &pw_info.new_p, &salt1, &salt2, &verifier, "")
+    };
     match client.invoke(&req).await {
-        Ok(_) => Ok(()),
+        Ok(response) => {
+            if !tl_gen::parse_account_updatePasswordSettings(&response)? {
+                return Err("Telegram rejected 2FA settings".into());
+            }
+            Ok(PasswordSetup::Applied)
+        }
+        Err(e) if email.is_some() && email_confirmation_length(&e).is_some() => Ok(PasswordSetup::EmailConfirmationRequired { code_length: email_confirmation_length(&e).flatten() }),
         Err(e) if e.contains("SRP_ID_INVALID") || e.contains("SRP_G_P_INVALID") || e.contains("NEW_SALT_INVALID") => {
             Err(t("actions_2fa_srp_stale"))
         }
-        Err(e) => Err(format!("set_password: {e}")),
+        Err(e) => if email.is_some() { Err(e) } else { Err(format!("set_password: {e}")) },
+    }
+}
+
+fn email_confirmation_length(error: &str) -> Option<Option<usize>> {
+    let code = error.strip_prefix("RPC 400: ").unwrap_or(error);
+    if code == "EMAIL_UNCONFIRMED" { return Some(None); }
+    let length = code.strip_prefix("EMAIL_UNCONFIRMED_")?.parse::<usize>().ok()?;
+    (4..=8).contains(&length).then_some(Some(length))
+}
+
+#[cfg(test)]
+mod recovery_email_tests {
+    use super::*;
+
+    #[test]
+    fn only_email_confirmation_requests_are_pending_not_password_failures() {
+        assert_eq!(email_confirmation_length("RPC 400: EMAIL_UNCONFIRMED_6"), Some(Some(6)));
+        assert_eq!(email_confirmation_length("RPC 400: EMAIL_UNCONFIRMED_4"), Some(Some(4)));
+        assert_eq!(email_confirmation_length("EMAIL_UNCONFIRMED"), Some(None));
+        for error in ["RPC 500: EMAIL_UNCONFIRMED_6", "RPC 400: EMAIL_UNCONFIRMED_0", "RPC 400: EMAIL_UNCONFIRMED_999", "RPC 400: EMAIL_UNCONFIRMED_OTHER", "RPC 400: PASSWORD_HASH_INVALID", "RPC 400: EMAIL_INVALID"] {
+            assert_eq!(email_confirmation_length(error), None);
+        }
     }
 }
 

@@ -44,6 +44,7 @@ pub struct RegistrationSession {
     proxy: Option<ProxyConfig>,
     output_directory: Option<std::path::PathBuf>,
     server_registered: bool,
+    login_mail: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -144,6 +145,7 @@ impl RegistrationSession {
                             proxy: request.proxy,
                             output_directory: None,
                             server_registered: false,
+                            login_mail: String::new(),
                         },
                         sent_code,
                     ));
@@ -191,6 +193,14 @@ impl RegistrationSession {
         self.server_registered
     }
 
+    pub fn login_mail(&self) -> &str {
+        &self.login_mail
+    }
+
+    pub fn set_login_mail(&mut self, credentials: String) {
+        self.login_mail = credentials;
+    }
+
     fn storage(&self) -> AccountStorage {
         self.output_directory
             .as_ref()
@@ -207,6 +217,48 @@ impl RegistrationSession {
         json.to_file(&path)?;
         dbg_log!("registrar::post_registration 2fa completed");
         Ok(())
+    }
+
+    pub async fn begin_two_fa_with_email(
+        &mut self,
+        account_id: &str,
+        password: &str,
+        credentials: &str,
+    ) -> Result<crate::accounts::actions::PasswordSetup, String> {
+        let (email, _) = credentials
+            .split_once(':')
+            .ok_or("invalid recovery mailbox")?;
+        let outcome = crate::accounts::actions::set_2fa_password_with_email(
+            &mut self.client,
+            password,
+            Some(email),
+        )
+        .await?;
+        let path = self.storage().json_path(account_id);
+        let mut json = AccountJson::from_file(&path)?;
+        json.mail2fa = credentials.to_string();
+        if outcome == crate::accounts::actions::PasswordSetup::Applied {
+            json.two_fa = password.to_string();
+        }
+        json.to_file(&path)?;
+        Ok(outcome)
+    }
+
+    pub async fn confirm_two_fa_email(
+        &mut self,
+        account_id: &str,
+        password: &str,
+        code: &str,
+    ) -> Result<(), String> {
+        let request = crate::mtproto::tl_gen::build_account_confirmPasswordEmail(code);
+        let response = self.client.invoke(&request).await?;
+        if !crate::mtproto::tl_gen::parse_account_confirmPasswordEmail(&response)? {
+            return Err("Telegram rejected recovery email confirmation".into());
+        }
+        let path = self.storage().json_path(account_id);
+        let mut json = AccountJson::from_file(&path)?;
+        json.two_fa = password.to_string();
+        json.to_file(&path)
     }
 
     pub async fn register_push(&mut self, token: &str) -> Result<(), String> {
@@ -438,7 +490,9 @@ impl RegistrationSession {
             crate::mtproto::tl_gen::parse_account_verifyEmail(&response),
         )? {
             crate::mtproto::tl_gen::TlAccountEmailVerified::Login { sent_code, .. } => {
-                tl::parse_auth_sent_code_inner(&sent_code)
+                let sent_code = tl::parse_auth_sent_code_inner(&sent_code)?;
+                self.phone_code_hash = sent_code.phone_code_hash.clone();
+                Ok(sent_code)
             }
             crate::mtproto::tl_gen::TlAccountEmailVerified::EmailVerified { .. } => {
                 Err("Telegram did not return a login verification code".to_string())
@@ -535,6 +589,7 @@ impl RegistrationSession {
         let mut json = AccountJson::from_file(&path)?;
         json.lang_pack = self.profile.lang_code.clone();
         json.system_lang_pack = self.profile.system_lang_code.clone();
+        json.mail = self.login_mail.clone();
         json.to_file(&path)?;
         Ok(account_id)
     }

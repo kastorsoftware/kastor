@@ -23,6 +23,25 @@ pub enum EmailSource {
     Gmx,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryEmailSource {
+    #[default]
+    Firstmail,
+    Gmx,
+    MailTm,
+}
+
+impl RecoveryEmailSource {
+    pub fn imap_source(self) -> Option<EmailSource> {
+        match self {
+            Self::Firstmail => Some(EmailSource::Firstmail),
+            Self::Gmx => Some(EmailSource::Gmx),
+            Self::MailTm => None,
+        }
+    }
+}
+
 impl EmailSource {
     fn host(self, address: &str) -> Option<&'static str> {
         match self {
@@ -52,6 +71,9 @@ pub struct MailboxAccount {
 }
 
 impl MailboxAccount {
+    pub fn credentials(&self) -> String {
+        format!("{}:{}", self.address, self.password)
+    }
     pub fn load_file(path: &Path, source: EmailSource) -> Result<Vec<Self>, String> {
         if source == EmailSource::AntiSafety {
             return Err("email file is not used with AntiSafety".into());
@@ -79,6 +101,15 @@ impl MailboxAccount {
         baseline: u32,
         seen: &mut HashSet<u32>,
     ) -> Result<Option<String>, String> {
+        self.code_after_with_length(baseline, seen, None)
+    }
+
+    pub fn code_after_with_length(
+        &self,
+        baseline: u32,
+        seen: &mut HashSet<u32>,
+        code_length: Option<usize>,
+    ) -> Result<Option<String>, String> {
         let mut session = self.connect()?;
         let result = (|| {
             let mut uids: Vec<u32> = session
@@ -89,16 +120,21 @@ impl MailboxAccount {
                 .collect();
             uids.sort_unstable_by(|left, right| right.cmp(left));
             for uid in uids.into_iter().take(20) {
-                seen.insert(uid);
                 let messages = session
                     .uid_fetch(
                         uid.to_string(),
                         format!("BODY.PEEK[]<0.{MAX_MESSAGE_BYTES}>"),
                     )
                     .map_err(|_| "IMAP message fetch failed".to_string())?;
+                seen.insert(uid);
                 for message in messages.iter() {
                     if let Some(raw) = message.body() {
-                        if let Some(code) = parse_telegram_code(raw) {
+                        let code = if code_length.is_some() {
+                            parse_telegram_code_with_length(raw, code_length)
+                        } else {
+                            parse_telegram_code(raw)
+                        };
+                        if let Some(code) = code {
                             return Ok(Some(code));
                         }
                     }
@@ -214,6 +250,10 @@ fn is_firstmail_header_line(line: &str) -> bool {
 }
 
 fn parse_telegram_code(raw: &[u8]) -> Option<String> {
+    parse_telegram_code_with_length(raw, None)
+}
+
+fn parse_telegram_code_with_length(raw: &[u8], code_length: Option<usize>) -> Option<String> {
     let message = mailparse::parse_mail(raw).ok()?;
     let from = message.headers.get_first_header("From")?;
     let senders = mailparse::addrparse_header(from).ok()?;
@@ -224,25 +264,80 @@ fn parse_telegram_code(raw: &[u8]) -> Option<String> {
         .headers
         .get_first_value("Subject")
         .unwrap_or_default();
-    extract_code(&subject).or_else(|| code_from_part(&message))
+    extract_code_with_length(&subject, code_length)
+        .or_else(|| code_from_part(&message, code_length))
 }
 
-fn code_from_part(message: &mailparse::ParsedMail<'_>) -> Option<String> {
+fn code_from_part(
+    message: &mailparse::ParsedMail<'_>,
+    code_length: Option<usize>,
+) -> Option<String> {
     if message.subparts.is_empty() {
-        return message.get_body().ok().and_then(|body| extract_code(&body));
+        return message
+            .get_body()
+            .ok()
+            .and_then(|body| extract_code_with_length(&body, code_length));
     }
-    message.subparts.iter().find_map(code_from_part)
+    message
+        .subparts
+        .iter()
+        .find_map(|part| code_from_part(part, code_length))
 }
 
-fn extract_code(text: &str) -> Option<String> {
+pub(crate) fn extract_code(text: &str) -> Option<String> {
+    extract_code_with_length(text, None)
+}
+
+pub(crate) fn extract_code_with_length(text: &str, code_length: Option<usize>) -> Option<String> {
     text.split(|character: char| !character.is_ascii_digit())
-        .find(|part| (5..=8).contains(&part.len()))
+        .find(|part| {
+            code_length.map_or((5..=8).contains(&part.len()), |length| {
+                (4..=8).contains(&length) && part.len() == length
+            })
+        })
         .map(str::to_string)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_sources_exclude_antisafety_and_mail_tm_does_not_require_imap() {
+        assert!(serde_json::from_str::<RecoveryEmailSource>("\"anti_safety\"").is_err());
+        assert_eq!(RecoveryEmailSource::MailTm.imap_source(), None);
+        assert_eq!(
+            RecoveryEmailSource::Firstmail.imap_source(),
+            Some(EmailSource::Firstmail)
+        );
+        assert_eq!(
+            RecoveryEmailSource::Gmx.imap_source(),
+            Some(EmailSource::Gmx)
+        );
+    }
+
+    #[test]
+    fn telegram_codes_are_read_from_russian_and_english_mime_bodies() {
+        for body in [
+            "Ваш код: 598437. Его можно использовать, чтобы подтвердить адрес электронной почты и включить двухэтапную аутентификацию в Telegram.",
+            "Приветствуем!\nВаш код: 835305. Его можно использовать, чтобы подтвердить адрес электронной почты для входа в Telegram.",
+            "Your code: 835305. Confirm your email address for Telegram.",
+        ] {
+            let raw = format!("From: Telegram <noreply@telegram.org>\r\nSubject: Telegram\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n{body}");
+            let expected = if body.contains("598437") { "598437" } else { "835305" };
+            assert_eq!(parse_telegram_code(raw.as_bytes()).as_deref(), Some(expected));
+        }
+        let raw = b"From: recovery@telegram.org\r\nSubject: Telegram\r\n\r\nCode: 1234";
+        assert_eq!(
+            parse_telegram_code_with_length(raw, Some(4)),
+            Some("1234".into())
+        );
+        assert_eq!(parse_telegram_code_with_length(raw, Some(6)), None);
+        assert_eq!(
+            extract_code_with_length("Year 2026. Code 598437", Some(6)),
+            Some("598437".into())
+        );
+    }
 
     #[test]
     fn account_file_requires_credentials_and_deduplicates() {

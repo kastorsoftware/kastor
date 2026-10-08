@@ -13,6 +13,7 @@ type NameMode = "same" | "file" | "random";
 type AvatarMode = "emoji" | "folder" | "single" | "generated";
 type UsernameMode = "random" | "from_list" | "prefix_random";
 type EmailSource = "anti_safety" | "firstmail" | "gmx";
+type RecoveryEmailSource = "firstmail" | "gmx" | "mail_tm";
 
 type Provider = { kind: string; label: string; requires_endpoint: boolean };
 type Country = { id: string; name: string };
@@ -22,6 +23,7 @@ type Identity = { first_name: string; last_name: string };
 type StoredSettings = {
   provider: string; apiKey: string; customEndpoint: string; selectedCountries: string[]; countMode: "count" | "budget"; count: string;
   setTwoFa: boolean; twoFaPassword: string; reRegisterExisting: boolean; mobileDevice: boolean; antiSafetyKey: string; antiSafetyAid: string; emailSource: EmailSource; emailFilePath: string; emailPremium: boolean; allowEmailFallback: boolean;
+  setRecoveryEmail: boolean; recoveryEmailSource: RecoveryEmailSource; recoveryEmailFilePath: string;
   addToPanel: boolean; openResults: boolean; hidePhoneNumber: boolean; hideOnlineStatus: boolean; setAvatar: boolean; setUsername: boolean; smsTimeout: string; stopOnPriceChange: boolean; minPrice: string; maxPrice: string;
   nameMode: NameMode; firstName: string; lastName: string; namesFile: string; rejectAppCode: boolean; concurrency: string; pollInterval: string;
   failureStop: boolean; failureLimit: string;
@@ -52,6 +54,9 @@ export function RegistrarPage() {
   const [antiSafetyAid, setAntiSafetyAid] = useState("");
   const [emailSource, setEmailSource] = useState<EmailSource>("firstmail");
   const [emailFilePath, setEmailFilePath] = useState("");
+  const [setRecoveryEmail, setSetRecoveryEmail] = useState(false);
+  const [recoveryEmailSource, setRecoveryEmailSource] = useState<RecoveryEmailSource>("firstmail");
+  const [recoveryEmailFilePath, setRecoveryEmailFilePath] = useState("");
   const [emailPremium, setEmailPremium] = useState(false);
   const [allowEmailFallback, setAllowEmailFallback] = useState(false);
   const [addToPanel, setAddToPanel] = useState(true);
@@ -130,6 +135,7 @@ export function RegistrarPage() {
   const storedSettings = (): StoredSettings => ({
     provider, apiKey, customEndpoint, selectedCountries, countMode, count, setTwoFa, twoFaPassword, reRegisterExisting, mobileDevice, antiSafetyKey, antiSafetyAid,
     emailSource, emailFilePath, emailPremium, allowEmailFallback, addToPanel, openResults, hidePhoneNumber, hideOnlineStatus, setAvatar, setUsername, smsTimeout, stopOnPriceChange, minPrice, maxPrice, nameMode,
+    setRecoveryEmail, recoveryEmailSource, recoveryEmailFilePath,
     firstName, lastName, namesFile, rejectAppCode, concurrency, pollInterval, failureStop, failureLimit,
     avatarMode, avatarPath, usernameMode, usernamePrefix, usernameListPath,
     manualLocale, registrationLanguage, timezoneOffset,
@@ -144,6 +150,9 @@ export function RegistrarPage() {
     if (typeof settings.count === "string") setCount(settings.count);
     if (typeof settings.setTwoFa === "boolean") setSetTwoFa(settings.setTwoFa);
     if (typeof settings.twoFaPassword === "string") setTwoFaPassword(settings.twoFaPassword);
+    if (typeof settings.setRecoveryEmail === "boolean") setSetRecoveryEmail(settings.setRecoveryEmail);
+    if (settings.recoveryEmailSource && ["firstmail", "gmx", "mail_tm"].includes(settings.recoveryEmailSource)) setRecoveryEmailSource(settings.recoveryEmailSource);
+    if (typeof settings.recoveryEmailFilePath === "string") setRecoveryEmailFilePath(settings.recoveryEmailFilePath);
     if (typeof settings.reRegisterExisting === "boolean") setReRegisterExisting(settings.reRegisterExisting);
     if (typeof settings.mobileDevice === "boolean") setMobileDevice(settings.mobileDevice);
     if (typeof settings.antiSafetyKey === "string") setAntiSafetyKey(settings.antiSafetyKey);
@@ -355,11 +364,14 @@ export function RegistrarPage() {
     if (typeof path === "string") setNamesFile(path);
   };
 
-  const selectEmailFile = async () => {
+  const selectEmailFile = async (recovery = false) => {
     if (!("__TAURI_INTERNALS__" in window)) return;
     const { open } = await import("@tauri-apps/plugin-dialog");
     const path = await open({ multiple: false, filters: [{ name: "Text", extensions: ["txt"] }] });
-    if (typeof path === "string") setEmailFilePath(path);
+    if (typeof path === "string") {
+      if (recovery) setRecoveryEmailFilePath(path);
+      else setEmailFilePath(path);
+    }
   };
 
   const startTask = async () => {
@@ -375,6 +387,7 @@ export function RegistrarPage() {
       if (countMode === "count" && (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000)) throw new Error("registrar.invalidCount");
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
+      if (setTwoFa && setRecoveryEmail && recoveryEmailSource !== "mail_tm" && !recoveryEmailFilePath) throw new Error("registrar.recoveryEmailFileRequired");
       if ((mobileDevice || emailSource === "anti_safety") && (!antiSafetyKey.trim() || !antiSafetyAid.trim())) throw new Error("registrar.pushCredentialsRequired");
       if (emailSource !== "anti_safety" && !emailFilePath) throw new Error("registrar.emailFileRequired");
       if (setAvatar && (avatarMode === "folder" || avatarMode === "single") && !avatarPath) throw new Error("registrar.avatarRequired");
@@ -410,6 +423,7 @@ export function RegistrarPage() {
         countries: selectedCountries, expected_prices: expectedPrices, use_full_balance: countMode === "budget",
         min_price: minimum, stop_on_price_change: stopOnPriceChange, reject_app_code: rejectAppCode,
         two_fa_password: setTwoFa ? twoFaPassword : null, re_register_existing: reRegisterExisting, send_push: mobileDevice,
+        set_recovery_email: setTwoFa && setRecoveryEmail, recovery_email_source: recoveryEmailSource, recovery_email_file_path: recoveryEmailFilePath || null,
         antisafety: mobileDevice || emailSource === "anti_safety" ? { api_key: antiSafetyKey.trim(), aid: antiSafetyAid.trim() } : null,
         email_source: emailSource, email_file_path: emailSource === "anti_safety" ? null : emailFilePath,
         email_premium: emailPremium,
@@ -535,6 +549,7 @@ export function RegistrarPage() {
           <div className="space-y-4">
             <ToggleRow checked={setTwoFa} onChange={setSetTwoFa} label={t("registrar.setTwoFa")} />
             {setTwoFa && <Field label={t("registrar.twoFaPassword")}><input value={twoFaPassword} onChange={(event) => setTwoFaPassword(event.target.value)} type="password" autoComplete="new-password" className={inputClass} /></Field>}
+            {setTwoFa && <ToggleRow checked={setRecoveryEmail} onChange={setSetRecoveryEmail} label={t("registrar.setRecoveryEmail")} />}
             <ToggleRow checked={reRegisterExisting} onChange={setReRegisterExisting} label={t("registrar.reRegisterExisting")} help={t("registrar.reRegisterExistingHint")} />
             <ToggleRow checked={mobileDevice} onChange={setMobileDevice} label={t("registrar.mobileDevice")} help={t("registrar.mobileDeviceHint")} />
             <ToggleRow checked={addToPanel} onChange={setAddToPanel} label={t("registrar.addToPanel")} />
@@ -576,6 +591,14 @@ export function RegistrarPage() {
               {emailSource === "gmx" && <p className="text-xs text-muted-foreground">{t("registrar.gmxHint")}</p>}
             </div>}
           </div>
+          {setTwoFa && setRecoveryEmail && <div className="mt-4 space-y-3 border-t border-border pt-4">
+            <Field label={t("registrar.recoveryEmailSource")}><RegistrarSelect label={t("registrar.recoveryEmailSource")} value={recoveryEmailSource} onChange={(value) => setRecoveryEmailSource(value as RecoveryEmailSource)} options={[{ value: "firstmail", label: "Firstmail" }, { value: "gmx", label: "GMX.de / GMX.com" }, { value: "mail_tm", label: "mail.tm" }]} /></Field>
+            {recoveryEmailSource === "mail_tm" ? <p className="text-xs text-muted-foreground">{t("registrar.mailTmHint")} <a href="https://mail.tm" target="_blank" rel="noopener noreferrer" className="text-primary underline">mail.tm</a></p> : <div className="space-y-2">
+              <PickerButton onClick={() => void selectEmailFile(true)} icon="file" label={t("registrar.chooseFile")} value={recoveryEmailFilePath} />
+              <p className="text-xs text-muted-foreground">{t("registrar.emailFileHint")}</p>
+              <p className="text-xs text-muted-foreground">{t(recoveryEmailSource === "firstmail" ? "registrar.firstmailHint" : "registrar.gmxHint")}</p>
+            </div>}
+          </div>}
         </Section>
       </div>
 

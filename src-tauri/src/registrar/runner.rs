@@ -13,11 +13,12 @@ use crate::proxy::{ProxyConfig, ProxyList};
 use crate::queue::TaskQueue;
 use crate::registrar::antisafety::{AntiSafetyClient, AntiSafetyConfig};
 use crate::registrar::db::{registrar_directory, RegistrarDatabase, RegistrationRecord};
-use crate::registrar::email::{EmailSource, MailboxAccount};
+use crate::registrar::email::{EmailSource, MailboxAccount, RecoveryEmailSource};
 use crate::registrar::flow::{
     RegistrationCodeRequest, RegistrationIdentity, RegistrationOutcome, RegistrationSession,
     RECAPTCHA_ANTISAFETY_REQUIRED,
 };
+use crate::registrar::mail_tm::{MailTmClient, MailTmMailbox};
 use crate::registrar::profile::{fetch_latest_android_versions, RegistrationProfile};
 use crate::registrar::sms::{
     create_provider, Activation, ActivationAction, ActivationStatus, NumberRequest, SmsErrorKind,
@@ -74,6 +75,12 @@ pub struct RegistrarTaskConfig {
     pub re_register_existing: bool,
     #[serde(default)]
     pub two_fa_password: Option<String>,
+    #[serde(default)]
+    pub set_recovery_email: bool,
+    #[serde(default)]
+    pub recovery_email_source: RecoveryEmailSource,
+    #[serde(default)]
+    pub recovery_email_file_path: Option<String>,
     #[serde(default)]
     pub antisafety: Option<AntiSafetyConfig>,
     #[serde(default)]
@@ -204,6 +211,19 @@ impl RegistrarTaskConfig {
             return Err("2FA password must contain from 1 to 256 bytes".into());
         }
         validate_antisafety(self.send_push, self.email_source, self.antisafety.as_ref())?;
+        if self.set_recovery_email {
+            if self.two_fa_password.is_none() {
+                return Err("registrar.passwordRequired".into());
+            }
+            if self.recovery_email_source.imap_source().is_some()
+                && self
+                    .recovery_email_file_path
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+            {
+                return Err("registrar.recoveryEmailFileRequired".into());
+            }
+        }
         if self.email_source != EmailSource::AntiSafety
             && self.email_file_path.as_deref().is_none_or(str::is_empty)
         {
@@ -291,6 +311,10 @@ impl Drop for CancellationTicket {
 struct Context {
     mailboxes: Vec<MailboxAccount>,
     mailbox_index: AtomicUsize,
+    recovery_mailboxes: Vec<MailboxAccount>,
+    recovery_mailbox_index: AtomicUsize,
+    reserved_mailboxes: tokio::sync::Mutex<HashSet<String>>,
+    mail_tm: MailTmClient,
     usernames: Vec<String>,
     username_index: AtomicUsize,
     proxy_locales: tokio::sync::Mutex<HashMap<String, ProxyLocale>>,
@@ -356,6 +380,19 @@ pub async fn registrar_start(
             .as_deref()
             .ok_or("registrar.emailFileRequired")?;
         MailboxAccount::load_file(std::path::Path::new(path), config.email_source)?
+    };
+    let recovery_mailboxes = if config.set_recovery_email {
+        if let Some(source) = config.recovery_email_source.imap_source() {
+            let path = config
+                .recovery_email_file_path
+                .as_deref()
+                .ok_or("registrar.recoveryEmailFileRequired")?;
+            MailboxAccount::load_file(std::path::Path::new(path), source)?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
     };
     if config.set_avatar
         && (!matches!(
@@ -452,6 +489,10 @@ pub async fn registrar_start(
     let context = Arc::new(Context {
         mailboxes,
         mailbox_index: AtomicUsize::new(0),
+        recovery_mailboxes,
+        recovery_mailbox_index: AtomicUsize::new(0),
+        reserved_mailboxes: tokio::sync::Mutex::new(HashSet::new()),
+        mail_tm: MailTmClient::new(),
         usernames,
         username_index: AtomicUsize::new(0),
         proxy_locales: tokio::sync::Mutex::new(HashMap::new()),
@@ -1155,6 +1196,9 @@ fn acquire_telegram_number(
 }
 
 fn safe_error(error: &str) -> String {
+    if error == "registrar.emailAccountsExhausted" {
+        return "email_accounts_exhausted".into();
+    }
     if error
         .strip_prefix("email_reset_wait:")
         .and_then(|value| value.parse::<u64>().ok())
@@ -1181,6 +1225,12 @@ fn safe_error(error: &str) -> String {
         | "activation_unavailable"
         | "sms_proxy_unavailable"
         | "email_verification_timeout"
+        | "recovery_email_timeout"
+        | "recovery_email_rejected_limit"
+        | "mail_tm_unavailable"
+        | "mail_tm_rate_limited"
+        | "mail_tm_invalid_response"
+        | "mail_tm_no_domains"
         | "email_reset_already_requested"
         | "email_reset_unavailable"
         | RECAPTCHA_ANTISAFETY_REQUIRED
@@ -1229,8 +1279,10 @@ fn safe_error(error: &str) -> String {
             "2FA_RECENT_CONFIRM" => "account_reset_cancelled",
             "PHONE_NUMBER_APP_SIGNUP_FORBIDDEN" => "telegram_app_signup_forbidden",
             "EMAIL_NOT_ALLOWED" | "EMAIL_INVALID" => "telegram_email_rejected",
-            "EMAIL_CODE_INVALID" => "telegram_email_code_invalid",
-            "EMAIL_VERIFY_EXPIRED" | "EMAIL_CODE_EXPIRED" => "telegram_email_code_expired",
+            "EMAIL_CODE_INVALID" | "CODE_INVALID" => "telegram_email_code_invalid",
+            "EMAIL_VERIFY_EXPIRED" | "EMAIL_CODE_EXPIRED" | "EMAIL_HASH_EXPIRED" => {
+                "telegram_email_code_expired"
+            }
             "USERNAME_OCCUPIED" | "USERNAME_PURCHASE_AVAILABLE" => "telegram_username_occupied",
             "USERNAME_INVALID" => "telegram_username_invalid",
             "FIRSTNAME_INVALID" | "LASTNAME_INVALID" => "telegram_name_invalid",
@@ -1301,6 +1353,7 @@ async fn open_registration_session(
     sms_config: &SmsProviderConfig,
     record_id: i64,
     record: &mut RegistrationRecord,
+    previous_login_mail: &str,
 ) -> Result<RegistrationSession, String> {
     let config = &context.config;
     context.log(index, "requesting_telegram_code");
@@ -1423,6 +1476,9 @@ async fn open_registration_session(
     ) {
         let _ = session.cancel().await;
         return Err("unsupported_verification_type".into());
+    }
+    if session.login_mail().is_empty() {
+        session.set_login_mail(previous_login_mail.to_string());
     }
     Ok(session)
 }
@@ -1677,7 +1733,7 @@ async fn register_number(
         return Err("stopped".into());
     }
     let mut session = open_registration_session(
-        context, index, attempt, activation, sms_config, record_id, record,
+        context, index, attempt, activation, sms_config, record_id, record, "",
     )
     .await?;
     let id = activation.id.clone();
@@ -1730,7 +1786,14 @@ async fn register_number(
                         prepare_next_sms(sms_config, activation).await?;
                         rotate_registration_proxy(context, index, attempt).await;
                         open_registration_session(
-                            context, index, attempt, activation, sms_config, record_id, record,
+                            context,
+                            index,
+                            attempt,
+                            activation,
+                            sms_config,
+                            record_id,
+                            record,
+                            session.login_mail(),
                         )
                         .await
                     })
@@ -1759,7 +1822,14 @@ async fn register_number(
                     prepare_next_sms(sms_config, activation).await?;
                     rotate_registration_proxy(context, index, attempt).await;
                     session = open_registration_session(
-                        context, index, attempt, activation, sms_config, record_id, record,
+                        context,
+                        index,
+                        attempt,
+                        activation,
+                        sms_config,
+                        record_id,
+                        record,
+                        session.login_mail(),
                     )
                     .await?;
                     continue;
@@ -1802,7 +1872,14 @@ async fn register_number(
         }
         prepare_next_sms(sms_config, activation).await?;
         session = open_registration_session(
-            context, index, attempt, activation, sms_config, record_id, record,
+            context,
+            index,
+            attempt,
+            activation,
+            sms_config,
+            record_id,
+            record,
+            session.login_mail(),
         )
         .await?;
     };
@@ -1822,7 +1899,12 @@ async fn register_number(
     super::flow::pause_for_registration_transition().await;
     if let Some(password) = &config.two_fa_password {
         context.log(index, "setting_2fa");
-        if let Err(error) = session.set_two_fa(&account_id, password).await {
+        let result = if config.set_recovery_email {
+            setup_two_fa_recovery_email(context, index, &mut session, &account_id, password).await
+        } else {
+            session.set_two_fa(&account_id, password).await
+        };
+        if let Err(error) = result {
             context.log(index, &safe_error(&error));
             warnings.push("two_fa_failed");
         }
@@ -1990,6 +2072,10 @@ enum EmailCandidate {
         baseline: u32,
         seen: std::collections::HashSet<u32>,
     },
+    MailTm {
+        account: MailTmMailbox,
+        seen: HashSet<String>,
+    },
 }
 
 impl EmailCandidate {
@@ -1997,11 +2083,43 @@ impl EmailCandidate {
         match self {
             Self::AntiSafety { address, .. } => address,
             Self::Imap { account, .. } => &account.address,
+            Self::MailTm { account, .. } => &account.address,
+        }
+    }
+
+    fn credentials(&self) -> String {
+        match self {
+            Self::AntiSafety { .. } => String::new(),
+            Self::Imap { account, .. } => account.credentials(),
+            Self::MailTm { account, .. } => account.credentials(),
         }
     }
 
     async fn poll_code(&mut self) -> Result<Option<String>, String> {
+        self.poll_code_with_length(None).await
+    }
+
+    async fn poll_code_with_length(
+        &mut self,
+        code_length: Option<usize>,
+    ) -> Result<Option<String>, String> {
         match self {
+            Self::MailTm { account, seen } => {
+                let account = account.clone();
+                let mut polled = std::mem::take(seen);
+                let (result, updated) = tokio::task::spawn_blocking(move || {
+                    let result = if code_length.is_some() {
+                        account.code_after_with_length(&mut polled, code_length)
+                    } else {
+                        account.code_after(&mut polled)
+                    };
+                    (result, polled)
+                })
+                .await
+                .map_err(|_| "mail_tm_unavailable")?;
+                *seen = updated;
+                result
+            }
             Self::AntiSafety {
                 client,
                 id,
@@ -2026,7 +2144,11 @@ impl EmailCandidate {
                 let baseline = *baseline;
                 let mut polled = std::mem::take(seen);
                 let result = tokio::task::spawn_blocking(move || {
-                    let result = account.code_after(baseline, &mut polled);
+                    let result = if code_length.is_some() {
+                        account.code_after_with_length(baseline, &mut polled, code_length)
+                    } else {
+                        account.code_after(baseline, &mut polled)
+                    };
                     (result, polled)
                 })
                 .await
@@ -2076,26 +2198,142 @@ async fn next_email_candidate(
                 address: task.email,
             })
         }
-        EmailSource::Firstmail | EmailSource::Gmx => {
-            let position = context.mailbox_index.fetch_add(1, Ordering::Relaxed);
-            let account = context
-                .mailboxes
-                .get(position)
-                .ok_or("registrar.emailAccountsExhausted")?
-                .clone();
-            let baseline = tokio::task::spawn_blocking({
-                let account = account.clone();
-                move || account.latest_uid()
-            })
-            .await
-            .map_err(|_| "IMAP worker failed")??;
-            Ok(EmailCandidate::Imap {
-                account,
-                baseline,
-                seen: std::collections::HashSet::new(),
-            })
-        }
+        EmailSource::Firstmail | EmailSource::Gmx => next_imap_candidate(context, false).await,
     }
+}
+
+async fn next_imap_candidate(context: &Context, recovery: bool) -> Result<EmailCandidate, String> {
+    let (mailboxes, index) = if recovery {
+        (&context.recovery_mailboxes, &context.recovery_mailbox_index)
+    } else {
+        (&context.mailboxes, &context.mailbox_index)
+    };
+    let account = loop {
+        let position = index.fetch_add(1, Ordering::Relaxed);
+        let account = mailboxes
+            .get(position)
+            .ok_or("registrar.emailAccountsExhausted")?
+            .clone();
+        if context
+            .reserved_mailboxes
+            .lock()
+            .await
+            .insert(account.address.to_ascii_lowercase())
+        {
+            break account;
+        }
+    };
+    let baseline = tokio::task::spawn_blocking({
+        let account = account.clone();
+        move || account.latest_uid()
+    })
+    .await
+    .map_err(|_| "IMAP worker failed")??;
+    Ok(EmailCandidate::Imap {
+        account,
+        baseline,
+        seen: HashSet::new(),
+    })
+}
+
+async fn setup_two_fa_recovery_email(
+    context: &Context,
+    index: usize,
+    session: &mut RegistrationSession,
+    account_id: &str,
+    password: &str,
+) -> Result<(), String> {
+    const MAX_CANDIDATES: usize = 10;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
+    tokio::time::timeout_at(deadline, async {
+        for _ in 0..MAX_CANDIDATES {
+            if !context.token.load(Ordering::Relaxed) {
+                return Err("stopped".into());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err("recovery_email_timeout".into());
+            }
+            context.log(index, "preparing_recovery_email");
+            let candidate = if context.config.recovery_email_source == RecoveryEmailSource::MailTm {
+                let client = context.mail_tm.clone();
+                tokio::task::spawn_blocking(move || client.create_mailbox())
+                    .await
+                    .map_err(|_| "mail_tm_unavailable")?
+                    .map(|account| EmailCandidate::MailTm {
+                        account,
+                        seen: HashSet::new(),
+                    })
+            } else {
+                next_imap_candidate(context, true).await
+            };
+            let mut candidate = match candidate {
+                Ok(candidate) => candidate,
+                Err(error) if error.starts_with("IMAP ") => {
+                    context.log(index, "recovery_email_mailbox_unavailable");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            let credentials = candidate.credentials();
+            context.log(index, "setting_recovery_email");
+            let code_length = match session
+                .begin_two_fa_with_email(account_id, password, &credentials)
+                .await
+            {
+                Ok(crate::accounts::actions::PasswordSetup::Applied) => {
+                    context.log(index, "recovery_email_confirmed");
+                    return Ok(());
+                }
+                Ok(crate::accounts::actions::PasswordSetup::EmailConfirmationRequired {
+                    code_length,
+                }) => code_length,
+                Err(error) if is_email_rejected(&error) => {
+                    context.log(index, "recovery_email_rejected");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            context.log(index, "waiting_recovery_email_code");
+            loop {
+                if !context.token.load(Ordering::Relaxed) {
+                    return Err("stopped".into());
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err("recovery_email_timeout".into());
+                }
+                match candidate.poll_code_with_length(code_length).await {
+                    Ok(Some(code)) => {
+                        match session
+                            .confirm_two_fa_email(account_id, password, &code)
+                            .await
+                        {
+                            Ok(()) => {
+                                context.log(index, "recovery_email_confirmed");
+                                return Ok(());
+                            }
+                            Err(error) if telegram_rpc_code(&error) == Some("CODE_INVALID") => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error)
+                        if error == "mail_tm_rate_limited"
+                            || error == "mail_tm_unavailable"
+                            || error.starts_with("IMAP ") => {}
+                    Err(error) => return Err(error),
+                }
+                for _ in 0..5 {
+                    if !context.token.load(Ordering::Relaxed) {
+                        return Err("stopped".into());
+                    }
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+            }
+        }
+        Err("recovery_email_rejected_limit".into())
+    })
+    .await
+    .map_err(|_| "recovery_email_timeout".to_string())?
 }
 
 async fn setup_login_email(
@@ -2148,7 +2386,10 @@ async fn setup_login_email(
             }
             match candidate.poll_code().await? {
                 Some(code) => match session.confirm_login_email_verification(&code).await {
-                    Ok(sent_code) => return Ok(sent_code),
+                    Ok(sent_code) => {
+                        session.set_login_mail(candidate.credentials());
+                        return Ok(sent_code);
+                    }
                     Err(error) if is_email_rejected(&error) => {
                         context.log(index, "login_email_rejected");
                         break;
@@ -2756,6 +2997,10 @@ mod tests {
             "telegram_code_invalid"
         );
         assert_eq!(safe_error("sms_transport"), "sms_transport");
+        assert_eq!(
+            safe_error("registrar.emailAccountsExhausted"),
+            "email_accounts_exhausted"
+        );
         assert_eq!(
             safe_error(RECAPTCHA_ANTISAFETY_REQUIRED),
             RECAPTCHA_ANTISAFETY_REQUIRED

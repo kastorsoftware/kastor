@@ -38,6 +38,12 @@ pub struct AccountJson {
     #[serde(default, alias = "2fa", deserialize_with = "deserialize_nullable_string")]
     #[serde(rename = "twoFA")]
     pub two_fa: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_string")]
+    pub authkey: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_string")]
+    pub mail: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_string")]
+    pub mail2fa: String,
     #[serde(default)]
     pub validated: bool,
     #[serde(default)]
@@ -94,5 +100,29 @@ impl AccountJson {
             let _ = handle.emit("accounts-changed", ());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn email_metadata_is_backward_compatible_and_roundtrips_credentials() {
+        let legacy: AccountJson = serde_json::from_str("{}").unwrap();
+        assert!(legacy.authkey.is_empty() && legacy.mail.is_empty() && legacy.mail2fa.is_empty());
+        let nullable: AccountJson = serde_json::from_str(r#"{"authkey":null,"mail":null,"mail2fa":null}"#).unwrap();
+        assert!(nullable.authkey.is_empty() && nullable.mail.is_empty() && nullable.mail2fa.is_empty());
+        let json = AccountJson {
+            mail: "login@example.test:dummy:password".into(),
+            mail2fa: "recovery@example.test:dummy".into(),
+            ..Default::default()
+        };
+        let serialized = serde_json::to_string(&json).unwrap();
+        let restored: AccountJson = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(restored.mail, json.mail);
+        assert_eq!(restored.mail2fa, json.mail2fa);
+        assert!(restored.authkey.is_empty());
+        assert!(serialized.contains("\"authkey\":\"\""));
     }
 }
