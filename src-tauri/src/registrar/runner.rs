@@ -1551,15 +1551,6 @@ async fn register_number(
                 context.log(index, "already_registered");
                 return Ok(false);
             }
-            RegistrationOutcome::ReRegistrationPending => {
-                record.status = "two_fa_reset_pending".into();
-                context.record(record_id, record).await?;
-                context.log(index, "two_fa_reset_pending");
-                return Ok(false);
-            }
-            RegistrationOutcome::ReRegistrationRetryRequired => {
-                context.log(index, "two_fa_reset_completed");
-            }
             RegistrationOutcome::ReRegistrationRequired => {
                 re_register_existing = false;
                 context.log(index, "existing_account_deleted");

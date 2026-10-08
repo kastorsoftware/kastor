@@ -103,9 +103,7 @@ impl RegistrationIdentity {
 pub enum RegistrationOutcome {
     Registered { account_id: String },
     AlreadyRegistered,
-    ReRegistrationRetryRequired,
     ReRegistrationRequired,
-    ReRegistrationPending,
 }
 
 impl RegistrationSession {
