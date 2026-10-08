@@ -259,6 +259,35 @@ pub struct RegistrarProgress {
     pub results_directory: String,
 }
 
+#[derive(Default)]
+struct PendingCancellations {
+    pending: AtomicUsize,
+    refunds: AtomicUsize,
+}
+
+struct CancellationTicket(Arc<PendingCancellations>);
+
+impl PendingCancellations {
+    fn track(self: &Arc<Self>) -> CancellationTicket {
+        self.pending.fetch_add(1, Ordering::SeqCst);
+        CancellationTicket(self.clone())
+    }
+}
+
+impl CancellationTicket {
+    fn complete(self, refunded: bool) {
+        if refunded {
+            self.0.refunds.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+impl Drop for CancellationTicket {
+    fn drop(&mut self) {
+        self.0.pending.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 struct Context {
     mailboxes: Vec<MailboxAccount>,
     mailbox_index: AtomicUsize,
@@ -266,6 +295,7 @@ struct Context {
     username_index: AtomicUsize,
     proxy_locales: tokio::sync::Mutex<HashMap<String, ProxyLocale>>,
     purchase_gate: tokio::sync::Mutex<Option<String>>,
+    cancellations: Arc<PendingCancellations>,
     app: tauri::AppHandle,
     database: tokio::sync::Mutex<RegistrarDatabase>,
     config: RegistrarTaskConfig,
@@ -426,6 +456,7 @@ pub async fn registrar_start(
         username_index: AtomicUsize::new(0),
         proxy_locales: tokio::sync::Mutex::new(HashMap::new()),
         purchase_gate: tokio::sync::Mutex::new(None),
+        cancellations: Arc::new(PendingCancellations::default()),
         app: app.clone(),
         database: tokio::sync::Mutex::new(database),
         config,
@@ -738,7 +769,7 @@ async fn checked_request(
         let balance =
             provider_call(sms_config.clone(), "balance", |provider| provider.balance()).await?;
         if !balance.is_finite() || balance < price.price {
-            return Ok(None);
+            return Err("sms_insufficientbalance".into());
         }
         if config.sms_provider.kind != SmsProviderKind::OnlineSim {
             request.max_price = Some(request.max_price.unwrap_or(balance).min(balance));
@@ -774,6 +805,7 @@ async fn select_sms_proxy(config: &SmsProviderConfig) -> Result<SmsProviderConfi
 
 async fn purchase_for_attempt(
     context: &Context,
+    index: usize,
     request: &mut NumberRequest,
     countries: &[String],
     sms_config: &SmsProviderConfig,
@@ -787,44 +819,105 @@ async fn purchase_for_attempt(
     if let Some(reason) = gate.as_ref().and_then(|guard| guard.as_ref()) {
         return Err(reason.clone());
     }
-    if protected_purchase {
-        let mut selected = Ok(None);
-        for country in countries {
-            let mut candidate = request.clone();
-            candidate.country = country.clone();
-            selected = checked_request(&context.config, sms_config, candidate).await;
-            if !matches!(selected, Ok(None)) {
-                break;
+    loop {
+        let refunds_before_purchase = context.cancellations.refunds.load(Ordering::SeqCst);
+        if protected_purchase {
+            let mut selected = Ok(None);
+            let mut insufficient_balance = false;
+            for country in countries {
+                let mut candidate = request.clone();
+                candidate.country = country.clone();
+                selected = checked_request(&context.config, sms_config, candidate).await;
+                if matches!(&selected, Err(error) if error == "sms_insufficientbalance") {
+                    insufficient_balance = true;
+                    selected = Ok(None);
+                }
+                if !matches!(selected, Ok(None)) {
+                    break;
+                }
+            }
+            match selected {
+                Ok(Some(value)) => *request = value,
+                Ok(None) => {
+                    if insufficient_balance {
+                        if wait_for_balance_refund(context, index, refunds_before_purchase).await? {
+                            continue;
+                        }
+                        return Ok(None);
+                    }
+                    **gate.as_mut().expect("protected purchase holds gate") =
+                        Some("budget_or_price_limit".into());
+                    return Ok(None);
+                }
+                Err(error) => {
+                    **gate.as_mut().expect("protected purchase holds gate") = Some(error.clone());
+                    return Err(error);
+                }
             }
         }
-        match selected {
-            Ok(Some(value)) => *request = value,
-            Ok(None) => {
-                **gate.as_mut().expect("protected purchase holds gate") =
-                    Some("budget_or_price_limit".into());
-                return Ok(None);
-            }
-            Err(error) => {
-                **gate.as_mut().expect("protected purchase holds gate") = Some(error.clone());
-                return Err(error);
-            }
+        if !context.token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
         }
+        let purchase_request = request.clone();
+        let activation =
+            match provider_call(sms_config.clone(), "acquire_number", move |provider| {
+                acquire_telegram_number(provider, &purchase_request)
+            })
+            .await
+            {
+                Ok(activation) => activation,
+                Err(error) if error == "sms_insufficientbalance" => {
+                    if wait_for_balance_refund(context, index, refunds_before_purchase).await? {
+                        continue;
+                    }
+                    return Ok(None);
+                }
+                Err(_) => return Err("purchase_failed".into()),
+            };
+        if context.config.stop_on_price_change
+            && purchase_price_rejected(&context.config, request, &activation)
+        {
+            **gate.as_mut().expect("price protection holds gate") = Some("price_changed".into());
+        }
+        return Ok(Some(activation));
     }
-    if !context.token.load(Ordering::Relaxed) {
-        return Err("stopped".into());
+}
+
+async fn wait_for_cancellation_refund(
+    queue: &PendingCancellations,
+    token: &AtomicBool,
+    refunds_before_purchase: usize,
+) -> Result<bool, String> {
+    loop {
+        if !token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        // Read pending first so the final successful cancellation cannot be missed.
+        let pending = queue.pending.load(Ordering::SeqCst);
+        if queue.refunds.load(Ordering::SeqCst) != refunds_before_purchase {
+            return Ok(true);
+        }
+        if pending == 0 {
+            return Ok(false);
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    let purchase_request = request.clone();
-    let activation = provider_call(sms_config.clone(), "acquire_number", move |provider| {
-        acquire_telegram_number(provider, &purchase_request)
-    })
-    .await
-    .map_err(|_| "purchase_failed".to_string())?;
-    if context.config.stop_on_price_change
-        && purchase_price_rejected(&context.config, request, &activation)
-    {
-        **gate.as_mut().expect("price protection holds gate") = Some("price_changed".into());
+}
+
+async fn wait_for_balance_refund(
+    context: &Context,
+    index: usize,
+    refunds: usize,
+) -> Result<bool, String> {
+    if context.cancellations.pending.load(Ordering::SeqCst) > 0 {
+        context.log(index, "waiting_for_cancellation_refund");
     }
-    Ok(Some(activation))
+    let retry =
+        wait_for_cancellation_refund(&context.cancellations, &context.token, refunds).await?;
+    if retry {
+        context.log(index, "checking_balance_after_refund");
+    }
+    Ok(retry)
 }
 
 fn purchase_price_rejected(
@@ -882,7 +975,8 @@ async fn process_attempt(
         },
     );
     context.log(index, "buying_number");
-    let purchase = purchase_for_attempt(&context, &mut request, &countries, &sms_config).await;
+    let purchase =
+        purchase_for_attempt(&context, index, &mut request, &countries, &sms_config).await;
     let activation = match purchase {
         Ok(Some(activation)) => activation,
         Ok(None) => {
@@ -916,7 +1010,7 @@ async fn process_attempt(
     let record_id = match context.database.lock().await.insert(&record) {
         Ok(id) => id,
         Err(error) => {
-            cancel_activation(sms_config.clone(), activation.id);
+            cancel_activation(&context, sms_config.clone(), activation.id);
             return Err(error);
         }
     };
@@ -927,7 +1021,7 @@ async fn process_attempt(
     .await;
     match already_in_accounts {
         Ok(Ok(true)) => {
-            cancel_activation(sms_config, activation.id);
+            cancel_activation(&context, sms_config, activation.id);
             record.status = "number_already_in_accounts".into();
             record.error = Some("Number already exists in Accounts".into());
             context.record(record_id, &record).await?;
@@ -936,7 +1030,7 @@ async fn process_attempt(
         }
         Ok(Ok(false)) => {}
         _ => {
-            cancel_activation(sms_config, activation.id);
+            cancel_activation(&context, sms_config, activation.id);
             record.status = "duplicate_check_failed".into();
             record.error = Some("Failed to inspect stored accounts".into());
             context.record(record_id, &record).await?;
@@ -945,7 +1039,7 @@ async fn process_attempt(
         }
     }
     if purchase_price_rejected(config, &request, &activation) {
-        cancel_activation(sms_config.clone(), activation.id);
+        cancel_activation(&context, sms_config.clone(), activation.id);
         record.status = "price_rejected".into();
         record.error = Some("Purchased number price is outside the accepted range".into());
         context.record(record_id, &record).await?;
@@ -966,7 +1060,7 @@ async fn process_attempt(
     )
     .await;
     if record.account_id.is_none() && record.status != "registration_storage_failed" {
-        cancel_activation(sms_config, activation.id);
+        cancel_activation(&context, sms_config, activation.id);
     }
     match outcome {
         Ok(success) => Ok(success),
@@ -2228,7 +2322,8 @@ async fn proxy_locale(context: &Context, proxy: &ProxyConfig) -> Result<ProxyLoc
     Ok(result)
 }
 
-fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
+fn cancel_activation(context: &Context, config: SmsProviderConfig, activation_id: String) {
+    let ticket = context.cancellations.track();
     // Providers may reject early cancellation. Keep their retry window out of the registration task.
     let _ = tokio::spawn(async move {
         let result = cancel_with_retry(
@@ -2243,6 +2338,7 @@ fn cancel_activation(config: SmsProviderConfig, activation_id: String) {
             || tokio::time::sleep(CANCEL_RETRY_DELAY),
         )
         .await;
+        ticket.complete(result.is_ok());
         if let Err(error) = result {
             dbg_log!(
                 "registrar::activation cancellation failed category={}",
@@ -2285,6 +2381,76 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn balance_wait_resumes_after_successful_cancellation() {
+        let queue = Arc::new(PendingCancellations::default());
+        let ticket = queue.track();
+        let completion = tokio::spawn(async move {
+            tokio::task::yield_now().await;
+            ticket.complete(true);
+        });
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(true), 0).await,
+            Ok(true)
+        );
+        completion.await.unwrap();
+        assert_eq!(queue.pending.load(Ordering::SeqCst), 0);
+        assert_eq!(queue.refunds.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_cancellations_do_not_restart_purchases() {
+        let queue = Arc::new(PendingCancellations::default());
+        let ticket = queue.track();
+        ticket.complete(false);
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(true), 0).await,
+            Ok(false)
+        );
+        assert_eq!(queue.pending.load(Ordering::SeqCst), 0);
+        assert_eq!(queue.refunds.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn completed_refund_is_not_lost_before_the_wait_begins() {
+        let queue = Arc::new(PendingCancellations::default());
+        queue.track().complete(true);
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(true), 0).await,
+            Ok(true)
+        );
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(true), 1).await,
+            Ok(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn balance_wait_stops_but_keeps_cancellation_pending() {
+        let queue = Arc::new(PendingCancellations::default());
+        let ticket = queue.track();
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(false), 0).await,
+            Err("stopped".into())
+        );
+        assert_eq!(queue.pending.load(Ordering::SeqCst), 1);
+        drop(ticket);
+        assert_eq!(queue.pending.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn balance_wait_can_resume_without_waiting_for_every_cancellation() {
+        let queue = Arc::new(PendingCancellations::default());
+        let remaining = queue.track();
+        queue.track().complete(true);
+        assert_eq!(
+            wait_for_cancellation_refund(&queue, &AtomicBool::new(true), 0).await,
+            Ok(true)
+        );
+        assert_eq!(queue.pending.load(Ordering::SeqCst), 1);
+        remaining.complete(false);
+    }
 
     #[test]
     fn session_refresh_selects_a_different_proxy_not_a_duplicate_pool_entry() {

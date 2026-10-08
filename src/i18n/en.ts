@@ -49,6 +49,9 @@ export const en = {
       attempt_limit: "Attempt limit reached",
     },
     stages: {
+      budget_or_price_limit: "Number purchases stopped: insufficient balance or no numbers available within the selected price range",
+      waiting_for_cancellation_refund: "Insufficient balance; waiting for previously purchased numbers to be cancelled and possibly refunded",
+      checking_balance_after_refund: "Number cancellation completed; checking balance and purchase availability again",
       sms_wait_session_refresh: "No SMS arrived halfway through the wait; recreating the registration session",
       price_changed: "Price changed; new purchases stopped",
       price_rejected: "Number rejected because of price",
