@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rand::seq::SliceRandom;
+use rand::{seq::SliceRandom, Rng};
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
@@ -28,6 +28,8 @@ const MAX_ATTEMPTS: usize = 100_000;
 const MAX_APP_SMS_FALLBACK_WAIT_SECS: u64 = 900;
 const MAX_REREGISTRATION_RESTARTS: usize = 2;
 const MAX_EXPIRED_CODE_RESTARTS: usize = 2;
+const ACCOUNT_DELETION_PAUSE_MIN_SECS: u64 = 2;
+const ACCOUNT_DELETION_PAUSE_MAX_SECS: u64 = 6;
 const CANCEL_RETRY_DELAY: Duration = Duration::from_secs(121);
 const CANCEL_RETRIES: usize = 3;
 
@@ -1005,12 +1007,22 @@ async fn process_attempt(
                 record.error = Some(safe_error(&error));
             }
             context.record(record_id, &record).await?;
-            context.log(index, &record.status);
-            if record.error.as_deref() != Some(record.status.as_str()) {
-                context.log(index, record.error.as_deref().unwrap_or("unknown_error"));
+            for message in failure_log_messages(
+                &record.status,
+                record.error.as_deref().unwrap_or("unknown_error"),
+            ) {
+                context.log(index, message);
             }
             Ok(record.account_id.is_some())
         }
+    }
+}
+
+fn failure_log_messages<'a>(status: &'a str, error: &'a str) -> Vec<&'a str> {
+    if status == "phone_number_banned" || status == error {
+        vec![error]
+    } else {
+        vec![status, error]
     }
 }
 
@@ -1486,6 +1498,75 @@ async fn prepare_next_sms(
     .await
 }
 
+fn different_registration_proxy(
+    pool: &[ProxyConfig],
+    current: Option<&ProxyConfig>,
+) -> Option<ProxyConfig> {
+    let candidates: Vec<_> = pool
+        .iter()
+        .filter(|candidate| {
+            !current.is_some_and(|current| {
+                candidate.proxy_type == current.proxy_type
+                    && candidate.host.eq_ignore_ascii_case(&current.host)
+                    && candidate.port == current.port
+                    && candidate.username == current.username
+                    && candidate.password == current.password
+            })
+        })
+        .collect();
+    candidates
+        .choose(&mut rand::thread_rng())
+        .map(|proxy| (*proxy).clone())
+}
+
+async fn rotate_registration_proxy(
+    context: &Context,
+    index: usize,
+    attempt: &mut RegistrationAttempt,
+) {
+    if let Some(proxy) =
+        different_registration_proxy(&ProxyList::load().proxies, attempt.proxy.as_ref())
+    {
+        context.log(index, "registration_proxy_changed");
+        if !context.config.manual_locale {
+            match proxy_locale(context, &proxy).await {
+                Ok(locale) => apply_locale(
+                    &mut attempt.profile,
+                    &locale.language,
+                    locale.timezone_offset_seconds,
+                ),
+                Err(_) => context.log(index, "proxy_locale_unavailable"),
+            }
+        }
+        attempt.proxy = Some(proxy);
+    } else {
+        context.log(index, "registration_proxy_unchanged");
+    }
+}
+
+fn account_deletion_pause() -> Duration {
+    Duration::from_secs(
+        rand::thread_rng()
+            .gen_range(ACCOUNT_DELETION_PAUSE_MIN_SECS..=ACCOUNT_DELETION_PAUSE_MAX_SECS),
+    )
+}
+
+async fn wait_after_account_deletion(token: &AtomicBool) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + account_deletion_pause();
+    loop {
+        if !token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_secs(1)).min(deadline),
+        )
+        .await;
+    }
+}
+
 async fn register_number(
     context: &Context,
     index: usize,
@@ -1495,6 +1576,8 @@ async fn register_number(
     record_id: i64,
     record: &mut RegistrationRecord,
 ) -> Result<bool, String> {
+    let mut session_attempt = attempt.clone();
+    let attempt = &mut session_attempt;
     let config = &context.config;
     if !context.token.load(Ordering::Relaxed) {
         return Err("stopped".into());
@@ -1551,6 +1634,7 @@ async fn register_number(
                     session = tokio::time::timeout_at(deadline, async {
                         let _ = session.cancel().await;
                         prepare_next_sms(sms_config, activation).await?;
+                        rotate_registration_proxy(context, index, attempt).await;
                         open_registration_session(
                             context, index, attempt, activation, sms_config, record_id, record,
                         )
@@ -1579,6 +1663,7 @@ async fn register_number(
                     context.log(index, "registration_code_expired_retry");
                     let _ = session.cancel().await;
                     prepare_next_sms(sms_config, activation).await?;
+                    rotate_registration_proxy(context, index, attempt).await;
                     session = open_registration_session(
                         context, index, attempt, activation, sms_config, record_id, record,
                     )
@@ -1613,6 +1698,8 @@ async fn register_number(
             RegistrationOutcome::ReRegistrationRequired => {
                 re_register_existing = false;
                 context.log(index, "existing_account_deleted");
+                context.log(index, "re_registration_cooldown");
+                wait_after_account_deletion(&context.token).await?;
             }
         }
         re_registration_restarts += 1;
@@ -2198,6 +2285,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_refresh_selects_a_different_proxy_not_a_duplicate_pool_entry() {
+        let current = ProxyConfig::from_string("socks5://192.0.2.1:1080").unwrap();
+        let duplicate = ProxyConfig::from_string("socks5://192.0.2.1:1080").unwrap();
+        let alternative = ProxyConfig::from_string("socks5://192.0.2.2:1080").unwrap();
+        assert!(different_registration_proxy(&[], Some(&current)).is_none());
+        assert!(different_registration_proxy(&[duplicate.clone()], Some(&current)).is_none());
+        for _ in 0..16 {
+            let selected = different_registration_proxy(
+                &[duplicate.clone(), alternative.clone()],
+                Some(&current),
+            )
+            .unwrap();
+            assert_eq!(selected.host, alternative.host);
+        }
+        assert!(different_registration_proxy(&[alternative], None).is_some());
+    }
+
+    #[test]
+    fn phone_ban_and_identical_failure_messages_are_logged_only_once() {
+        assert_eq!(
+            failure_log_messages("phone_number_banned", "telegram_phone_banned"),
+            vec!["telegram_phone_banned"]
+        );
+        assert_eq!(
+            failure_log_messages("sms_timeout", "sms_timeout"),
+            vec!["sms_timeout"]
+        );
+        assert_eq!(
+            failure_log_messages("registration_failed", "telegram_code_invalid"),
+            vec!["registration_failed", "telegram_code_invalid"]
+        );
+    }
+
+    #[test]
+    fn account_deletion_pause_is_between_two_and_six_seconds() {
+        for _ in 0..32 {
+            assert!((Duration::from_secs(2)..=Duration::from_secs(6))
+                .contains(&account_deletion_pause()));
+        }
+    }
+
+    #[tokio::test]
+    async fn stopping_skips_the_post_deletion_pause() {
+        assert_eq!(
+            wait_after_account_deletion(&AtomicBool::new(false)).await,
+            Err("stopped".into())
+        );
+    }
 
     #[test]
     fn sms_session_refresh_happens_halfway_without_extending_the_deadline() {
