@@ -926,6 +926,8 @@ pub struct SentCode {
     pub code_type: String,
     pub next_type: Option<String>,
     pub timeout_secs: Option<u32>,
+    pub email_reset_available_secs: Option<u32>,
+    pub email_reset_pending_date: Option<u32>,
 }
 
 pub fn parse_auth_sent_code(data: &[u8]) -> Result<SentCode, String> {
@@ -941,6 +943,16 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
             Err(format!("AUTH_PAYMENT_REQUIRED_{premium_days}_DAYS"))
         }
         tl_gen::TlAuthSentCode::SentCode { r#type, phone_code_hash, next_type, timeout } => {
+            let (email_reset_available_secs, email_reset_pending_date) =
+                match tl_gen::deserialize_tl_obj::<tl_gen::TlAuthSentCodeType>(&r#type) {
+                    Ok(tl_gen::TlAuthSentCodeType::TypeEmailCode {
+                        reset_available_period, reset_pending_date, ..
+                    }) => (
+                        reset_available_period.and_then(|value| u32::try_from(value).ok()),
+                        reset_pending_date.and_then(|value| u32::try_from(value).ok()),
+                    ),
+                    _ => (None, None),
+                };
             let code_type = match tl_gen::deserialize_tl_obj::<tl_gen::TlAuthSentCodeType>(&r#type) {
                 Ok(t) => match t {
                     tl_gen::TlAuthSentCodeType::TypeApp { .. } => "app",
@@ -974,7 +986,8 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
                     tl_gen::TlAuthCodeType::TypeFragmentSms => "fragment",
                 }.to_string());
             let timeout_secs = timeout.and_then(|seconds| u32::try_from(seconds).ok());
-            Ok(SentCode { phone_code_hash, code_type, next_type, timeout_secs })
+            Ok(SentCode { phone_code_hash, code_type, next_type, timeout_secs,
+                email_reset_available_secs, email_reset_pending_date })
         }
     }
 }
@@ -982,6 +995,19 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
 #[cfg(test)]
 mod sent_code_tests {
     use super::*;
+
+    #[test]
+    fn email_reset_response_preserves_pending_date_and_new_hash() {
+        let kind = tl_gen::serialize_auth_sentCodeTypeEmailCode(
+            false, false, "a***@example.com", 6, Some(604800), Some(1900000000),
+        );
+        let bytes = tl_gen::serialize_auth_sentCode(&kind, "updated-hash", None, None);
+        let sent = parse_auth_sent_code_inner(&bytes).unwrap();
+        assert_eq!(sent.code_type, "email");
+        assert_eq!(sent.phone_code_hash, "updated-hash");
+        assert_eq!(sent.email_reset_available_secs, Some(604800));
+        assert_eq!(sent.email_reset_pending_date, Some(1900000000));
+    }
 
     #[test]
     fn app_code_preserves_sms_resend_option_and_timeout() {

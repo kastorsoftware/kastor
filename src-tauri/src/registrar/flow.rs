@@ -315,13 +315,13 @@ impl RegistrationSession {
                 Ok(_) => self.handle_existing_account(re_register_existing).await,
                 Err(error) if is_unoccupied(&error) => self.sign_up(identity).await,
                 Err(error) if re_register_existing && is_password_required(&error) => {
-                    self.reset_existing_account_password().await
+                    self.handle_existing_account(true).await
                 }
                 Err(error) => Err(error),
             },
             Err(error) if is_unoccupied(&error) => self.sign_up(identity).await,
             Err(error) if re_register_existing && is_password_required(&error) => {
-                self.reset_existing_account_password().await
+                self.handle_existing_account(true).await
             }
             Err(error) => Err(error),
         }
@@ -347,21 +347,17 @@ impl RegistrationSession {
         Ok(RegistrationOutcome::ReRegistrationRequired)
     }
 
-    async fn reset_existing_account_password(&mut self) -> Result<RegistrationOutcome, String> {
-        let response = self
-            .client
-            .invoke(&tl::build_account_reset_password())
-            .await?;
-        match crate::mtproto::tl_gen::parse_account_resetPassword(&response)? {
-            crate::mtproto::tl_gen::TlAccountResetPasswordResult::Ok => {
-                // A new sign-in is required after Telegram has removed the 2FA password.
-                Ok(RegistrationOutcome::ReRegistrationRetryRequired)
-            }
-            crate::mtproto::tl_gen::TlAccountResetPasswordResult::RequestedWait { .. }
-            | crate::mtproto::tl_gen::TlAccountResetPasswordResult::FailedWait { .. } => {
-                Ok(RegistrationOutcome::ReRegistrationPending)
-            }
-        }
+    pub async fn reset_login_email(&mut self) -> Result<SentCode, String> {
+        let request =
+            crate::mtproto::tl_gen::build_auth_resetLoginEmail(&self.phone, &self.phone_code_hash);
+        let response =
+            super::diagnostics::observe("reset_login_email", self.client.invoke(&request).await)?;
+        let sent_code = super::diagnostics::observe(
+            "reset_login_email_parse",
+            tl::parse_auth_sent_code(&response),
+        )?;
+        self.phone_code_hash = sent_code.phone_code_hash.clone();
+        Ok(sent_code)
     }
 
     pub async fn cancel(&mut self) -> Result<(), String> {

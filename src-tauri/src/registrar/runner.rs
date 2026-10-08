@@ -985,6 +985,14 @@ async fn process_attempt(
                     ("phone_number_banned", safe_error(&error))
                 } else if telegram_rpc_code(&error).is_some_and(is_premium_required_code) {
                     ("premium_required", safe_error(&error))
+                } else if telegram_rpc_code(&error)
+                    .is_some_and(|code| code.starts_with("2FA_CONFIRM_WAIT_"))
+                {
+                    ("account_reset_pending", safe_error(&error))
+                } else if error.starts_with("email_reset_wait:")
+                    || error == "email_reset_already_requested"
+                {
+                    ("login_email_reset_pending", safe_error(&error))
                 } else {
                     ("registration_failed", safe_error(&error))
                 };
@@ -1036,6 +1044,12 @@ fn acquire_telegram_number(
 }
 
 fn safe_error(error: &str) -> String {
+    if let Some(seconds) = error
+        .strip_prefix("email_reset_wait:")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        return format!("email_reset_wait:{seconds}");
+    }
     if error == "used_number" {
         return "telegram_existing_email_required".into();
     }
@@ -1055,11 +1069,19 @@ fn safe_error(error: &str) -> String {
         | "activation_unavailable"
         | "sms_proxy_unavailable"
         | "email_verification_timeout"
+        | "email_reset_already_requested"
+        | "email_reset_unavailable"
         | RECAPTCHA_ANTISAFETY_REQUIRED
         | "re_registration_retry_limit" => return error.to_string(),
         _ => {}
     }
     if let Some(code) = telegram_rpc_code(error) {
+        if let Some(seconds) = code
+            .strip_prefix("2FA_CONFIRM_WAIT_")
+            .and_then(|value| value.parse::<u64>().ok())
+        {
+            return format!("account_reset_wait:{seconds}");
+        }
         if let Some(days) = premium_days_from_code(code) {
             return format!("telegram_premium_required_days:{days}");
         }
@@ -1091,6 +1113,7 @@ fn safe_error(error: &str) -> String {
                 "telegram_auth_retry"
             }
             "AUTH_PAYMENT_REQUIRED" => "telegram_premium_required",
+            "2FA_RECENT_CONFIRM" => "account_reset_cancelled",
             "PHONE_NUMBER_APP_SIGNUP_FORBIDDEN" => "telegram_app_signup_forbidden",
             "EMAIL_NOT_ALLOWED" | "EMAIL_INVALID" => "telegram_email_rejected",
             "EMAIL_CODE_INVALID" => "telegram_email_code_invalid",
@@ -1212,6 +1235,33 @@ async fn open_registration_session(
         },
     );
     if sent_code.code_type == "email" {
+        if config.re_register_existing {
+            context.log(index, "resetting_login_email");
+            sent_code =
+                reset_unavailable_login_email(context, index, &mut session, sent_code).await?;
+            if sent_code.code_type == "email_setup" {
+                context.log(index, "setting_up_login_email");
+                sent_code = setup_login_email(
+                    context,
+                    index,
+                    &mut session,
+                    sms_config.http_proxy.as_deref(),
+                    &context.token,
+                )
+                .await?;
+            }
+            context.log(
+                index,
+                match sent_code.code_type.as_str() {
+                    "sms" | "sms_word" | "sms_phrase" => "code_delivery_sms",
+                    "app" => "code_delivery_app",
+                    "email" => "code_delivery_email",
+                    _ => "code_delivery_other",
+                },
+            );
+        }
+    }
+    if sent_code.code_type == "email" {
         let _ = session.cancel().await;
         record.status = "used_number".into();
         record.error = Some(safe_error("used_number"));
@@ -1271,6 +1321,57 @@ fn app_sms_fallback_delay(sent_code: &SentCode, max_wait_secs: u64) -> Option<u6
     }
     let wait = u64::from(sent_code.timeout_secs?) + 1;
     (wait <= max_wait_secs).then_some(wait)
+}
+
+async fn reset_unavailable_login_email(
+    context: &Context,
+    index: usize,
+    session: &mut RegistrationSession,
+    mut sent: SentCode,
+) -> Result<SentCode, String> {
+    for _ in 0..2 {
+        if !context.token.load(Ordering::Relaxed) {
+            return Err("stopped".into());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "invalid system clock")?
+            .as_secs();
+        if let Some(date) = sent.email_reset_pending_date.filter(|date| *date > 0) {
+            let remaining = u64::from(date).saturating_sub(now);
+            if remaining > context.config.code_timeout_secs {
+                return Err(format!("email_reset_wait:{remaining}"));
+            }
+            context.log(index, "waiting_login_email_reset");
+            for _ in 0..=remaining {
+                if !context.token.load(Ordering::Relaxed) {
+                    return Err("stopped".into());
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        sent = match session.reset_login_email().await {
+            Ok(value) => value,
+            Err(error) if telegram_rpc_code(&error) == Some("TASK_ALREADY_EXISTS") => {
+                return Err("email_reset_already_requested".into());
+            }
+            Err(error) => return Err(error),
+        };
+        dbg_log!(
+            "registrar::email_reset response delivery={} reset_period_secs={:?} pending_date={:?}",
+            sent.code_type,
+            sent.email_reset_available_secs,
+            sent.email_reset_pending_date
+        );
+        if sent.code_type != "email" {
+            context.log(index, "login_email_reset_completed");
+            return Ok(sent);
+        }
+        if sent.email_reset_pending_date.is_none_or(|date| date == 0) {
+            return Err("email_reset_unavailable".into());
+        }
+    }
+    Err("email_reset_already_requested".into())
 }
 
 async fn wait_for_sms_code(
@@ -2010,6 +2111,8 @@ mod tests {
             code_type: "app".into(),
             next_type: Some("sms".into()),
             timeout_secs: Some(60),
+            email_reset_available_secs: None,
+            email_reset_pending_date: None,
         };
         assert_eq!(app_sms_fallback_delay(&sent, 120), Some(61));
         assert_eq!(app_sms_fallback_delay(&sent, 30), None);
@@ -2166,6 +2269,18 @@ mod tests {
 
     #[test]
     fn telegram_errors_are_readable_without_exposing_remote_payloads() {
+        assert_eq!(
+            safe_error("RPC 420: 2FA_CONFIRM_WAIT_604800"),
+            "account_reset_wait:604800"
+        );
+        assert_eq!(
+            safe_error("RPC 400: 2FA_RECENT_CONFIRM"),
+            "account_reset_cancelled"
+        );
+        assert_eq!(
+            safe_error("email_reset_wait:604800"),
+            "email_reset_wait:604800"
+        );
         assert!(is_premium_required_code("AUTH_PAYMENT_REQUIRED_7_DAYS"));
         assert_eq!(
             safe_error("AUTH_PAYMENT_REQUIRED_7_DAYS"),
