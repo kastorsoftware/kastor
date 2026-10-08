@@ -1036,6 +1036,9 @@ fn acquire_telegram_number(
 }
 
 fn safe_error(error: &str) -> String {
+    if error == "used_number" {
+        return "telegram_existing_email_required".into();
+    }
     if error.starts_with("sms_")
         && error.len() <= 128
         && error
@@ -1211,9 +1214,8 @@ async fn open_registration_session(
     if sent_code.code_type == "email" {
         let _ = session.cancel().await;
         record.status = "used_number".into();
-        record.error = Some("Telegram requires the number's existing login email".into());
+        record.error = Some(safe_error("used_number"));
         context.record(record_id, record).await?;
-        context.log(index, "used_number");
         return Err("used_number".into());
     }
     if sent_code.code_type == "app" && config.reject_app_code {
@@ -2143,6 +2145,10 @@ mod tests {
 
     #[test]
     fn diagnostic_errors_never_include_request_urls_or_credentials() {
+        assert_eq!(
+            safe_error("used_number"),
+            "telegram_existing_email_required"
+        );
         assert_eq!(
             safe_error("request https://example.com/?api_key=secret failed"),
             "registration_step_failed"

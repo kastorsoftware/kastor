@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tauri::Emitter;
 
 pub(crate) const RECAPTCHA_ANTISAFETY_REQUIRED: &str = "recaptcha_antisafety_required";
 
@@ -581,12 +582,15 @@ async fn start_on_dc(
             let Some(challenge) = parse_recaptcha_challenge(&error) else {
                 return Err(error);
             };
+            log_registration_stage(log_target, log_prefix, "recaptcha_requested");
             let config = antisafety.ok_or(RECAPTCHA_ANTISAFETY_REQUIRED)?;
             dbg_log!(
                 "registrar::send_code dc={} recaptcha_challenge_received",
                 dc_id
             );
+            log_registration_stage(log_target, log_prefix, "recaptcha_solving");
             let token = solve_recaptcha(config, challenge, antisafety_proxy, cancellation).await?;
+            log_registration_stage(log_target, log_prefix, "recaptcha_retrying_request");
             let protected_inner = tl::wrap_with_recaptcha(&token, &inner);
             super::diagnostics::observe(
                 "send_code_recaptcha_invoke",
@@ -610,6 +614,13 @@ async fn start_on_dc(
         sent_code.code_type
     );
     Ok((client, sent_code))
+}
+
+fn log_registration_stage(target: Option<&tauri::AppHandle>, prefix: &str, stage: &str) {
+    if let Some(handle) = target {
+        let _ = handle.emit("registrar-log", format!("{prefix} {stage}"));
+    }
+    dbg_log!("registrar::telegram {} stage={}", prefix, stage);
 }
 
 async fn load_phone_screen_data(
