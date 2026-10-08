@@ -106,8 +106,6 @@ export function RegistrarPage() {
     const split = line.indexOf("] ");
     const message = line.slice(split + 2);
     const floodWait = /^telegram_flood_wait:(\d+)$/.exec(message);
-    const resetWait = /^(email_reset_wait|account_reset_wait):(\d+)$/.exec(message);
-    if (split >= 0 && resetWait) return line.slice(0, split + 2) + t(`registrar.stages.${resetWait[1]}`, { seconds: resetWait[2] });
     if (split >= 0 && floodWait) return line.slice(0, split + 2) + t("registrar.stages.telegram_flood_wait", { seconds: floodWait[1] });
     const premiumDays = /^telegram_premium_required_days:(\d+)$/.exec(message);
     if (split >= 0 && premiumDays) return line.slice(0, split + 2) + t("registrar.stages.telegram_premium_required_days", { days: premiumDays[1] });
