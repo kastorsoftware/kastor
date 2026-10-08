@@ -69,6 +69,7 @@ export const en = {
       two_fa_reset_pending: "2FA reset is unavailable now; number skipped",
       two_fa_reset_completed: "2FA reset is available; requesting a new code to delete the account",
       existing_account_deleted: "Existing account deleted; requesting a new code for registration",
+      registration_code_expired_retry: "The verification code expired; restarting registration with a new code",
       re_registration_retry_limit: "Could not finish re-registration: Telegram requested sign-in again",
       setting_2fa: "Setting 2FA…",
       registering_push: "Registering Push…",

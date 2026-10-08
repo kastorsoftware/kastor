@@ -69,6 +69,7 @@ export const ru = {
       two_fa_reset_pending: "Сброс 2FA сейчас недоступен; номер пропущен",
       two_fa_reset_completed: "Сброс 2FA доступен; запрашивается новый код для удаления аккаунта",
       existing_account_deleted: "Существующий аккаунт удалён; запрашивается новый код для регистрации",
+      registration_code_expired_retry: "Код подтверждения истёк; регистрация начинается заново с новым кодом",
       re_registration_retry_limit: "Не удалось завершить перерегистрацию: Telegram повторно запросил вход",
       setting_2fa: "Устанавливаю 2FA…",
       registering_push: "Регистрирую Push…",

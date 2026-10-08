@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,6 +27,7 @@ use crate::registrar::sms::{
 const MAX_ATTEMPTS: usize = 100_000;
 const MAX_APP_SMS_FALLBACK_WAIT_SECS: u64 = 900;
 const MAX_REREGISTRATION_RESTARTS: usize = 2;
+const MAX_EXPIRED_CODE_RESTARTS: usize = 2;
 const CANCEL_RETRY_DELAY: Duration = Duration::from_secs(121);
 const CANCEL_RETRIES: usize = 3;
 
@@ -1367,6 +1368,7 @@ async fn wait_for_sms_code(
     session: &mut RegistrationSession,
     activation: &crate::registrar::sms::Activation,
     sms_config: &SmsProviderConfig,
+    used_codes: &HashSet<String>,
 ) -> Result<String, String> {
     let deadline =
         tokio::time::Instant::now() + Duration::from_secs(context.config.code_timeout_secs);
@@ -1400,8 +1402,10 @@ async fn wait_for_sms_code(
             }
             .into());
         }
+        if let Some(code) = fresh_sms_code(&status, used_codes) {
+            return Ok(code);
+        }
         match status {
-            ActivationStatus::CodeReceived { code, .. } => return Ok(code),
             ActivationStatus::Cancelled
             | ActivationStatus::Banned
             | ActivationStatus::Expired
@@ -1419,6 +1423,43 @@ async fn wait_for_sms_code(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     }
+}
+
+fn fresh_sms_code(status: &ActivationStatus, used_codes: &HashSet<String>) -> Option<String> {
+    match status {
+        ActivationStatus::CodeReceived { code, .. }
+            if !code.trim().is_empty() && !used_codes.contains(code.trim()) =>
+        {
+            Some(code.trim().to_string())
+        }
+        _ => None,
+    }
+}
+
+fn retry_expired_code(error: &str, registered: bool, restarts: usize) -> bool {
+    !registered
+        && restarts < MAX_EXPIRED_CODE_RESTARTS
+        && telegram_rpc_code(error) == Some("PHONE_CODE_EXPIRED")
+}
+
+async fn prepare_next_sms(
+    sms_config: &SmsProviderConfig,
+    activation: &Activation,
+) -> Result<(), String> {
+    let id = activation.id.clone();
+    provider_call(
+        sms_config.clone(),
+        "request_another_code",
+        move |provider| {
+            match provider.update_activation(&id, ActivationAction::RequestAnotherCode) {
+                Ok(_) => Ok(()),
+                // Providers such as 5SIM expose new messages without a separate retry action.
+                Err(error) if error.kind == SmsErrorKind::Unsupported => Ok(()),
+                Err(error) => Err(error),
+            }
+        },
+    )
+    .await
 }
 
 async fn register_number(
@@ -1455,6 +1496,8 @@ async fn register_number(
     }
     let mut re_register_existing = config.re_register_existing;
     let mut re_registration_restarts = 0;
+    let mut expired_code_restarts = 0;
+    let mut used_codes = HashSet::new();
     let account_id = loop {
         record.status = "waiting_code".into();
         if let Err(error) = context.record(record_id, record).await {
@@ -1462,7 +1505,9 @@ async fn register_number(
             return Err(error);
         }
         context.log(index, "waiting_code");
-        let code = wait_for_sms_code(context, &mut session, activation, sms_config).await?;
+        let code =
+            wait_for_sms_code(context, &mut session, activation, sms_config, &used_codes).await?;
+        used_codes.insert(code.clone());
         context.log(index, "completing_registration");
         let outcome = match session
             .complete(&code, &attempt.identity, re_register_existing)
@@ -1470,6 +1515,17 @@ async fn register_number(
         {
             Ok(outcome) => outcome,
             Err(error) => {
+                if retry_expired_code(&error, session.is_registered(), expired_code_restarts) {
+                    expired_code_restarts += 1;
+                    context.log(index, "registration_code_expired_retry");
+                    let _ = session.cancel().await;
+                    prepare_next_sms(sms_config, activation).await?;
+                    session = open_registration_session(
+                        context, index, attempt, activation, sms_config, record_id, record,
+                    )
+                    .await?;
+                    continue;
+                }
                 if session.is_registered() {
                     record.status = "registration_storage_failed".into();
                     let id = activation.id.clone();
@@ -1513,6 +1569,7 @@ async fn register_number(
         if re_registration_restarts > MAX_REREGISTRATION_RESTARTS {
             return Err("re_registration_retry_limit".into());
         }
+        prepare_next_sms(sms_config, activation).await?;
         session = open_registration_session(
             context, index, attempt, activation, sms_config, record_id, record,
         )
@@ -2091,6 +2148,54 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expired_code_restarts_are_bounded_and_never_retry_a_registered_account() {
+        let error = "RPC 400: PHONE_CODE_EXPIRED";
+        assert!(retry_expired_code(error, false, 0));
+        assert!(retry_expired_code(error, false, 1));
+        assert!(!retry_expired_code(error, false, MAX_EXPIRED_CODE_RESTARTS));
+        assert!(!retry_expired_code(error, true, 0));
+        for error in [
+            "RPC 400: PHONE_CODE_INVALID",
+            "RPC 420: FLOOD_WAIT_30",
+            "RPC 400: SESSION_PASSWORD_NEEDED",
+            "RPC 400: PHONE_CODE_EXPIRED_OTHER",
+            "connection timed out",
+        ] {
+            assert!(!retry_expired_code(error, false, 0));
+        }
+    }
+
+    #[test]
+    fn restarted_registration_ignores_all_previously_consumed_sms_codes() {
+        let mut used_codes = HashSet::new();
+        let received = |code: &str| ActivationStatus::CodeReceived {
+            code: code.into(),
+            text: None,
+        };
+        let first = fresh_sms_code(&received("12345"), &used_codes).unwrap();
+        used_codes.insert(first);
+        assert_eq!(fresh_sms_code(&received("12345"), &used_codes), None);
+        assert_eq!(fresh_sms_code(&received(" 12345 "), &used_codes), None);
+        let next = fresh_sms_code(&received("67890"), &used_codes).unwrap();
+        used_codes.insert(next);
+        assert_eq!(fresh_sms_code(&received("12345"), &used_codes), None);
+        assert_eq!(fresh_sms_code(&received("67890"), &used_codes), None);
+        assert_eq!(fresh_sms_code(&received(" "), &used_codes), None);
+        assert_eq!(
+            fresh_sms_code(&ActivationStatus::Waiting, &used_codes),
+            None
+        );
+        assert_eq!(
+            fresh_sms_code(&ActivationStatus::Expired, &used_codes),
+            None
+        );
+        assert_eq!(
+            fresh_sms_code(&received("54321"), &used_codes),
+            Some("54321".into())
+        );
+    }
 
     #[test]
     fn login_email_reset_requires_immediate_availability_or_expired_pending_reset() {
