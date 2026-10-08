@@ -683,7 +683,30 @@ export function RegistrarPage() {
           </div>
         </div>
       </RegistrarModal>}
-      {launchNoticeOpen && <RegistrarModal title="Placeholder" onClose={() => {}}><div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} className="max-h-60 overflow-y-auto whitespace-pre-wrap pr-2">{"Placeholder\n\n".repeat(40)}</div><div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{t("registrar.understood")}</button></div></RegistrarModal>}
+      {launchNoticeOpen && <RegistrarModal title={t("registrar.launchNotice.title")} onClose={() => {}}>
+        <div onScroll={(event) => { const node = event.currentTarget; if (node.scrollTop + node.clientHeight >= node.scrollHeight - 4) setLaunchNoticeRead(true); }} tabIndex={0} className="max-h-[55vh] space-y-5 overflow-y-auto pr-3 leading-6">
+          <p>{t("registrar.launchNotice.intro")}</p>
+          <p>{t("registrar.launchNotice.purpose")}</p>
+          <div className="space-y-3">
+            <p className="font-semibold text-foreground">{t("registrar.launchNotice.liability")}</p>
+            <ul className="list-disc space-y-2 pl-5">
+              {["blocked", "trust", "access", "actions", "consequences", "serviceChanges"].map((key) => <li key={key}>{t(`registrar.launchNotice.${key}`)}</li>)}
+            </ul>
+          </div>
+          <p>{t("registrar.launchNotice.quality")}</p>
+          <div className="space-y-4">
+            <p>{t("registrar.launchNotice.factors")}</p>
+            {["numbers", "proxies", "geography"].map((key) => <div key={key} className="space-y-2">
+              <h3 className="font-semibold text-foreground">{t(`registrar.launchNotice.${key}Title`)}</h3>
+              <p>{t(`registrar.launchNotice.${key}Description`)}</p>
+            </div>)}
+          </div>
+          <p>{t("registrar.launchNotice.guaranteeBefore")} <strong className="text-foreground">{t("registrar.launchNotice.guaranteeEmphasis")}</strong> {t("registrar.launchNotice.guaranteeAfter")}</p>
+          <p>{t("registrar.launchNotice.responsibility")}</p>
+          <p className="font-semibold text-foreground">{t("registrar.launchNotice.acceptance")}</p>
+        </div>
+        <div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{t("registrar.understood")}</button></div>
+      </RegistrarModal>}
     </div>
   );
 }
