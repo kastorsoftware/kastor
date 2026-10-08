@@ -982,6 +982,8 @@ async fn process_attempt(
             if record.status != "registration_storage_failed" && error != "used_number" {
                 let (status, message) = if record.account_id.is_some() {
                     ("registered_with_warnings", safe_error(&error))
+                } else if error == "sms_timeout" {
+                    ("sms_timeout", safe_error(&error))
                 } else if telegram_rpc_code(&error) == Some("PHONE_NUMBER_BANNED") {
                     ("phone_number_banned", safe_error(&error))
                 } else if telegram_rpc_code(&error).is_some_and(is_premium_required_code) {
@@ -1004,7 +1006,9 @@ async fn process_attempt(
             }
             context.record(record_id, &record).await?;
             context.log(index, &record.status);
-            context.log(index, record.error.as_deref().unwrap_or("unknown_error"));
+            if record.error.as_deref() != Some(record.status.as_str()) {
+                context.log(index, record.error.as_deref().unwrap_or("unknown_error"));
+            }
             Ok(record.account_id.is_some())
         }
     }
@@ -1363,38 +1367,56 @@ fn login_email_reset_available(sent: &SentCode, now: u64) -> bool {
     sent.email_reset_available_secs == Some(0)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum SmsWaitResult {
+    Code(String),
+    RefreshSession,
+}
+
+fn sms_wait_boundary(
+    now: tokio::time::Instant,
+    deadline: tokio::time::Instant,
+    refresh_at: Option<tokio::time::Instant>,
+) -> Result<Option<SmsWaitResult>, String> {
+    if now >= deadline {
+        Err("sms_timeout".into())
+    } else if refresh_at.is_some_and(|refresh| now >= refresh) {
+        Ok(Some(SmsWaitResult::RefreshSession))
+    } else {
+        Ok(None)
+    }
+}
+
 async fn wait_for_sms_code(
     context: &Context,
-    session: &mut RegistrationSession,
     activation: &crate::registrar::sms::Activation,
     sms_config: &SmsProviderConfig,
     used_codes: &HashSet<String>,
-) -> Result<String, String> {
-    let deadline =
-        tokio::time::Instant::now() + Duration::from_secs(context.config.code_timeout_secs);
+    deadline: tokio::time::Instant,
+    refresh_at: Option<tokio::time::Instant>,
+) -> Result<SmsWaitResult, String> {
     loop {
         if !context.token.load(Ordering::Relaxed) {
-            let _ = session.cancel().await;
             return Err("stopped".into());
         }
-        if tokio::time::Instant::now() >= deadline {
-            let _ = session.cancel().await;
-            return Err("sms_timeout".into());
+        if let Some(action) = sms_wait_boundary(tokio::time::Instant::now(), deadline, refresh_at)?
+        {
+            return Ok(action);
         }
         let id = activation.id.clone();
-        let status = match provider_call(sms_config.clone(), "activation_status", move |provider| {
-            provider.activation_status(&id)
-        })
+        let boundary = refresh_at.unwrap_or(deadline).min(deadline);
+        let status = match tokio::time::timeout_at(
+            boundary,
+            provider_call(sms_config.clone(), "activation_status", move |provider| {
+                provider.activation_status(&id)
+            }),
+        )
         .await
         {
-            Ok(status) => status,
-            Err(error) => {
-                let _ = session.cancel().await;
-                return Err(error);
-            }
+            Ok(result) => result?,
+            Err(_) => continue,
         };
         if !context.token.load(Ordering::Relaxed) || tokio::time::Instant::now() >= deadline {
-            let _ = session.cancel().await;
             return Err(if context.token.load(Ordering::Relaxed) {
                 "sms_timeout"
             } else {
@@ -1403,24 +1425,26 @@ async fn wait_for_sms_code(
             .into());
         }
         if let Some(code) = fresh_sms_code(&status, used_codes) {
-            return Ok(code);
+            return Ok(SmsWaitResult::Code(code));
         }
         match status {
             ActivationStatus::Cancelled
             | ActivationStatus::Banned
             | ActivationStatus::Expired
             | ActivationStatus::Finished => {
-                let _ = session.cancel().await;
                 return Err("activation_unavailable".into());
             }
-            _ => tokio::time::sleep(Duration::from_secs(1)).await,
+            _ => {}
         }
         // Cancellation is checked every second, even with a longer provider poll interval.
-        for _ in 1..context.config.poll_interval_secs {
-            if !context.token.load(Ordering::Relaxed) {
+        for _ in 0..context.config.poll_interval_secs {
+            if !context.token.load(Ordering::Relaxed) || tokio::time::Instant::now() >= boundary {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep_until(
+                (tokio::time::Instant::now() + Duration::from_secs(1)).min(boundary),
+            )
+            .await;
         }
     }
 }
@@ -1505,8 +1529,43 @@ async fn register_number(
             return Err(error);
         }
         context.log(index, "waiting_code");
-        let code =
-            wait_for_sms_code(context, &mut session, activation, sms_config, &used_codes).await?;
+        let started = tokio::time::Instant::now();
+        let timeout = Duration::from_secs(config.code_timeout_secs);
+        let deadline = started + timeout;
+        let mut refresh_at = Some(started + timeout / 2);
+        let code = loop {
+            match wait_for_sms_code(
+                context,
+                activation,
+                sms_config,
+                &used_codes,
+                deadline,
+                refresh_at,
+            )
+            .await
+            {
+                Ok(SmsWaitResult::Code(code)) => break code,
+                Ok(SmsWaitResult::RefreshSession) => {
+                    refresh_at = None;
+                    context.log(index, "sms_wait_session_refresh");
+                    session = tokio::time::timeout_at(deadline, async {
+                        let _ = session.cancel().await;
+                        prepare_next_sms(sms_config, activation).await?;
+                        open_registration_session(
+                            context, index, attempt, activation, sms_config, record_id, record,
+                        )
+                        .await
+                    })
+                    .await
+                    .map_err(|_| "sms_timeout".to_string())??;
+                    context.log(index, "waiting_code");
+                }
+                Err(error) => {
+                    let _ = session.cancel().await;
+                    return Err(error);
+                }
+            }
+        };
         used_codes.insert(code.clone());
         context.log(index, "completing_registration");
         let outcome = match session
@@ -2139,6 +2198,33 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sms_session_refresh_happens_halfway_without_extending_the_deadline() {
+        let started = tokio::time::Instant::now();
+        for seconds in [30, 31, 300, 900] {
+            let timeout = Duration::from_secs(seconds);
+            let deadline = started + timeout;
+            let refresh = started + timeout / 2;
+            assert_eq!(
+                sms_wait_boundary(started, deadline, Some(refresh)),
+                Ok(None)
+            );
+            assert_eq!(
+                sms_wait_boundary(refresh, deadline, Some(refresh)),
+                Ok(Some(SmsWaitResult::RefreshSession))
+            );
+            assert_eq!(sms_wait_boundary(refresh, deadline, None), Ok(None));
+            assert_eq!(
+                sms_wait_boundary(deadline, deadline, None),
+                Err("sms_timeout".into())
+            );
+            assert_eq!(
+                sms_wait_boundary(deadline, deadline, Some(refresh)),
+                Err("sms_timeout".into())
+            );
+        }
+    }
 
     #[test]
     fn expired_code_restarts_are_bounded_and_never_retry_a_registered_account() {

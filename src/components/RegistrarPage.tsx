@@ -7,7 +7,7 @@ import { useT } from "@/i18n";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
-import { optionalPrice } from "@/lib/registrarSettings";
+import { optionalPrice, parseSmsTimeout } from "@/lib/registrarSettings";
 
 type NameMode = "same" | "file" | "random";
 type AvatarMode = "emoji" | "folder" | "single" | "generated";
@@ -371,6 +371,7 @@ export function RegistrarPage() {
       const maximum = optionalPrice(maxPrice);
       if (minimum !== null && maximum !== null && minimum > maximum) throw new Error("registrar.invalidPrice");
       const quantity = Number(count);
+      const codeTimeout = parseSmsTimeout(smsTimeout);
       if (countMode === "count" && (!Number.isInteger(quantity) || quantity < 1 || quantity > 100000)) throw new Error("registrar.invalidCount");
       if (!selectedCountries.length) throw new Error("registrar.selectCountries");
       if (setTwoFa && !twoFaPassword) throw new Error("registrar.passwordRequired");
@@ -417,7 +418,7 @@ export function RegistrarPage() {
         add_to_panel: addToPanel, open_results: openResults, hide_phone_number: hidePhoneNumber, hide_online_status: hideOnlineStatus, set_avatar: setAvatar, set_username: setUsername, concurrency: Number(concurrency),
         avatar_mode: avatarMode, avatar_path: avatarPath, username_mode: usernameMode, username_prefix: usernamePrefix, username_list_path: usernameListPath,
         manual_locale: manualLocale, registration_language: registrationLanguage, timezone_offset_seconds: Number(timezoneOffset) * 3600,
-        poll_interval_secs: Number(pollInterval), code_timeout_secs: Number(smsTimeout),
+        poll_interval_secs: Number(pollInterval), code_timeout_secs: codeTimeout,
       } });
       taskId.current = id;
       sessionStorage.setItem("registrar_task_id", id);
@@ -524,7 +525,7 @@ export function RegistrarPage() {
             {countMode === "count" && <p className="mt-2 text-xs text-muted-foreground">{t("registrar.countHint")}</p>}
           </Field>
           <Field label={t("registrar.smsTimeout")}>
-            <input value={smsTimeout} onChange={(event) => setSmsTimeout(event.target.value)} min="30" type="number" className={inputClass} />
+            <input value={smsTimeout} onChange={(event) => setSmsTimeout(event.target.value)} onBlur={() => { if (Number(smsTimeout) < 30) setSmsTimeout("30"); }} min="30" max="900" step="1" type="number" className={inputClass} />
           </Field>
         </div>
       </Section>

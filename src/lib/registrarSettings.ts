@@ -10,6 +10,14 @@ export function parseApiPairs(value: string): { api_id: number; api_hash: string
   });
 }
 
+export function parseSmsTimeout(value: string): number {
+  const seconds = Number(value);
+  if (!Number.isInteger(seconds) || seconds < 30 || seconds > 900) {
+    throw new Error("registrar.invalidSmsTimeout");
+  }
+  return seconds;
+}
+
 export function optionalPrice(value: string): number | null {
   if (!value.trim()) return null;
   const price = Number(value);

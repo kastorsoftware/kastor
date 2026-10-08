@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { optionalPrice, parseApiPairs } from "./registrarSettings.ts";
+import { optionalPrice, parseApiPairs, parseSmsTimeout } from "./registrarSettings.ts";
+
+test("SMS timeout is an integer between 30 and 900 seconds", () => {
+  for (const value of ["30", "300", "900"]) {
+    assert.equal(parseSmsTimeout(value), Number(value));
+  }
+  for (const value of ["", " ", "0", "29", "901", "30.5", "NaN", "Infinity"]) {
+    assert.throws(() => parseSmsTimeout(value), /invalidSmsTimeout/);
+  }
+});
 
 test("API pairs accept multiple profiles and reject malformed credentials", () => {
   const hash = "0123456789abcdef0123456789abcdef";

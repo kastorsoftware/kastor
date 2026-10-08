@@ -259,7 +259,7 @@ impl MtpClient {
     }
 
     // single invoke attempt (the original invoke logic)
-    async fn invoke_once(&mut self, request: &[u8]) -> Result<Vec<u8>, String> {
+    pub(crate) async fn invoke_once(&mut self, request: &[u8]) -> Result<Vec<u8>, String> {
         let msg_id = self.gen_msg_id();
         let seq_no = self.next_seq_no(true);
 

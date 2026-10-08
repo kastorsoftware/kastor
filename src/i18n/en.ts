@@ -1,5 +1,6 @@
 export const en = {
   registrar: {
+    invalidSmsTimeout: "Code timeout must be a whole number between 30 and 900 seconds.",
     ready: "Ready to start",
     invalidApiPairs: "Enter valid API ID : API hash pairs (32 hexadecimal characters).",
     invalidPrice: "Check the price range: nonnegative values, minimum not above maximum.",
@@ -48,6 +49,7 @@ export const en = {
       attempt_limit: "Attempt limit reached",
     },
     stages: {
+      sms_wait_session_refresh: "No SMS arrived halfway through the wait; recreating the registration session",
       price_changed: "Price changed; new purchases stopped",
       price_rejected: "Number rejected because of price",
       provider_finish_failed: "Account created, but provider did not confirm activation completion",

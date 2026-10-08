@@ -18,6 +18,7 @@ use tauri::Emitter;
 pub(crate) const RECAPTCHA_ANTISAFETY_REQUIRED: &str = "recaptcha_antisafety_required";
 
 const RECAPTCHA_TIMEOUT: Duration = Duration::from_secs(120);
+const CANCEL_CODE_TIMEOUT: Duration = Duration::from_secs(5);
 const RECAPTCHA_POLL_INTERVAL: Duration = Duration::from_secs(5);
 const TRANSITION_DELAY_MIN_MS: u64 = 300;
 const TRANSITION_DELAY_MAX_MS: u64 = 900;
@@ -360,7 +361,13 @@ impl RegistrationSession {
 
     pub async fn cancel(&mut self) -> Result<(), String> {
         let request = tl::build_auth_cancel_code(&self.phone, &self.phone_code_hash);
-        let result = super::diagnostics::observe("cancel_code", self.client.invoke(&request).await);
+        // Cleanup must not reconnect an idle connection or delay the completed SMS wait.
+        let result = super::diagnostics::observe(
+            "cancel_code",
+            tokio::time::timeout(CANCEL_CODE_TIMEOUT, self.client.invoke_once(&request))
+                .await
+                .unwrap_or_else(|_| Err("cancel code timed out".into())),
+        );
         if let Ok(response) = &result {
             if let Ok(accepted) = super::diagnostics::observe(
                 "cancel_code_parse",
