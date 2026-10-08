@@ -639,8 +639,8 @@ export function RegistrarPage() {
       </div>
       {logs.length > 0 && <div className="rounded-xl border border-border bg-card">
         <div className="flex items-center justify-end border-b border-border px-3 py-2">
-          {logsCopyError && <span role="alert" className="mr-auto text-xs text-destructive">{t("registrar.copyLogsFailed")}</span>}
-          <button type="button" onClick={() => void copyLogs()} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{logsCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{t(logsCopied ? "registrar.logsCopied" : "registrar.copyLogs")}</button>
+          {logsCopyError && <span role="alert" className="mr-auto text-xs text-destructive">{t("common.copyLogsFailed")}</span>}
+          <button type="button" onClick={() => void copyLogs()} className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">{logsCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{t(logsCopied ? "common.logsCopied" : "common.copyLogs")}</button>
         </div>
         <pre aria-live="polite" className="max-h-72 cursor-text select-text overflow-auto whitespace-pre-wrap p-4 text-xs">{readableLogs}</pre>
       </div>}

@@ -6,6 +6,6 @@
     "core:default",
     "dialog:default",
     "dialog:allow-open",
-    "clipboard-manager:default"
+    "clipboard-manager:allow-write-text"
   ]
 }
