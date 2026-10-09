@@ -116,6 +116,7 @@ export const ru = {
       two_fa_reset_completed: "Сброс 2FA доступен; запрашивается новый код для удаления аккаунта",
       existing_account_deleted: "Существующий аккаунт удалён",
       re_registration_cooldown: "Пауза 2–6 секунд перед новой регистрацией",
+      re_registration_sms_retry_same_proxy: "После удаления аккаунта новый код не пришёл за 2 минуты; пересоздаю регистрацию на том же прокси",
       registration_proxy_changed: "Для пересоздания сессии выбран другой прокси Telegram",
       registration_proxy_unchanged: "Другого прокси Telegram нет; сессия пересоздаётся с прежним подключением",
       registration_code_expired_retry: "Код подтверждения истёк; регистрация начинается заново с новым кодом",

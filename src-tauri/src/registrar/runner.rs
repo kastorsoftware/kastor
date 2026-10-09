@@ -29,6 +29,7 @@ const MAX_ATTEMPTS: usize = 100_000;
 const MAX_APP_SMS_FALLBACK_WAIT_SECS: u64 = 900;
 const MAX_REREGISTRATION_RESTARTS: usize = 2;
 const MAX_EXPIRED_CODE_RESTARTS: usize = 2;
+const POST_DELETION_SMS_WAIT: Duration = Duration::from_secs(120);
 const ACCOUNT_DELETION_PAUSE_MIN_SECS: u64 = 2;
 const ACCOUNT_DELETION_PAUSE_MAX_SECS: u64 = 6;
 const CANCEL_RETRY_DELAY: Duration = Duration::from_secs(121);
@@ -1628,6 +1629,36 @@ fn retry_expired_code(error: &str, registered: bool, restarts: usize) -> bool {
         && telegram_rpc_code(error) == Some("PHONE_CODE_EXPIRED")
 }
 
+fn activation_deadline(activation: &Activation) -> Option<tokio::time::Instant> {
+    let expires = chrono::DateTime::parse_from_rfc3339(activation.expires_at.as_deref()?).ok()?;
+    let remaining = (expires.with_timezone(&chrono::Utc) - chrono::Utc::now())
+        .to_std()
+        .unwrap_or(Duration::ZERO);
+    tokio::time::Instant::now().checked_add(remaining)
+}
+
+fn post_deletion_wait_deadline(
+    started: tokio::time::Instant,
+    expires: Option<tokio::time::Instant>,
+) -> tokio::time::Instant {
+    let deadline = started + POST_DELETION_SMS_WAIT;
+    expires.map_or(deadline, |expires| expires.min(deadline))
+}
+
+fn post_deletion_wait_result(
+    result: Result<SmsWaitResult, String>,
+    now: tokio::time::Instant,
+    expires: Option<tokio::time::Instant>,
+) -> Result<SmsWaitResult, String> {
+    if expires.is_some_and(|expires| now >= expires) {
+        return Err("activation_unavailable".into());
+    }
+    match result {
+        Err(error) if error == "sms_timeout" => Ok(SmsWaitResult::RefreshSession),
+        result => result,
+    }
+}
+
 async fn prepare_next_sms(
     sms_config: &SmsProviderConfig,
     activation: &Activation,
@@ -1755,6 +1786,8 @@ async fn register_number(
     let mut re_registration_restarts = 0;
     let mut expired_code_restarts = 0;
     let mut used_codes = HashSet::new();
+    let expires = activation_deadline(activation);
+    let mut after_account_deletion = false;
     let account_id = loop {
         record.status = "waiting_code".into();
         if let Err(error) = context.record(record_id, record).await {
@@ -1764,10 +1797,18 @@ async fn register_number(
         context.log(index, "waiting_code");
         let started = tokio::time::Instant::now();
         let timeout = Duration::from_secs(config.code_timeout_secs);
-        let deadline = started + timeout;
-        let mut refresh_at = Some(started + timeout / 2);
+        let mut deadline = if after_account_deletion {
+            post_deletion_wait_deadline(started, expires)
+        } else {
+            started + timeout
+        };
+        let mut refresh_at = if after_account_deletion {
+            None
+        } else {
+            Some(started + timeout / 2)
+        };
         let code = loop {
-            match wait_for_sms_code(
+            let result = wait_for_sms_code(
                 context,
                 activation,
                 sms_config,
@@ -1775,16 +1816,35 @@ async fn register_number(
                 deadline,
                 refresh_at,
             )
-            .await
-            {
+            .await;
+            let result = if after_account_deletion {
+                post_deletion_wait_result(result, tokio::time::Instant::now(), expires)
+            } else {
+                result
+            };
+            match result {
                 Ok(SmsWaitResult::Code(code)) => break code,
                 Ok(SmsWaitResult::RefreshSession) => {
                     refresh_at = None;
-                    context.log(index, "sms_wait_session_refresh");
-                    session = tokio::time::timeout_at(deadline, async {
+                    context.log(
+                        index,
+                        if after_account_deletion {
+                            "re_registration_sms_retry_same_proxy"
+                        } else {
+                            "sms_wait_session_refresh"
+                        },
+                    );
+                    let restart_deadline = if after_account_deletion {
+                        post_deletion_wait_deadline(tokio::time::Instant::now(), expires)
+                    } else {
+                        deadline
+                    };
+                    session = tokio::time::timeout_at(restart_deadline, async {
                         let _ = session.cancel().await;
                         prepare_next_sms(sms_config, activation).await?;
-                        rotate_registration_proxy(context, index, attempt).await;
+                        if !after_account_deletion {
+                            rotate_registration_proxy(context, index, attempt).await;
+                        }
                         open_registration_session(
                             context,
                             index,
@@ -1798,7 +1858,20 @@ async fn register_number(
                         .await
                     })
                     .await
-                    .map_err(|_| "sms_timeout".to_string())??;
+                    .map_err(|_| {
+                        if after_account_deletion
+                            && expires.is_some_and(|expires| tokio::time::Instant::now() >= expires)
+                        {
+                            "activation_unavailable"
+                        } else {
+                            "sms_timeout"
+                        }
+                        .to_string()
+                    })??;
+                    if after_account_deletion {
+                        deadline =
+                            post_deletion_wait_deadline(tokio::time::Instant::now(), expires);
+                    }
                     context.log(index, "waiting_code");
                 }
                 Err(error) => {
@@ -1820,7 +1893,9 @@ async fn register_number(
                     context.log(index, "registration_code_expired_retry");
                     let _ = session.cancel().await;
                     prepare_next_sms(sms_config, activation).await?;
-                    rotate_registration_proxy(context, index, attempt).await;
+                    if !after_account_deletion {
+                        rotate_registration_proxy(context, index, attempt).await;
+                    }
                     session = open_registration_session(
                         context,
                         index,
@@ -1861,6 +1936,7 @@ async fn register_number(
             }
             RegistrationOutcome::ReRegistrationRequired => {
                 re_register_existing = false;
+                after_account_deletion = true;
                 context.log(index, "existing_account_deleted");
                 context.log(index, "re_registration_cooldown");
                 wait_after_account_deletion(&context.token).await?;
@@ -2741,6 +2817,72 @@ mod tests {
             wait_after_account_deletion(&AtomicBool::new(false)).await,
             Err("stopped".into())
         );
+    }
+
+    #[test]
+    fn post_deletion_sms_wait_repeats_every_two_minutes_without_a_retry_limit() {
+        let started = tokio::time::Instant::now();
+        for cycle in 0..10 {
+            let now = started + POST_DELETION_SMS_WAIT * cycle;
+            let deadline = post_deletion_wait_deadline(now, None);
+            assert_eq!(deadline - now, Duration::from_secs(120));
+            let result =
+                sms_wait_boundary(deadline, deadline, None).map(|_| SmsWaitResult::RefreshSession);
+            assert_eq!(
+                post_deletion_wait_result(result, deadline, None),
+                Ok(SmsWaitResult::RefreshSession)
+            );
+        }
+    }
+
+    #[test]
+    fn post_deletion_sms_wait_stops_at_activation_expiry_and_preserves_other_errors() {
+        let started = tokio::time::Instant::now();
+        let expires = started + Duration::from_secs(250);
+        let third_cycle = started + Duration::from_secs(240);
+        assert_eq!(
+            post_deletion_wait_deadline(third_cycle, Some(expires)),
+            expires
+        );
+        assert_eq!(
+            post_deletion_wait_result(Err("sms_timeout".into()), expires, Some(expires)),
+            Err("activation_unavailable".into())
+        );
+        for error in ["stopped", "activation_unavailable", "sms_transport"] {
+            assert_eq!(
+                post_deletion_wait_result(Err(error.into()), started, Some(expires)),
+                Err(error.into())
+            );
+        }
+        assert_eq!(
+            post_deletion_wait_result(
+                Ok(SmsWaitResult::Code("22222".into())),
+                started,
+                Some(expires)
+            ),
+            Ok(SmsWaitResult::Code("22222".into()))
+        );
+    }
+
+    #[test]
+    fn sms_activation_expiry_uses_the_provider_timestamp() {
+        let mut activation = Activation {
+            id: "test".into(),
+            phone: "+79990001122".into(),
+            cost: None,
+            country: None,
+            operator: None,
+            expires_at: None,
+        };
+        assert_eq!(activation_deadline(&activation), None);
+        activation.expires_at = Some("invalid date".into());
+        assert_eq!(activation_deadline(&activation), None);
+        activation.expires_at = Some("2020-01-01T00:00:00Z".into());
+        assert!(activation_deadline(&activation).unwrap() <= tokio::time::Instant::now());
+        activation.expires_at =
+            Some((chrono::Utc::now() + chrono::Duration::seconds(90)).to_rfc3339());
+        let remaining = activation_deadline(&activation).unwrap() - tokio::time::Instant::now();
+        assert!(remaining > Duration::from_secs(80) && remaining <= Duration::from_secs(90));
     }
 
     #[test]

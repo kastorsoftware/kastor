@@ -117,6 +117,7 @@ export const en = {
       two_fa_reset_completed: "2FA reset is available; requesting a new code to delete the account",
       existing_account_deleted: "Existing account deleted",
       re_registration_cooldown: "Waiting 2–6 seconds before starting a new registration",
+      re_registration_sms_retry_same_proxy: "No new code arrived within 2 minutes after account deletion; restarting registration with the same proxy",
       registration_proxy_changed: "Selected a different Telegram proxy for the new session",
       registration_proxy_unchanged: "No alternative Telegram proxy available; recreating the session with the previous connection",
       registration_code_expired_retry: "The verification code expired; restarting registration with a new code",

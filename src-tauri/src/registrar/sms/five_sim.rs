@@ -239,6 +239,13 @@ impl OrderResponse {
     }
 
     fn into_status(self) -> ActivationStatus {
+        match self.status.as_str() {
+            "CANCELED" => return ActivationStatus::Cancelled,
+            "TIMEOUT" => return ActivationStatus::Expired,
+            "FINISHED" => return ActivationStatus::Finished,
+            "BANNED" => return ActivationStatus::Banned,
+            _ => {}
+        }
         if let Some(message) = self
             .sms
             .unwrap_or_default()
@@ -254,10 +261,6 @@ impl OrderResponse {
 
         match self.status.as_str() {
             "PENDING" | "RECEIVED" => ActivationStatus::Waiting,
-            "CANCELED" => ActivationStatus::Cancelled,
-            "TIMEOUT" => ActivationStatus::Expired,
-            "FINISHED" => ActivationStatus::Finished,
-            "BANNED" => ActivationStatus::Banned,
             status => ActivationStatus::Provider(status.to_string()),
         }
     }
@@ -382,6 +385,22 @@ mod tests {
                 text: Some("new".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn terminal_activation_status_is_not_hidden_by_an_old_sms() {
+        for (status, expected) in [
+            ("CANCELED", ActivationStatus::Cancelled),
+            ("TIMEOUT", ActivationStatus::Expired),
+            ("FINISHED", ActivationStatus::Finished),
+            ("BANNED", ActivationStatus::Banned),
+        ] {
+            let raw = format!(
+                r#"{{"id":123,"phone":"+79990001122","status":"{status}","sms":[{{"code":"11111","text":"old"}}]}}"#
+            );
+            let order: OrderResponse = parse_json(&raw).unwrap();
+            assert_eq!(order.into_status(), expected);
+        }
     }
 
     #[test]
