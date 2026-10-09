@@ -705,7 +705,7 @@ export function RegistrarPage() {
           <p>{t("registrar.launchNotice.responsibility")}</p>
           <p className="font-semibold text-foreground">{t("registrar.launchNotice.acceptance")}</p>
         </div>
-        <div className="mt-5 flex justify-between gap-3"><button type="button" onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{t("registrar.understood")}</button></div>
+        <div className="mt-5 flex justify-between gap-3"><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeDismissed(true); setLaunchNoticeOpen(false); }} className="rounded-md border border-destructive/50 px-4 py-2 text-sm font-medium text-destructive disabled:opacity-50">{t("registrar.doNotShowAgain")}</button><button type="button" disabled={!launchNoticeRead} onClick={() => { setLaunchNoticeOpen(false); void startTask(); }} className="rounded-md border border-primary/50 bg-primary/10 px-4 py-2 text-sm font-medium text-primary disabled:opacity-50">{t("registrar.understood")}</button></div>
       </RegistrarModal>}
     </div>
   );
