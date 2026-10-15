@@ -1,5 +1,27 @@
 export const en = {
   registrar: {
+    antiSafetyGuide: {
+      title: "Antisafety: setup guide",
+      intro: "Antisafety is a service for passing device authenticity checks. It is strongly recommended for Telegram auto-registration: Kastor uses it for Push and reCAPTCHA when “Pretend to be a mobile device” is enabled. Service website:",
+      registrationTitle: "1. Request access",
+      registration: "Registration is handled manually by the administrator. Send a Telegram message requesting an account:",
+      registrationLink: "Include a link to the Kastor forum thread or its GitHub repository:",
+      billingTitle: "2. Top up your balance",
+      billing: "After registration, sign in and open the left menu → Billing. Under Automatic top up, enter an amount in dollars: the minimum top-up is $15. Select USDT payment via TRC20 or BEP20 and follow the service’s payment instructions.",
+      billingCaption: "Billing → Automatic top up: amount and TRC20 / BEP20 network selection.",
+      paymentWarning: "Before transferring funds, check the currency, network, address and amount in the payment instructions. The sending network must match the selected receiving network. Wait for the funds to be credited; check current terms and prices in the service dashboard.",
+      keyTitle: "3. Copy your API key",
+      key: "Open the left menu → Settings. Copy your key from Master API key and paste it into the Antisafety API key field in Kastor. Reset changes the key; you do not need to press it for normal setup.",
+      keyCaption: "Settings → Master API key. The personal key has been hidden in this screenshot.",
+      aidTitle: "4. Find the Telegram application AID",
+      aid: "In the left menu, find My apps → Telegram. Copy Application ID (AID) from the application page and paste it into the AID field in Kastor. Use your dashboard’s Telegram identifier, not Telegram X or a Telegram API ID / API Hash. If Telegram is missing, contact @ex625 about enabling it.",
+      aidCaption: "My apps → Telegram → Application ID (AID). Use your own AID instead of the hidden value.",
+      kastorTitle: "5. Configure auto-registration in Kastor",
+      kastor: "Enable “Pretend to be a mobile device” to reveal the Antisafety section. Enter your API key and AID. Push and Antisafety reCAPTCHA solving are used only while this option is enabled. With it disabled, no Push is sent; selecting Antisafety email alone does not enable mobile mode.",
+      email: "To use this service’s email addresses, select Antisafety under Email and choose Standard or Premium. Firstmail and GMX do not require Antisafety as an email provider. Antisafety addresses are not used for 2FA recovery email.",
+      security: "Do not publish your API key, dashboard password or personal identifiers. Screenshots are for guidance only; personal values have been hidden. Antisafety does not replace quality phone numbers and proxies or guarantee successful registration or protection from bans.",
+      linkFailed: "Could not open the link. Copy the address into your browser.",
+    },
     launchNotice: {
       title: "Automatic registration usage notice",
       intro: "Please read this information carefully before using automatic registration.",

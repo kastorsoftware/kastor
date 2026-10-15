@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { countryCallingCode, sortRegistrarCountries } from "@/lib/registrarCountries";
 import { optionalPrice, parseSmsTimeout } from "@/lib/registrarSettings";
+import { AntiSafetyGuide } from "@/components/AntiSafetyGuide";
 
 type NameMode = "same" | "file" | "random";
 type AvatarMode = "emoji" | "folder" | "single" | "generated";
@@ -668,7 +669,7 @@ export function RegistrarPage() {
         </div>
         <pre aria-live="polite" className="max-h-72 cursor-text select-text overflow-auto whitespace-pre-wrap p-4 text-xs">{readableLogs}</pre>
       </div>}
-      {antiSafetyHelpOpen && <RegistrarModal title="Placeholder" onClose={() => setAntiSafetyHelpOpen(false)}><p>Placeholder</p></RegistrarModal>}
+      {antiSafetyHelpOpen && <RegistrarModal title={t("registrar.antiSafetyGuide.title")} onClose={() => setAntiSafetyHelpOpen(false)}><AntiSafetyGuide onClose={() => setAntiSafetyHelpOpen(false)} /></RegistrarModal>}
       {settingsLock !== "unlocked" && settingsLock !== "loading" && <RegistrarModal title={t(settingsLock === "setup" ? "registrar.settingsPasswordTitle" : "registrar.settingsUnlockTitle")} onClose={() => {}}>
         <p>{t(settingsLock === "setup" ? "registrar.settingsPasswordWarning" : "registrar.settingsUnlockHint")}</p>
         <div className="mt-4 space-y-3">
