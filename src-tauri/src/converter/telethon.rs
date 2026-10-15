@@ -11,11 +11,36 @@ pub struct TelethonSession {
     pub auth_key: Vec<u8>,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn session_read_is_read_only_and_rejects_invalid_databases() {
+        let directory = std::env::temp_dir().join(format!("kastor-session-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("account.session");
+        assert!(TelethonSession::from_file(&path).is_err());
+        assert!(!path.exists());
+        std::fs::write(&path, b"not a sqlite session").unwrap();
+        assert!(TelethonSession::from_file(&path).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"not a sqlite session");
+        std::fs::remove_file(&path).unwrap();
+        let session = TelethonSession { dc_id: 2, server_address: "149.154.167.51".into(), port: 443, auth_key: vec![1; 256] };
+        session.to_file(&path).unwrap();
+        let restored = TelethonSession::from_file(&path).unwrap();
+        assert_eq!(restored.auth_key, session.auth_key);
+        assert_eq!(restored.dc_id, session.dc_id);
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+    }
+}
+
 impl TelethonSession {
     pub fn from_file(path: &Path) -> Result<Self, String> {
         dbg_log!("TelethonSession::from_file {:?}", path);
 
-        let conn = rusqlite::Connection::open(path)
+        let conn = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
             .map_err(|e| crate::i18n::t_with("converter_telethon_open_session_error", &[("error", &e.to_string())]))?;
 
         let mut stmt = conn

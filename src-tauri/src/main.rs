@@ -155,6 +155,7 @@ pub struct QuickAction {
 
 pub struct AppState {
     pub validating_ids: Vec<String>,
+    pub validation_errors: std::collections::HashMap<String, String>,
 }
 
 #[tauri::command]
@@ -299,10 +300,16 @@ fn get_validating_ids(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Vec<Stri
     ids
 }
 
+#[tauri::command]
+fn get_validation_errors(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> std::collections::HashMap<String, String> {
+    state.lock().unwrap().validation_errors.clone()
+}
+
 fn main() {
     dbg_log!("=== Kastor v{} starting (DEBUG BUILD) ===", APP_VERSION);
 
     let state = Arc::new(Mutex::new(AppState {
+        validation_errors: std::collections::HashMap::new(),
         validating_ids: Vec::new(),
     }));
 
@@ -337,6 +344,7 @@ fn main() {
             get_task_queue,
             get_queue_stats,
             get_validating_ids,
+            get_validation_errors,
             settings::get_settings,
             settings::save_settings,
             settings::patch_settings,

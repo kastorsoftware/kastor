@@ -199,13 +199,16 @@ export function AccountsPage() {
 
         // compute results from accounts that were being validated
         const updated = await invoke<AccountData[]>("get_real_accounts");
+        const failures = await invoke<Record<string, string>>("get_validation_errors");
         const checked = updated.filter((a) => checkedIdsRef.current.has(a.id));
-        const valid = checked.filter((a) => a.status === "Без ограничений" || a.status === "No restrictions").length;
-        const invalid = checked.filter((a) => a.status === "Невалид" || a.status === "Invalid").length;
-        const restricted = checked.filter((a) => a.status === "Вечный спамблок" || a.status === "Заморожен" || a.status.startsWith("Спамблок по ГЕО") || a.status === "Permanent spamblock" || a.status === "Frozen" || a.status.startsWith("Geo spamblock")).length;
-        const unreachable = checked.filter((a) => a.status === "Не проверен" || a.status.startsWith("Проверка") || a.status === "Unchecked" || a.status.startsWith("Checking")).length;
-        const errAccounts = checked.filter((a) => a.status === "Не проверен" || a.status === "Unchecked");
-        const errors = errAccounts.length > 0 ? [t("accounts.proxyConnectionError")] : [];
+        const completed = checked.filter((a) => !failures[a.id]);
+        const valid = completed.filter((a) => a.status === "Без ограничений" || a.status === "No restrictions").length;
+        const invalid = completed.filter((a) => a.status === "Невалид" || a.status === "Invalid").length;
+        const restricted = completed.filter((a) => a.status === "Вечный спамблок" || a.status === "Заморожен" || a.status.startsWith("Спамблок по ГЕО") || a.status === "Permanent spamblock" || a.status === "Frozen" || a.status.startsWith("Geo spamblock")).length;
+        const unchecked = new Set(checked.filter((a) => a.status === "Не проверен" || a.status.startsWith("Проверка") || a.status === "Unchecked" || a.status.startsWith("Checking")).map((a) => a.id));
+        for (const id of checkedIdsRef.current) if (failures[id]) unchecked.add(id);
+        const unreachable = unchecked.size;
+        const errors = [...unchecked].map((id) => `${id}: ${t(`accounts.validationErrors.${failures[id] || "unknown"}`)}`);
         setValidateResult({ valid, invalid, restricted, unreachable, errors });
       }
     }, 1000);

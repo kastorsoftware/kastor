@@ -2,6 +2,53 @@ use std::sync::{Arc, Mutex};
 use crate::AppState;
 use super::TaskQueue;
 
+fn fail_validation(
+    state: &Mutex<AppState>,
+    json_path: &std::path::Path,
+    id: &str,
+    reason: &str,
+) {
+    dbg_log!("validate {}: failed stage={}", id, reason);
+    if let Ok(mut json) = crate::accounts::session::AccountJson::from_file(json_path) {
+        json.status = crate::i18n::t("status_unchecked");
+        json.validated = true;
+        if let Err(error) = json.to_file(json_path) {
+            dbg_log!("validate {}: cannot save failure status: {}", id, error);
+        }
+    }
+    crate::accounts::commands::invalidate_accounts_cache();
+    if let Ok(mut state) = state.lock() {
+        state.validation_errors.insert(id.to_string(), reason.to_string());
+        state.validating_ids.retain(|value| value != id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_failure_clears_checking_and_retains_the_failure_reason() {
+        let directory = std::env::temp_dir().join(format!("kastor-validation-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("account.json");
+        let state = Mutex::new(AppState { validating_ids: vec!["account".into()], validation_errors: Default::default() });
+        let json = crate::accounts::session::AccountJson { status: crate::i18n::t("status_checking"), ..Default::default() };
+        json.to_file(&path).unwrap();
+        fail_validation(&state, &path, "account", "session_read");
+        let updated = crate::accounts::session::AccountJson::from_file(&path).unwrap();
+        assert!(updated.validated);
+        assert_eq!(updated.status, crate::i18n::t("status_unchecked"));
+        assert!(state.lock().unwrap().validating_ids.is_empty());
+        assert_eq!(state.lock().unwrap().validation_errors["account"], "session_read");
+        std::fs::write(&path, b"invalid json").unwrap();
+        fail_validation(&state, &path, "account", "metadata_read");
+        assert_eq!(std::fs::read(&path).unwrap(), b"invalid json");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(&directory).unwrap();
+    }
+}
+
 #[tauri::command]
 pub async fn enqueue_validate(
     ids: Vec<String>,
@@ -26,6 +73,7 @@ pub async fn enqueue_validate(
     {
         let mut s = state.lock().unwrap();
         for id in &ids {
+            s.validation_errors.remove(id);
             if !s.validating_ids.contains(id) {
                 s.validating_ids.push(id.clone());
             }
@@ -74,7 +122,7 @@ pub async fn enqueue_validate(
                     let do_r = do_restrictions;
                     let do_2fa_check = do_2fa;
 
-                    handles.push(tokio::spawn(async move {
+                    handles.push((id.clone(), tokio::spawn(async move {
                         let _permit = sem.acquire().await.unwrap();
 
                         let id_clone = id.clone();
@@ -89,24 +137,27 @@ pub async fn enqueue_validate(
                                 let json_path = storage.json_path(&id);
 
                                 if !session_path.exists() {
-                                    if let Ok(mut s) = state_arc.lock() {
-                                        s.validating_ids.retain(|x| x != &id);
-                                    }
+                                    fail_validation(&state_arc, &json_path, &id, "session_missing");
                                     return;
                                 }
 
                                 let session = match crate::accounts::session::TelethonSession::from_file(&session_path) {
                                     Ok(s) => s,
-                                    Err(_) => {
-                                        if let Ok(mut s) = state_arc.lock() {
-                                            s.validating_ids.retain(|x| x != &id);
-                                        }
+                                    Err(error) => {
+                                        dbg_log!("validate {}: session read failed: {}", id, error);
+                                        fail_validation(&state_arc, &json_path, &id, "session_read");
                                         return;
                                     }
                                 };
 
                                 let mut json = if json_path.exists() {
-                                    crate::accounts::session::AccountJson::from_file(&json_path).unwrap_or_default()
+                                    match crate::accounts::session::AccountJson::from_file(&json_path) {
+                                        Ok(json) => json,
+                                        Err(_) => {
+                                            fail_validation(&state_arc, &json_path, &id, "metadata_read");
+                                            return;
+                                        }
+                                    }
                                 } else {
                                     crate::accounts::session::AccountJson {
                                         app_id: 2040,
@@ -150,6 +201,11 @@ pub async fn enqueue_validate(
                                 }
 
                                 let (vr, mut reusable_client) = final_result.unwrap();
+                                if vr.unreachable {
+                                    if let Ok(mut state) = state_arc.lock() {
+                                        state.validation_errors.insert(id.clone(), "connection".into());
+                                    }
+                                }
                                 json.validated = true;
                                 json.valid = vr.valid;
                                 if let Some(ref phone) = vr.phone { json.phone = phone.clone(); }
@@ -218,7 +274,11 @@ pub async fn enqueue_validate(
                                     }
                                 }
 
-                                let _ = json.to_file(&json_path);
+                                if let Err(error) = json.to_file(&json_path) {
+                                    dbg_log!("validate {}: result write failed: {}", id, error);
+                                    fail_validation(&state_arc, &json_path, &id, "metadata_write");
+                                    return;
+                                }
 
                                 if let Ok(mut s) = state_arc.lock() {
                                     s.validating_ids.retain(|x| x != &id);
@@ -230,19 +290,15 @@ pub async fn enqueue_validate(
                         if result.is_err() {
                             let storage = crate::accounts::storage::AccountStorage::new(&storage_base.parent().unwrap());
                             let json_path = storage.json_path(&id_clone);
-                            if let Ok(mut json) = crate::accounts::session::AccountJson::from_file(&json_path) {
-                                json.status = crate::i18n::t("status_unchecked");
-                                let _ = json.to_file(&json_path);
-                            }
-                            if let Ok(mut s) = state_clone.lock() {
-                                s.validating_ids.retain(|x| x != &id_clone);
-                            }
+                            fail_validation(&state_clone, &json_path, &id_clone, "timeout");
                         }
-                    }));
+                    })));
                 }
 
-                for h in handles {
-                    let _ = h.await;
+                for (id, handle) in handles {
+                    if handle.await.is_err() {
+                        fail_validation(&state_arc, &storage.json_path(&id), &id, "unknown");
+                    }
                 }
 
                 dbg_log!("=== VALIDATE TASK DONE ===");
