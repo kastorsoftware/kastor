@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - src-tauri/tauri.conf.json
+      - .github/workflows/release.yml
+      - .github/scripts/check-version.mjs
   workflow_dispatch:
 
 permissions:
@@ -25,20 +27,14 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
 
       - name: Check whether the app version changed
         id: version
-        shell: bash
-        run: |
-          current_version="$(node -p "require('./src-tauri/tauri.conf.json').version")"
-          previous_version="$(git show '${{ github.event.before }}:src-tauri/tauri.conf.json' 2>/dev/null | node -e "let input = ''; process.stdin.on('data', chunk => input += chunk).on('end', () => console.log(JSON.parse(input).version))" || true)"
-
-          if [[ -n "$previous_version" && "$current_version" != "$previous_version" ]]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          fi
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: node .github/scripts/check-version.mjs
 
   publish:
     needs: version-changed
