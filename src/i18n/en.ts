@@ -17,7 +17,7 @@ export const en = {
       aid: "In the left menu, find My apps → Telegram. Copy Application ID (AID) from the application page and paste it into the AID field in Kastor. Use your dashboard’s Telegram identifier, not Telegram X or a Telegram API ID / API Hash. If Telegram is missing, contact @ex625 about enabling it.",
       aidCaption: "My apps → Telegram → Application ID (AID). Use your own AID instead of the hidden value.",
       kastorTitle: "5. Configure auto-registration in Kastor",
-      kastor: "Enable “Pretend to be a mobile device” to reveal the Antisafety section. Enter your API key and AID. Push and Antisafety reCAPTCHA solving are used only while this option is enabled. With it disabled, no Push is sent; selecting Antisafety email alone does not enable mobile mode.",
+      kastor: "Enable “Pretend to be a mobile device” to reveal the Antisafety section. Enter your API key and AID. Push is used only while this option is enabled. When reCAPTCHA is requested, Kastor uses the configured Antisafety service. With mobile mode disabled, no Push is sent; selecting Antisafety email alone does not enable mobile mode.",
       email: "To use this service’s email addresses, select Antisafety under Email and choose Standard or Premium. Firstmail and GMX do not require Antisafety as an email provider. Antisafety addresses are not used for 2FA recovery email.",
       security: "Do not publish your API key, dashboard password or personal identifiers. Screenshots are for guidance only; personal values have been hidden. Antisafety does not replace quality phone numbers and proxies or guarantee successful registration or protection from bans.",
       linkFailed: "Could not open the link. Copy the address into your browser.",
