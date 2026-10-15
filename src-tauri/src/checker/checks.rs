@@ -1,9 +1,9 @@
 // high-level check functions operating on MtpClient
 // each function performs a specific check and returns structured data
 
+use super::analysis;
 use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
-use super::analysis;
 
 #[derive(Debug, Default, Clone)]
 pub struct DialogStats {
@@ -71,7 +71,9 @@ pub async fn check_spambot(client: &mut MtpClient) -> Result<String, String> {
         let history_req = tl::build_get_history(bot_id, bot_hash, 3);
         if let Ok(history_resp) = client.invoke(&history_req).await {
             let msgs = tl::parse_messages_structured(&history_resp).unwrap_or_default();
-            let has_response = msgs.iter().any(|m| !m.text.contains("/start") && m.text.len() > 10);
+            let has_response = msgs
+                .iter()
+                .any(|m| !m.text.contains("/start") && m.text.len() > 10);
             if has_response {
                 messages = msgs;
                 break;
@@ -121,13 +123,21 @@ pub async fn get_stars_balance(client: &mut MtpClient) -> Result<i64, String> {
     tl::parse_stars_status(&resp)
 }
 
-pub async fn get_peer_stars_balance(client: &mut MtpClient, channel_id: i64, access_hash: i64) -> Result<i64, String> {
+pub async fn get_peer_stars_balance(
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+) -> Result<i64, String> {
     let req = tl::build_get_stars_status_peer(channel_id, access_hash);
     let resp = client.invoke(&req).await?;
     tl::parse_stars_status(&resp)
 }
 
-pub async fn get_peer_ton_balance(client: &mut MtpClient, channel_id: i64, access_hash: i64) -> Result<i64, String> {
+pub async fn get_peer_ton_balance(
+    client: &mut MtpClient,
+    channel_id: i64,
+    access_hash: i64,
+) -> Result<i64, String> {
     let req = tl::build_get_ton_status_peer(channel_id, access_hash);
     let resp = client.invoke(&req).await?;
     tl::parse_stars_status(&resp)
@@ -159,8 +169,12 @@ pub async fn get_dialog_stats(client: &mut MtpClient) -> Result<DialogStats, Str
             stats.subscribed_channels += archive.subscribed_channels;
             stats.subscribed_groups += archive.subscribed_groups;
             stats.total_dialogs += archive.total_dialogs;
-            if archive.has_send_bot { stats.has_send_bot = true; }
-            if archive.has_xrocket_bot { stats.has_xrocket_bot = true; }
+            if archive.has_send_bot {
+                stats.has_send_bot = true;
+            }
+            if archive.has_xrocket_bot {
+                stats.has_xrocket_bot = true;
+            }
             stats.owned_channels.extend(archive.owned_channels);
             stats.owned_groups.extend(archive.owned_groups);
         }
@@ -175,13 +189,19 @@ pub async fn get_dialog_stats(client: &mut MtpClient) -> Result<DialogStats, Str
     Ok(stats)
 }
 
-pub async fn get_saved_messages(client: &mut MtpClient, limit: i32) -> Result<Vec<tl::SavedMessage>, String> {
+pub async fn get_saved_messages(
+    client: &mut MtpClient,
+    limit: i32,
+) -> Result<Vec<tl::SavedMessage>, String> {
     let req = tl::build_get_history_self(limit);
     let resp = client.invoke(&req).await?;
     tl::parse_saved_messages(&resp)
 }
 
-pub async fn download_document(client: &mut MtpClient, doc: &tl::SavedDocument) -> Result<Vec<u8>, String> {
+pub async fn download_document(
+    client: &mut MtpClient,
+    doc: &tl::SavedDocument,
+) -> Result<Vec<u8>, String> {
     if doc.size > 5 * 1024 * 1024 {
         return Err("file too large (>5MB)".into());
     }
@@ -225,23 +245,31 @@ fn convert_dialog_stats(raw: crate::mtproto::client::DialogStats) -> DialogStats
         has_send_bot: raw.has_send_bot,
         has_xrocket_bot: raw.has_xrocket_bot,
         total_dialogs: raw.total_dialogs,
-        owned_channels: raw.owned_channels.into_iter().map(|c| OwnedChannel {
-            channel_id: c.channel_id,
-            access_hash: c.access_hash,
-            title: c.title,
-            username: c.username,
-            participants_count: c.participants_count,
-            is_broadcast: c.is_broadcast,
-            is_creator: c.is_creator,
-        }).collect(),
-        owned_groups: raw.owned_groups.into_iter().map(|c| OwnedChannel {
-            channel_id: c.channel_id,
-            access_hash: c.access_hash,
-            title: c.title,
-            username: c.username,
-            participants_count: c.participants_count,
-            is_broadcast: c.is_broadcast,
-            is_creator: c.is_creator,
-        }).collect(),
+        owned_channels: raw
+            .owned_channels
+            .into_iter()
+            .map(|c| OwnedChannel {
+                channel_id: c.channel_id,
+                access_hash: c.access_hash,
+                title: c.title,
+                username: c.username,
+                participants_count: c.participants_count,
+                is_broadcast: c.is_broadcast,
+                is_creator: c.is_creator,
+            })
+            .collect(),
+        owned_groups: raw
+            .owned_groups
+            .into_iter()
+            .map(|c| OwnedChannel {
+                channel_id: c.channel_id,
+                access_hash: c.access_hash,
+                title: c.title,
+                username: c.username,
+                participants_count: c.participants_count,
+                is_broadcast: c.is_broadcast,
+                is_creator: c.is_creator,
+            })
+            .collect(),
     }
 }

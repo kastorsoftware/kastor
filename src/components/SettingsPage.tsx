@@ -5,6 +5,7 @@ import { useT } from "@/i18n";
 
 interface AppSettings {
   allow_no_proxy: boolean;
+  auto_update: boolean;
   llm_api_url: string;
   llm_token: string;
   llm_model: string;
@@ -13,7 +14,7 @@ interface AppSettings {
 
 export function SettingsPage() {
   const t = useT();
-  const [settings, setSettings] = useState<AppSettings>({ allow_no_proxy: false, llm_api_url: "", llm_token: "", llm_model: "", llm_api_type: "openai" });
+  const [settings, setSettings] = useState<AppSettings>({ allow_no_proxy: false, auto_update: false, llm_api_url: "", llm_token: "", llm_model: "", llm_api_type: "openai" });
   const [warning, setWarning] = useState(false);
   const [models, setModels] = useState<string[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -43,6 +44,12 @@ export function SettingsPage() {
     setSettings(updated);
     setWarning(false);
     if (!IS_DEV) await invoke("save_settings", { settings: updated });
+  };
+
+  const handleAutoUpdate = async () => {
+    const updated = { ...settings, auto_update: !settings.auto_update };
+    setSettings(updated);
+    if (!IS_DEV) await invoke("patch_settings", { patch: { auto_update: updated.auto_update } });
   };
 
   const handleLlmChange = async (key: keyof AppSettings, value: string) => {
@@ -100,6 +107,22 @@ export function SettingsPage() {
             <div className="text-xs text-muted-foreground mt-0.5">
               {t("settings.allowNoProxyDesc")}
             </div>
+          </div>
+        </label>
+      </div>
+
+      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
+        <h3 className="text-sm font-semibold">{t("settings.updateSection")}</h3>
+        <label className="flex items-start gap-3 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={settings.auto_update}
+            onChange={handleAutoUpdate}
+            className="rounded border-border mt-0.5"
+          />
+          <div>
+            <div className="text-sm font-medium">{t("settings.autoUpdate")}</div>
+            <div className="text-xs text-muted-foreground mt-0.5">{t("settings.autoUpdateDesc")}</div>
           </div>
         </label>
       </div>

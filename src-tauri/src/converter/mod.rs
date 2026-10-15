@@ -1,22 +1,22 @@
 // converter: any input format -> common (auth_key, dc_id, user_id) -> any output format
 // readers/writers reused from session/pyro/tdata modules
 
-pub mod telethon;
 pub mod pyro;
 pub mod tdata;
+pub mod telethon;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Semaphore;
 
-use self::telethon::TelethonSession;
 use self::pyro::PyroSession;
 use self::tdata as tdata_fmt;
-use crate::queue::TaskQueue;
+use self::telethon::TelethonSession;
 use crate::i18n::{t, t_with};
+use crate::queue::TaskQueue;
 
 pub fn dc_host_from_config(dc: i32) -> String {
     crate::get_app_config()
@@ -56,12 +56,10 @@ impl Format {
     }
 }
 
-pub async fn read_inputs(
-    paths: &[PathBuf],
-    format: Format,
-    app: &AppHandle,
-) -> Vec<CommonAccount> {
-    let emit = |msg: String| { let _ = app.emit("converter-log", msg); };
+pub async fn read_inputs(paths: &[PathBuf], format: Format, app: &AppHandle) -> Vec<CommonAccount> {
+    let emit = |msg: String| {
+        let _ = app.emit("converter-log", msg);
+    };
     let mut out = Vec::new();
 
     for path in paths {
@@ -78,9 +76,15 @@ pub async fn read_inputs(
                                 user_id: uid,
                                 source_name: file_stem(&file),
                             });
-                            emit(t_with("converter_telethon_read", &[("path", &file.display().to_string())]));
+                            emit(t_with(
+                                "converter_telethon_read",
+                                &[("path", &file.display().to_string())],
+                            ));
                         }
-                        Err(e) => emit(t_with("converter_telethon_error", &[("path", &file.display().to_string()), ("error", &e)])),
+                        Err(e) => emit(t_with(
+                            "converter_telethon_error",
+                            &[("path", &file.display().to_string()), ("error", &e)],
+                        )),
                     }
                 }
             }
@@ -95,23 +99,36 @@ pub async fn read_inputs(
                                 user_id: s.user_id,
                                 source_name: file_stem(&file),
                             });
-                            emit(t_with("converter_pyrogram_read", &[("path", &file.display().to_string())]));
+                            emit(t_with(
+                                "converter_pyrogram_read",
+                                &[("path", &file.display().to_string())],
+                            ));
                         }
-                        Err(e) => emit(t_with("converter_pyrogram_error", &[("path", &file.display().to_string()), ("error", &e)])),
+                        Err(e) => emit(t_with(
+                            "converter_pyrogram_error",
+                            &[("path", &file.display().to_string()), ("error", &e)],
+                        )),
                     }
                 }
             }
             Format::Tdata => {
                 let tdata_dirs = collect_tdata_dirs(path);
                 if tdata_dirs.is_empty() {
-                    emit(t_with("converter_tdata_not_found", &[("path", &path.display().to_string())]));
+                    emit(t_with(
+                        "converter_tdata_not_found",
+                        &[("path", &path.display().to_string())],
+                    ));
                 }
                 for dir in tdata_dirs {
                     match tdata_fmt::parse_tdata(&dir) {
                         Ok(accs) => {
                             let label = file_stem(&dir);
                             for (i, acc) in accs.iter().enumerate() {
-                                let suffix = if accs.len() > 1 { format!("_acc{}", i + 1) } else { String::new() };
+                                let suffix = if accs.len() > 1 {
+                                    format!("_acc{}", i + 1)
+                                } else {
+                                    String::new()
+                                };
                                 out.push(CommonAccount {
                                     auth_key: acc.auth_key.clone(),
                                     dc_id: acc.dc_id,
@@ -119,9 +136,18 @@ pub async fn read_inputs(
                                     source_name: format!("{}{}", label, suffix),
                                 });
                             }
-                            emit(t_with("converter_tdata_read", &[("count", &accs.len().to_string()), ("path", &dir.display().to_string())]));
+                            emit(t_with(
+                                "converter_tdata_read",
+                                &[
+                                    ("count", &accs.len().to_string()),
+                                    ("path", &dir.display().to_string()),
+                                ],
+                            ));
                         }
-                        Err(e) => emit(t_with("converter_tdata_error", &[("path", &dir.display().to_string()), ("error", &e)])),
+                        Err(e) => emit(t_with(
+                            "converter_tdata_error",
+                            &[("path", &dir.display().to_string()), ("error", &e)],
+                        )),
                     }
                 }
             }
@@ -132,7 +158,10 @@ pub async fn read_inputs(
                         .join("combine_converter")
                         .join(uuid::Uuid::new_v4().to_string());
                     if let Err(e) = extract_zip(&zip_file, &temp) {
-                        emit(t_with("converter_tdatazip_unpack_error", &[("path", &zip_file.display().to_string()), ("error", &e)]));
+                        emit(t_with(
+                            "converter_tdatazip_unpack_error",
+                            &[("path", &zip_file.display().to_string()), ("error", &e)],
+                        ));
                         continue;
                     }
                     let tdata_dirs = collect_tdata_dirs(&temp);
@@ -141,7 +170,11 @@ pub async fn read_inputs(
                         match tdata_fmt::parse_tdata(&dir) {
                             Ok(accs) => {
                                 for (i, acc) in accs.iter().enumerate() {
-                                    let suffix = if accs.len() > 1 { format!("_acc{}", i + 1) } else { String::new() };
+                                    let suffix = if accs.len() > 1 {
+                                        format!("_acc{}", i + 1)
+                                    } else {
+                                        String::new()
+                                    };
                                     out.push(CommonAccount {
                                         auth_key: acc.auth_key.clone(),
                                         dc_id: acc.dc_id,
@@ -149,9 +182,18 @@ pub async fn read_inputs(
                                         source_name: format!("{}{}", label, suffix),
                                     });
                                 }
-                                emit(t_with("converter_tdatazip_read", &[("count", &accs.len().to_string()), ("path", &zip_file.display().to_string())]));
+                                emit(t_with(
+                                    "converter_tdatazip_read",
+                                    &[
+                                        ("count", &accs.len().to_string()),
+                                        ("path", &zip_file.display().to_string()),
+                                    ],
+                                ));
                             }
-                            Err(e) => emit(t_with("converter_tdatazip_error", &[("path", &dir.display().to_string()), ("error", &e)])),
+                            Err(e) => emit(t_with(
+                                "converter_tdatazip_error",
+                                &[("path", &dir.display().to_string()), ("error", &e)],
+                            )),
                         }
                     }
                 }
@@ -162,7 +204,13 @@ pub async fn read_inputs(
                     let content = match std::fs::read_to_string(&file) {
                         Ok(c) => c,
                         Err(e) => {
-                            emit(t_with("converter_authkey_read_error", &[("path", &file.display().to_string()), ("error", &e.to_string())]));
+                            emit(t_with(
+                                "converter_authkey_read_error",
+                                &[
+                                    ("path", &file.display().to_string()),
+                                    ("error", &e.to_string()),
+                                ],
+                            ));
                             continue;
                         }
                     };
@@ -176,7 +224,13 @@ pub async fn read_inputs(
                         let auth_key_bytes = match hex_to_bytes(key_part) {
                             Some(b) if b.len() == 256 => b,
                             _ => {
-                                emit(t_with("converter_authkey_invalid_hex", &[("path", &file.display().to_string()), ("line", &(line_num + 1).to_string())]));
+                                emit(t_with(
+                                    "converter_authkey_invalid_hex",
+                                    &[
+                                        ("path", &file.display().to_string()),
+                                        ("line", &(line_num + 1).to_string()),
+                                    ],
+                                ));
                                 continue;
                             }
                         };
@@ -186,7 +240,13 @@ pub async fn read_inputs(
                             match probe_dc(&auth_key_bytes).await {
                                 Some(dc) => dc,
                                 None => {
-                                    emit(t_with("converter_authkey_no_dc", &[("path", &file.display().to_string()), ("line", &(line_num + 1).to_string())]));
+                                    emit(t_with(
+                                        "converter_authkey_no_dc",
+                                        &[
+                                            ("path", &file.display().to_string()),
+                                            ("line", &(line_num + 1).to_string()),
+                                        ],
+                                    ));
                                     continue;
                                 }
                             }
@@ -199,7 +259,13 @@ pub async fn read_inputs(
                         });
                         count += 1;
                     }
-                    emit(t_with("converter_authkey_read", &[("count", &count.to_string()), ("path", &file.display().to_string())]));
+                    emit(t_with(
+                        "converter_authkey_read",
+                        &[
+                            ("count", &count.to_string()),
+                            ("path", &file.display().to_string()),
+                        ],
+                    ));
                 }
             }
         }
@@ -230,7 +296,10 @@ async fn probe_dc(auth_key_bytes: &[u8]) -> Option<i32> {
     let cfg = crate::get_app_config();
     for dc in 1..=5i32 {
         if let Some(addr) = cfg.dc_addresses.get(&dc) {
-            if crate::mtproto::client::MtpClient::connect(addr, &auth_key, proxy.as_ref()).await.is_ok() {
+            if crate::mtproto::client::MtpClient::connect(addr, &auth_key, proxy.as_ref())
+                .await
+                .is_ok()
+            {
                 return Some(dc);
             }
         }
@@ -284,9 +353,7 @@ pub fn write_account(
             tdata_fmt::write_tdata(&dir, &tdata_acc)?;
             Ok(dir)
         }
-        Format::TdataZip => {
-            Err(t("converter_tdatazip_unsupported_out"))
-        }
+        Format::TdataZip => Err(t("converter_tdatazip_unsupported_out")),
         Format::AuthKey => {
             // output_dir is actually the output file path for authkey format
             let line = format!("{}:{}\n", bytes_to_hex(&acc.auth_key), acc.dc_id);
@@ -360,7 +427,9 @@ pub async fn run_conversion(
     app: &AppHandle,
     token: &AtomicBool,
 ) {
-    let emit = |msg: String| { let _ = app.emit("converter-log", msg); };
+    let emit = |msg: String| {
+        let _ = app.emit("converter-log", msg);
+    };
 
     if matches!(to_format, Format::TdataZip) {
         emit(t("converter_tdatazip_unsupported_target"));
@@ -375,10 +444,19 @@ pub async fn run_conversion(
     }
 
     let path_bufs: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
-    emit(t_with("converter_reading_paths", &[("count", &path_bufs.len().to_string()), ("format", &format!("{:?}", from_format))]));
+    emit(t_with(
+        "converter_reading_paths",
+        &[
+            ("count", &path_bufs.len().to_string()),
+            ("format", &format!("{:?}", from_format)),
+        ],
+    ));
 
     let accounts = read_inputs(&path_bufs, from_format, &app).await;
-    emit(t_with("converter_accounts_found", &[("count", &accounts.len().to_string())]));
+    emit(t_with(
+        "converter_accounts_found",
+        &[("count", &accounts.len().to_string())],
+    ));
 
     if accounts.is_empty() {
         let _ = app.emit("converter-done", "0/0");
@@ -392,7 +470,10 @@ pub async fn run_conversion(
         }
     } else {
         if let Err(e) = std::fs::create_dir_all(&output_dir) {
-            emit(t_with("converter_outdir_error", &[("error", &e.to_string())]));
+            emit(t_with(
+                "converter_outdir_error",
+                &[("error", &e.to_string())],
+            ));
             let _ = app.emit("converter-done", "0/0");
             return;
         }
@@ -406,7 +487,9 @@ pub async fn run_conversion(
     let mut handles = Vec::new();
     let total = accounts.len();
     for (i, acc) in accounts.into_iter().enumerate() {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let sem = sem.clone();
         let app = app.clone();
         let out = output_dir.clone();
@@ -420,28 +503,55 @@ pub async fn run_conversion(
                 let acc = acc.clone();
                 let out = out.clone();
                 move || write_account(&acc, &out, to_format)
-            }).await.unwrap_or_else(|e| Err(format!("join error: {e}")));
+            })
+            .await
+            .unwrap_or_else(|e| Err(format!("join error: {e}")));
 
             match res {
                 Ok(p) => {
                     success.fetch_add(1, Ordering::Relaxed);
-                    let _ = app.emit("converter-log", format!("[{}/{}] {} -> {}", i + 1, total, t("converter_ok_short"), p.display()));
+                    let _ = app.emit(
+                        "converter-log",
+                        format!(
+                            "[{}/{}] {} -> {}",
+                            i + 1,
+                            total,
+                            t("converter_ok_short"),
+                            p.display()
+                        ),
+                    );
                     let _ = app.emit("converter-stats", "ok");
 
                     if add_to_panel_flag {
                         match add_to_panel(&acc) {
                             Ok(id) => {
-                                let _ = app.emit("converter-log", t_with("converter_added_to_panel", &[("id", &id.to_string())]));
+                                let _ = app.emit(
+                                    "converter-log",
+                                    t_with("converter_added_to_panel", &[("id", &id.to_string())]),
+                                );
                             }
                             Err(e) => {
-                                let _ = app.emit("converter-log", t_with("converter_not_added_to_panel", &[("error", &e)]));
+                                let _ = app.emit(
+                                    "converter-log",
+                                    t_with("converter_not_added_to_panel", &[("error", &e)]),
+                                );
                             }
                         }
                     }
                 }
                 Err(e) => {
                     errors.fetch_add(1, Ordering::Relaxed);
-                    let _ = app.emit("converter-log", format!("[{}/{}] {} ({}): {}", i + 1, total, t("error"), acc.source_name, e));
+                    let _ = app.emit(
+                        "converter-log",
+                        format!(
+                            "[{}/{}] {} ({}): {}",
+                            i + 1,
+                            total,
+                            t("error"),
+                            acc.source_name,
+                            e
+                        ),
+                    );
                     let _ = app.emit("converter-stats", "err");
                 }
             }
@@ -458,7 +568,13 @@ pub async fn run_conversion(
 
     let s = success.load(Ordering::Relaxed);
     let e = errors.load(Ordering::Relaxed);
-    let _ = app.emit("converter-log", t_with("converter_summary", &[("ok", &s.to_string()), ("err", &e.to_string())]));
+    let _ = app.emit(
+        "converter-log",
+        t_with(
+            "converter_summary",
+            &[("ok", &s.to_string()), ("err", &e.to_string())],
+        ),
+    );
     let _ = app.emit("converter-done", format!("{}/{}", s, e));
 }
 
@@ -591,24 +707,33 @@ async fn run_authkey_to_authkey(
     app: &AppHandle,
     token: &AtomicBool,
 ) {
-    let emit = |msg: String| { let _ = app.emit("converter-log", msg); };
+    let emit = |msg: String| {
+        let _ = app.emit("converter-log", msg);
+    };
 
     let mut lines_needing_dc: Vec<(String, usize)> = Vec::new(); // (hex, line_num)
     let mut complete_lines: Vec<String> = Vec::new();
     let mut total_lines = 0usize;
 
     for path_str in paths {
-        if !token.load(Ordering::Relaxed) { return; }
+        if !token.load(Ordering::Relaxed) {
+            return;
+        }
         let content = match std::fs::read_to_string(path_str) {
             Ok(c) => c,
             Err(e) => {
-                emit(t_with("converter_read_error", &[("path", path_str), ("error", &e.to_string())]));
+                emit(t_with(
+                    "converter_read_error",
+                    &[("path", path_str), ("error", &e.to_string())],
+                ));
                 continue;
             }
         };
         for (i, raw_line) in content.lines().enumerate() {
             let line = raw_line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             total_lines += 1;
             let (key_part, dc_explicit) = split_authkey_dc(line);
             if let Some(bytes) = hex_to_bytes(key_part) {
@@ -619,18 +744,36 @@ async fn run_authkey_to_authkey(
                         lines_needing_dc.push((key_part.to_string(), i + 1));
                     }
                 } else {
-                    emit(t_with("converter_invalid_authkey_len", &[("line", &(i + 1).to_string()), ("bytes", &bytes.len().to_string())]));
+                    emit(t_with(
+                        "converter_invalid_authkey_len",
+                        &[
+                            ("line", &(i + 1).to_string()),
+                            ("bytes", &bytes.len().to_string()),
+                        ],
+                    ));
                 }
             } else {
-                emit(t_with("converter_invalid_hex_line", &[("line", &(i + 1).to_string())]));
+                emit(t_with(
+                    "converter_invalid_hex_line",
+                    &[("line", &(i + 1).to_string())],
+                ));
             }
         }
     }
 
     if lines_needing_dc.is_empty() && !complete_lines.is_empty() {
-        emit(t_with("converter_all_complete", &[("count", &complete_lines.len().to_string())]));
+        emit(t_with(
+            "converter_all_complete",
+            &[("count", &complete_lines.len().to_string())],
+        ));
     } else if !lines_needing_dc.is_empty() {
-        emit(t_with("converter_detecting_dc", &[("count", &lines_needing_dc.len().to_string()), ("threads", &threads.to_string())]));
+        emit(t_with(
+            "converter_detecting_dc",
+            &[
+                ("count", &lines_needing_dc.len().to_string()),
+                ("threads", &threads.to_string()),
+            ],
+        ));
     }
 
     // probe DC for lines that need it
@@ -639,7 +782,9 @@ async fn run_authkey_to_authkey(
     let mut handles = Vec::new();
 
     for (hex, line_num) in lines_needing_dc {
-        if !token.load(Ordering::Relaxed) { break; }
+        if !token.load(Ordering::Relaxed) {
+            break;
+        }
         let sem = sem.clone();
         let app = app.clone();
         handles.push(tokio::spawn(async move {
@@ -647,12 +792,21 @@ async fn run_authkey_to_authkey(
             let bytes = hex_to_bytes(&hex).unwrap();
             match probe_dc(&bytes).await {
                 Some(dc) => {
-                    let _ = app.emit("converter-log", t_with("converter_line_dc", &[("line", &line_num.to_string()), ("dc", &dc.to_string())]));
+                    let _ = app.emit(
+                        "converter-log",
+                        t_with(
+                            "converter_line_dc",
+                            &[("line", &line_num.to_string()), ("dc", &dc.to_string())],
+                        ),
+                    );
                     let _ = app.emit("converter-stats", "ok");
                     Some(format!("{}:{}", hex, dc))
                 }
                 None => {
-                    let _ = app.emit("converter-log", t_with("converter_line_no_dc", &[("line", &line_num.to_string())]));
+                    let _ = app.emit(
+                        "converter-log",
+                        t_with("converter_line_no_dc", &[("line", &line_num.to_string())]),
+                    );
                     let _ = app.emit("converter-stats", "err");
                     None
                 }
@@ -674,19 +828,37 @@ async fn run_authkey_to_authkey(
     }
     let content = complete_lines.join("\n") + "\n";
     match std::fs::write(output_file, &content) {
-        Ok(_) => emit(t_with("converter_lines_written", &[("count", &complete_lines.len().to_string()), ("path", &output_file.display().to_string())])),
-        Err(e) => emit(t_with("converter_write_error_short", &[("error", &e.to_string())])),
+        Ok(_) => emit(t_with(
+            "converter_lines_written",
+            &[
+                ("count", &complete_lines.len().to_string()),
+                ("path", &output_file.display().to_string()),
+            ],
+        )),
+        Err(e) => emit(t_with(
+            "converter_write_error_short",
+            &[("error", &e.to_string())],
+        )),
     }
 
-    let _ = app.emit("converter-done", format!("{}/{}", complete_lines.len(), total_lines - complete_lines.len()));
+    let _ = app.emit(
+        "converter-done",
+        format!(
+            "{}/{}",
+            complete_lines.len(),
+            total_lines - complete_lines.len()
+        ),
+    );
 }
 
 fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {
     let hex = hex.trim();
-    if hex.len() % 2 != 0 { return None; }
+    if hex.len() % 2 != 0 {
+        return None;
+    }
     (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i+2], 16).ok())
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
         .collect()
 }
 
@@ -704,21 +876,39 @@ pub async fn converter_start(
     threads: u32,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    dbg_log!("converter_start: {} paths, {} -> {}, threads={}", paths.len(), from_format, to_format, threads);
+    dbg_log!(
+        "converter_start: {} paths, {} -> {}, threads={}",
+        paths.len(),
+        from_format,
+        to_format,
+        threads
+    );
 
     let from = Format::parse(&from_format)?;
     let to = Format::parse(&to_format)?;
     let out = std::path::PathBuf::from(&output_dir);
 
     let queue: tauri::State<'_, TaskQueue> = app_handle.state();
-    let token = queue.register_task(
-        "converter".to_string(),
-        "converter".to_string(),
-        t("converter_task_name"),
-    ).await;
+    let token = queue
+        .register_task(
+            "converter".to_string(),
+            "converter".to_string(),
+            t("converter_task_name"),
+        )
+        .await;
 
     tokio::spawn(async move {
-        run_conversion(paths, from, to, out, add_to_panel, threads, &app_handle, &token).await;
+        run_conversion(
+            paths,
+            from,
+            to,
+            out,
+            add_to_panel,
+            threads,
+            &app_handle,
+            &token,
+        )
+        .await;
         let queue: tauri::State<'_, TaskQueue> = app_handle.state();
         queue.finish_task(&"converter".to_string(), true).await;
     });

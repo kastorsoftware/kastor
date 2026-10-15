@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { toast } from "sonner";
 import {
   Users, ShieldCheck, ShieldAlert, ChevronDown,
-  Tag, Search, Plus, FolderOpen, X, Send, Filter,
+  Tag, Search, Plus, FolderOpen, X, Send, Download, Filter,
 } from "lucide-react";
 import { ThreadInput } from "@/components/ThreadInput";
 import { StatBlock } from "@/components/accounts/AccountStats";
@@ -453,6 +454,15 @@ export function AccountsPage() {
     await refreshAccounts();
   };
 
+  const handleExportAccounts = async () => {
+    if (IS_DEV) return;
+    try {
+      await invoke("export_accounts", { ids: Array.from(selected) });
+    } catch (error) {
+      toast.error(t("accounts.exportFailed"), { description: String(error) });
+    }
+  };
+
   const [deleteOneId, setDeleteOneId] = useState<string | null>(null);
   const [editing2faId, setEditing2faId] = useState<string | null>(null);
   const [editing2faValue, setEditing2faValue] = useState("");
@@ -474,6 +484,15 @@ export function AccountsPage() {
 
   const handleDeleteOne = async (id: string) => {
     setDeleteOneId(id);
+  };
+
+  const handleExportOne = async (id: string) => {
+    if (IS_DEV) return;
+    try {
+      await invoke("export_account", { accountId: id });
+    } catch (error) {
+      toast.error(t("accounts.exportFailed"), { description: String(error) });
+    }
   };
 
   const confirmDeleteOne = async () => {
@@ -743,6 +762,13 @@ export function AccountsPage() {
               </div>
             )}
           </div>
+          <button
+            onClick={handleExportAccounts}
+            className="flex items-center gap-1.5 rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium hover:border-primary/50 transition"
+          >
+            <Download className="h-3.5 w-3.5" />
+            {t("accounts.export")}
+          </button>
         </div>
       ) : (
         <div className="flex items-center gap-3 flex-wrap">
@@ -1086,8 +1112,17 @@ export function AccountsPage() {
                           }}
                           className="opacity-0 group-hover:opacity-50 hover:!opacity-100 rounded p-0.5 text-muted-foreground hover:text-primary transition"
                           title={t("accounts.openInTelegram")}
+                          aria-label={t("accounts.openInTelegram")}
                         >
                           <Send className="h-3 w-3" />
+                        </button>
+                        <button
+                          onClick={() => handleExportOne(acc.id)}
+                          className="opacity-0 group-hover:opacity-50 hover:!opacity-100 rounded p-0.5 text-muted-foreground hover:text-primary transition"
+                          title={t("accounts.exportAccount")}
+                          aria-label={t("accounts.exportAccount")}
+                        >
+                          <Download className="h-3 w-3" />
                         </button>
                         <button
                           onClick={() => handleDeleteOne(acc.id)}

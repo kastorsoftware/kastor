@@ -22,9 +22,7 @@ pub async fn resolve_or_create_destination(
     app: &tauri::AppHandle,
 ) -> Result<ChannelHandle, String> {
     match spec {
-        DestinationSpec::Existing { id_or_link } => {
-            resolve_existing(client, id_or_link).await
-        }
+        DestinationSpec::Existing { id_or_link } => resolve_existing(client, id_or_link).await,
         DestinationSpec::NewChannel {
             visibility,
             username,
@@ -41,7 +39,8 @@ pub async fn resolve_or_create_destination(
                 *copy_photo,
                 source,
                 app,
-            ).await
+            )
+            .await
         }
     }
 }
@@ -91,11 +90,16 @@ async fn resolve_existing(
     }
 
     let req = tl::build_resolve_username(username);
-    let resp = client.invoke(&req).await
+    let resp = client
+        .invoke(&req)
+        .await
         .map_err(|e| format!("resolve {username}: {e}"))?;
-    let (channel_id, access_hash) = tl::parse_resolved_peer(&resp)
-        .map_err(|e| format!("parse destination peer: {e}"))?;
-    Ok(ChannelHandle { channel_id, access_hash })
+    let (channel_id, access_hash) =
+        tl::parse_resolved_peer(&resp).map_err(|e| format!("parse destination peer: {e}"))?;
+    Ok(ChannelHandle {
+        channel_id,
+        access_hash,
+    })
 }
 
 async fn create_new_channel(
@@ -120,24 +124,35 @@ async fn create_new_channel(
     };
 
     let req = tl::build_create_channel(&title, &about, true, false);
-    let resp = client.invoke(&req).await
+    let resp = client
+        .invoke(&req)
+        .await
         .map_err(|e| format!("createChannel: {e}"))?;
-    let (channel_id, access_hash) = tl::parse_created_channel(&resp)
-        .map_err(|e| format!("parse created channel: {e}"))?;
+    let (channel_id, access_hash) =
+        tl::parse_created_channel(&resp).map_err(|e| format!("parse created channel: {e}"))?;
 
     if matches!(visibility, NewChannelVisibility::Public) && !username.is_empty() {
         let check = tl::build_channel_check_username(channel_id, access_hash, username);
-        let check_resp = client.invoke(&check).await
+        let check_resp = client
+            .invoke(&check)
+            .await
             .map_err(|e| format!("checkUsername: {e}"))?;
         let ctor = if check_resp.len() >= 4 {
             u32::from_le_bytes([check_resp[0], check_resp[1], check_resp[2], check_resp[3]])
-        } else { 0 };
+        } else {
+            0
+        };
         // Bool true = BOOL_TRUE
         if ctor != crate::mtproto::tl_gen::BOOL_TRUE {
-            return Err(crate::i18n::t_with("cloner_dest_username_taken", &[("username", username)]));
+            return Err(crate::i18n::t_with(
+                "cloner_dest_username_taken",
+                &[("username", username)],
+            ));
         }
         let upd = tl::build_channel_update_username(channel_id, access_hash, username);
-        client.invoke(&upd).await
+        client
+            .invoke(&upd)
+            .await
             .map_err(|e| format!("updateUsername: {e}"))?;
     }
 
@@ -155,16 +170,19 @@ async fn create_new_channel(
                     let _ = app.emit("cloner-log", crate::i18n::t("cloner_dest_avatar_copied"));
                 }
                 Err(e) => {
-                    let _ = app.emit("cloner-log", crate::i18n::t_with("cloner_dest_avatar_error", &[("error", &e)]));
+                    let _ = app.emit(
+                        "cloner-log",
+                        crate::i18n::t_with("cloner_dest_avatar_error", &[("error", &e)]),
+                    );
                 }
             }
         } else {
-            let _ = app.emit(
-                "cloner-log",
-                crate::i18n::t("cloner_dest_no_avatar"),
-            );
+            let _ = app.emit("cloner-log", crate::i18n::t("cloner_dest_no_avatar"));
         }
     }
 
-    Ok(ChannelHandle { channel_id, access_hash })
+    Ok(ChannelHandle {
+        channel_id,
+        access_hash,
+    })
 }

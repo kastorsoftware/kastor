@@ -1,15 +1,15 @@
 // tdata parser - extracts auth_key from Telegram Desktop data folder
 // format: key_data file -> localKey -> account mtp data -> auth_key
 
-use std::path::Path;
-use std::fs;
-use sha1::{Sha1, Digest};
-use sha2::Sha512;
 use md5::Md5;
 use rand::Rng;
+use sha1::{Digest, Sha1};
+use sha2::Sha512;
+use std::fs;
+use std::path::Path;
 
-use crate::mtproto::crypto::{ige_decrypt, ige_encrypt};
 use crate::i18n::t;
+use crate::mtproto::crypto::{ige_decrypt, ige_encrypt};
 
 const TDF_MAGIC: &[u8; 4] = b"TDF$";
 
@@ -27,7 +27,10 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
     // find the actual tdata subfolder
     let tdata_dir = if tdata_path.join("tdata").exists() {
         tdata_path.join("tdata")
-    } else if tdata_path.join("key_datas").exists() || tdata_path.join("key_data1").exists() || tdata_path.join("key_data0").exists() {
+    } else if tdata_path.join("key_datas").exists()
+        || tdata_path.join("key_data1").exists()
+        || tdata_path.join("key_data0").exists()
+    {
         tdata_path.to_path_buf()
     } else {
         // search one level deep
@@ -48,7 +51,10 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
 
     // step 1: read key_data file
     let key_data = read_tdf_file(&tdata_dir, "key_data")?;
-    dbg_log!("tdata::parse_tdata key_data read OK, {} bytes", key_data.len());
+    dbg_log!(
+        "tdata::parse_tdata key_data read OK, {} bytes",
+        key_data.len()
+    );
 
     // step 2: parse salt + keyEncrypted + infoEncrypted from key_data
     let mut pos = 0;
@@ -56,8 +62,12 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
     let key_encrypted = read_qbytearray(&key_data, &mut pos)?;
     let info_encrypted = read_qbytearray(&key_data, &mut pos)?;
 
-    dbg_log!("tdata::parse_tdata salt={} bytes, key_encrypted={} bytes, info_encrypted={} bytes",
-        salt.len(), key_encrypted.len(), info_encrypted.len());
+    dbg_log!(
+        "tdata::parse_tdata salt={} bytes, key_encrypted={} bytes, info_encrypted={} bytes",
+        salt.len(),
+        key_encrypted.len(),
+        info_encrypted.len()
+    );
 
     // step 3: derive passcodeKey from salt (no passcode = empty)
     let passcode_key = create_local_key(&salt, b"");
@@ -72,7 +82,10 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
         Err(e) => return Err(e),
     };
     if local_key_data.len() < 256 {
-        return Err(format!("localKey too short: {} bytes", local_key_data.len()));
+        return Err(format!(
+            "localKey too short: {} bytes",
+            local_key_data.len()
+        ));
     }
     let local_key: [u8; 256] = local_key_data[..256].try_into().unwrap();
     dbg_log!("tdata::parse_tdata localKey decrypted OK");
@@ -82,7 +95,8 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
     if info_data.len() < 4 {
         return Err("info data too short".to_string());
     }
-    let account_count = u32::from_be_bytes([info_data[0], info_data[1], info_data[2], info_data[3]]) as usize;
+    let account_count =
+        u32::from_be_bytes([info_data[0], info_data[1], info_data[2], info_data[3]]) as usize;
     dbg_log!("tdata::parse_tdata account_count={}", account_count);
 
     if account_count == 0 || account_count > 10 {
@@ -93,17 +107,30 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
 
     for i in 0..account_count {
         let offset = 4 + i * 4;
-        if offset + 4 > info_data.len() { break; }
+        if offset + 4 > info_data.len() {
+            break;
+        }
         let index = i32::from_be_bytes([
-            info_data[offset], info_data[offset+1], info_data[offset+2], info_data[offset+3]
+            info_data[offset],
+            info_data[offset + 1],
+            info_data[offset + 2],
+            info_data[offset + 3],
         ]);
         dbg_log!("tdata::parse_tdata account[{}] index={}", i, index);
 
         // step 6: compute data name key
-        let data_name = if index == 0 { "data".to_string() } else { format!("data#{}", index + 1) };
+        let data_name = if index == 0 {
+            "data".to_string()
+        } else {
+            format!("data#{}", index + 1)
+        };
         let data_name_key = compute_data_name_key(&data_name);
         let file_part = to_file_part(data_name_key);
-        dbg_log!("tdata::parse_tdata data_name='{}' file_part='{}'", data_name, file_part);
+        dbg_log!(
+            "tdata::parse_tdata data_name='{}' file_part='{}'",
+            data_name,
+            file_part
+        );
 
         // step 7: read mtp data file
         let mtp_file_path = tdata_dir.join(&file_part);
@@ -126,13 +153,21 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
         let mtp_encrypted = read_qbytearray(&mtp_data, &mut mtp_pos)?;
         let mtp_decrypted = decrypt_local(&mtp_encrypted, &local_key)?;
 
-        dbg_log!("tdata::parse_tdata mtp_decrypted {} bytes", mtp_decrypted.len());
+        dbg_log!(
+            "tdata::parse_tdata mtp_decrypted {} bytes",
+            mtp_decrypted.len()
+        );
 
         // step 8: parse mtp authorization
         match parse_mtp_authorization(&mtp_decrypted) {
             Ok(acc) => {
-                dbg_log!("tdata::parse_tdata account[{}] dc_id={} user_id={} auth_key_len={}",
-                    i, acc.dc_id, acc.user_id, acc.auth_key.len());
+                dbg_log!(
+                    "tdata::parse_tdata account[{}] dc_id={} user_id={} auth_key_len={}",
+                    i,
+                    acc.dc_id,
+                    acc.user_id,
+                    acc.auth_key.len()
+                );
                 accounts.push(acc);
             }
             Err(e) => {
@@ -141,7 +176,10 @@ pub fn parse_tdata(tdata_path: &Path) -> Result<Vec<TDataAccount>, String> {
         }
     }
 
-    dbg_log!("tdata::parse_tdata done, {} accounts extracted", accounts.len());
+    dbg_log!(
+        "tdata::parse_tdata done, {} accounts extracted",
+        accounts.len()
+    );
     Ok(accounts)
 }
 
@@ -160,7 +198,10 @@ fn parse_mtp_authorization(data: &[u8]) -> Result<TDataAccount, String> {
     // next is QByteArray with serialized mtp auth
     let mut pos = 4;
     let serialized = read_qbytearray(data, &mut pos)?;
-    dbg_log!("tdata::parse_mtp_authorization serialized {} bytes", serialized.len());
+    dbg_log!(
+        "tdata::parse_mtp_authorization serialized {} bytes",
+        serialized.len()
+    );
 
     // parse serialized: userId(i32) + mainDcId(i32) [or wide ids tag]
     if serialized.len() < 8 {
@@ -171,16 +212,21 @@ fn parse_mtp_authorization(data: &[u8]) -> Result<TDataAccount, String> {
     let first_i32 = read_i32_be(&serialized, &mut spos)?;
     let second_i32 = read_i32_be(&serialized, &mut spos)?;
 
-    let (user_id, main_dc_id) = if ((first_i32 as i64) << 32 | (second_i32 as i64 & 0xFFFFFFFF)) == -1i64 {
-        // wide ids tag
-        let uid = read_u64_be(&serialized, &mut spos)? as i64;
-        let dc = read_i32_be(&serialized, &mut spos)?;
-        (uid, dc)
-    } else {
-        (first_i32 as i64, second_i32)
-    };
+    let (user_id, main_dc_id) =
+        if ((first_i32 as i64) << 32 | (second_i32 as i64 & 0xFFFFFFFF)) == -1i64 {
+            // wide ids tag
+            let uid = read_u64_be(&serialized, &mut spos)? as i64;
+            let dc = read_i32_be(&serialized, &mut spos)?;
+            (uid, dc)
+        } else {
+            (first_i32 as i64, second_i32)
+        };
 
-    dbg_log!("tdata::parse_mtp_authorization user_id={} main_dc_id={}", user_id, main_dc_id);
+    dbg_log!(
+        "tdata::parse_mtp_authorization user_id={} main_dc_id={}",
+        user_id,
+        main_dc_id
+    );
 
     // read keys count
     let key_count = read_i32_be(&serialized, &mut spos)? as usize;
@@ -193,7 +239,7 @@ fn parse_mtp_authorization(data: &[u8]) -> Result<TDataAccount, String> {
         if spos + 256 > serialized.len() {
             return Err(format!("key[{}] truncated", k));
         }
-        let key = serialized[spos..spos+256].to_vec();
+        let key = serialized[spos..spos + 256].to_vec();
         spos += 256;
         dbg_log!("tdata::parse_mtp_authorization key[{}] dc_id={}", k, dc_id);
 
@@ -283,7 +329,8 @@ fn decrypt_local(encrypted: &[u8], key: &[u8; 256]) -> Result<Vec<u8>, String> {
     if decrypted.len() < 4 {
         return Err("decrypted data too short".into());
     }
-    let data_len = u32::from_le_bytes([decrypted[0], decrypted[1], decrypted[2], decrypted[3]]) as usize;
+    let data_len =
+        u32::from_le_bytes([decrypted[0], decrypted[1], decrypted[2], decrypted[3]]) as usize;
     if data_len > decrypted.len() || data_len < 4 {
         return Err(format!("bad decrypted data length: {}", data_len));
     }
@@ -299,23 +346,23 @@ fn prepare_aes_oldmtp(key: &[u8; 256], msg_key: &[u8], _send: bool) -> ([u8; 32]
 
     let mut sha1_a = Sha1::new();
     sha1_a.update(&msg_key[..16]);
-    sha1_a.update(&key[x..x+32]);
+    sha1_a.update(&key[x..x + 32]);
     let a = sha1_a.finalize();
 
     let mut sha1_b = Sha1::new();
-    sha1_b.update(&key[x+32..x+48]);
+    sha1_b.update(&key[x + 32..x + 48]);
     sha1_b.update(&msg_key[..16]);
-    sha1_b.update(&key[x+48..x+64]);
+    sha1_b.update(&key[x + 48..x + 64]);
     let b = sha1_b.finalize();
 
     let mut sha1_c = Sha1::new();
-    sha1_c.update(&key[x+64..x+96]);
+    sha1_c.update(&key[x + 64..x + 96]);
     sha1_c.update(&msg_key[..16]);
     let c = sha1_c.finalize();
 
     let mut sha1_d = Sha1::new();
     sha1_d.update(&msg_key[..16]);
-    sha1_d.update(&key[x+96..x+128]);
+    sha1_d.update(&key[x + 96..x + 128]);
     let d = sha1_d.finalize();
 
     let mut aes_key = [0u8; 32];
@@ -359,7 +406,8 @@ fn read_tdf_file_from_dir(dir: &Path, name: &str) -> Result<Vec<u8>, String> {
 }
 
 fn parse_tdf_content(content: &[u8]) -> Result<Vec<u8>, String> {
-    if content.len() < 24 { // magic(4) + version(4) + at least some data + md5(16)
+    if content.len() < 24 {
+        // magic(4) + version(4) + at least some data + md5(16)
         return Err("file too short".into());
     }
 
@@ -369,8 +417,8 @@ fn parse_tdf_content(content: &[u8]) -> Result<Vec<u8>, String> {
 
     let _version = u32::from_le_bytes([content[4], content[5], content[6], content[7]]);
     let data_size = content.len() - 8 - 16; // minus magic+version and md5
-    let data = &content[8..8+data_size];
-    let stored_md5 = &content[8+data_size..];
+    let data = &content[8..8 + data_size];
+    let stored_md5 = &content[8 + data_size..];
 
     // verify md5: data + dataSize(4 LE) + version(4 LE) + magic(4)
     let mut md5_input = Vec::new();
@@ -397,7 +445,7 @@ fn read_qbytearray(data: &[u8], pos: &mut usize) -> Result<Vec<u8>, String> {
     if *pos + 4 > data.len() {
         return Err("truncated qbytearray length".into());
     }
-    let len = u32::from_be_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+    let len = u32::from_be_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
 
     if len == 0xFFFFFFFF {
@@ -407,26 +455,40 @@ fn read_qbytearray(data: &[u8], pos: &mut usize) -> Result<Vec<u8>, String> {
 
     let len = len as usize;
     if *pos + len > data.len() {
-        return Err(format!("truncated qbytearray data: need {} have {}", len, data.len() - *pos));
+        return Err(format!(
+            "truncated qbytearray data: need {} have {}",
+            len,
+            data.len() - *pos
+        ));
     }
 
-    let result = data[*pos..*pos+len].to_vec();
+    let result = data[*pos..*pos + len].to_vec();
     *pos += len;
     Ok(result)
 }
 
 fn read_i32_be(data: &[u8], pos: &mut usize) -> Result<i32, String> {
-    if *pos + 4 > data.len() { return Err("truncated i32".into()); }
-    let v = i32::from_be_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+    if *pos + 4 > data.len() {
+        return Err("truncated i32".into());
+    }
+    let v = i32::from_be_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
     Ok(v)
 }
 
 fn read_u64_be(data: &[u8], pos: &mut usize) -> Result<u64, String> {
-    if *pos + 8 > data.len() { return Err("truncated u64".into()); }
+    if *pos + 8 > data.len() {
+        return Err("truncated u64".into());
+    }
     let v = u64::from_be_bytes([
-        data[*pos], data[*pos+1], data[*pos+2], data[*pos+3],
-        data[*pos+4], data[*pos+5], data[*pos+6], data[*pos+7],
+        data[*pos],
+        data[*pos + 1],
+        data[*pos + 2],
+        data[*pos + 3],
+        data[*pos + 4],
+        data[*pos + 5],
+        data[*pos + 6],
+        data[*pos + 7],
     ]);
     *pos += 8;
     Ok(v)
@@ -464,7 +526,12 @@ pub fn write_tdata(output_path: &Path, account: &TDataAccount) -> Result<(), Str
     if account.user_id == 0 {
         return Err(t("converter_tdata_no_userid"));
     }
-    dbg_log!("tdata::write_tdata to {:?} user_id={} dc_id={}", output_path, account.user_id, account.dc_id);
+    dbg_log!(
+        "tdata::write_tdata to {:?} user_id={} dc_id={}",
+        output_path,
+        account.user_id,
+        account.dc_id
+    );
     fs::create_dir_all(output_path).map_err(|e| format!("mkdir failed: {e}"))?;
 
     // generate random localKey (256 bytes)
@@ -596,23 +663,23 @@ fn prepare_aes_oldmtp_encrypt(key: &[u8; 256], msg_key: &[u8]) -> ([u8; 32], [u8
 
     let mut sha1_a = Sha1::new();
     sha1_a.update(&msg_key[..16]);
-    sha1_a.update(&key[x..x+32]);
+    sha1_a.update(&key[x..x + 32]);
     let a = sha1_a.finalize();
 
     let mut sha1_b = Sha1::new();
-    sha1_b.update(&key[x+32..x+48]);
+    sha1_b.update(&key[x + 32..x + 48]);
     sha1_b.update(&msg_key[..16]);
-    sha1_b.update(&key[x+48..x+64]);
+    sha1_b.update(&key[x + 48..x + 64]);
     let b = sha1_b.finalize();
 
     let mut sha1_c = Sha1::new();
-    sha1_c.update(&key[x+64..x+96]);
+    sha1_c.update(&key[x + 64..x + 96]);
     sha1_c.update(&msg_key[..16]);
     let c = sha1_c.finalize();
 
     let mut sha1_d = Sha1::new();
     sha1_d.update(&msg_key[..16]);
-    sha1_d.update(&key[x+96..x+128]);
+    sha1_d.update(&key[x + 96..x + 128]);
     let d = sha1_d.finalize();
 
     let mut aes_key = [0u8; 32];

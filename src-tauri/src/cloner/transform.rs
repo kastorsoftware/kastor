@@ -1,8 +1,8 @@
 // text transforms: replacements, skip keywords, link filtering decisions.
 
 use super::config::ClonerConfig;
-use crate::mtproto::tl::ParsedMessage;
 use crate::i18n::t;
+use crate::mtproto::tl::ParsedMessage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
@@ -46,7 +46,9 @@ pub fn apply_replacements(text: &str, replacements: &[(String, String)]) -> (Str
     let mut current = text.to_string();
     let mut changed = false;
     for (from, to) in replacements {
-        if from.is_empty() { continue; }
+        if from.is_empty() {
+            continue;
+        }
         if current.contains(from.as_str()) {
             current = current.replace(from.as_str(), to.as_str());
             changed = true;
@@ -65,7 +67,9 @@ pub fn contains_skip_keyword(text: &str, keywords: &[String]) -> bool {
     let lower = text.to_lowercase();
     keywords.iter().any(|k| {
         let kl = k.to_lowercase();
-        if kl.is_empty() { return false; }
+        if kl.is_empty() {
+            return false;
+        }
         if kl.starts_with('#') || kl.starts_with('@') {
             // hashtags / mentions: substring match is fine
             return lower.contains(&kl);
@@ -73,14 +77,18 @@ pub fn contains_skip_keyword(text: &str, keywords: &[String]) -> bool {
         // word-bounded match
         let bytes = lower.as_bytes();
         let needle = kl.as_bytes();
-        if needle.len() > bytes.len() { return false; }
+        if needle.len() > bytes.len() {
+            return false;
+        }
         let mut i = 0;
         while i + needle.len() <= bytes.len() {
             if &bytes[i..i + needle.len()] == needle {
                 let before_ok = i == 0 || !bytes[i - 1].is_ascii_alphanumeric();
                 let after = i + needle.len();
                 let after_ok = after == bytes.len() || !bytes[after].is_ascii_alphanumeric();
-                if before_ok && after_ok { return true; }
+                if before_ok && after_ok {
+                    return true;
+                }
             }
             i += 1;
         }
@@ -122,7 +130,9 @@ pub fn classify_skip(msg: &ParsedMessage, cfg: &ClonerConfig) -> Option<SkipReas
 // caption/text, so editing is only needed when at least one replacement matched.
 pub fn build_edited_text(original: &str, replacements: &[(String, String)]) -> Option<String> {
     let (new_text, changed) = apply_replacements(original, replacements);
-    if changed { Some(new_text) } else { None }
+    if changed {
+        Some(new_text)
+    } else {
+        None
+    }
 }
-
-

@@ -3,8 +3,8 @@ pub mod validate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::{Mutex, Semaphore};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,7 +79,11 @@ impl TaskQueue {
             {
                 let mut list = tasks_clone.lock().await;
                 if let Some(t) = list.iter_mut().find(|t| t.id == id) {
-                    t.status = if result.is_ok() { TaskStatus::Done } else { TaskStatus::Failed };
+                    t.status = if result.is_ok() {
+                        TaskStatus::Done
+                    } else {
+                        TaskStatus::Failed
+                    };
                 }
                 trim_history(&mut list);
                 save_task_history(&list);
@@ -88,7 +92,12 @@ impl TaskQueue {
     }
 
     // register a task that runs immediately (no semaphore) and get a cancellation token
-    pub async fn register_task(&self, id: String, kind: String, description: String) -> Arc<AtomicBool> {
+    pub async fn register_task(
+        &self,
+        id: String,
+        kind: String,
+        description: String,
+    ) -> Arc<AtomicBool> {
         let token = Arc::new(AtomicBool::new(true)); // true = running
         {
             let mut cancel_map = self.cancellation.lock().await;
@@ -113,7 +122,10 @@ impl TaskQueue {
             if let Some(t) = list.iter_mut().find(|t| t.id == id) {
                 let was_stopped = {
                     let cancel_map = self.cancellation.lock().await;
-                    cancel_map.get(id).map(|t| !t.load(Ordering::Relaxed)).unwrap_or(false)
+                    cancel_map
+                        .get(id)
+                        .map(|t| !t.load(Ordering::Relaxed))
+                        .unwrap_or(false)
                 };
                 t.status = if was_stopped {
                     TaskStatus::Stopped
@@ -146,7 +158,10 @@ impl TaskQueue {
     #[allow(dead_code)]
     pub async fn is_running(&self, id: &str) -> bool {
         let cancel_map = self.cancellation.lock().await;
-        cancel_map.get(id).map(|t| t.load(Ordering::Relaxed)).unwrap_or(false)
+        cancel_map
+            .get(id)
+            .map(|t| t.load(Ordering::Relaxed))
+            .unwrap_or(false)
     }
 
     pub async fn get_tasks(&self) -> Vec<TaskInfo> {
@@ -155,12 +170,16 @@ impl TaskQueue {
 
     pub async fn queue_size(&self) -> u32 {
         let list = self.tasks.lock().await;
-        list.iter().filter(|t| t.status == TaskStatus::Queued).count() as u32
+        list.iter()
+            .filter(|t| t.status == TaskStatus::Queued)
+            .count() as u32
     }
 
     pub async fn running_count(&self) -> u32 {
         let list = self.tasks.lock().await;
-        list.iter().filter(|t| t.status == TaskStatus::Running).count() as u32
+        list.iter()
+            .filter(|t| t.status == TaskStatus::Running)
+            .count() as u32
     }
 }
 
@@ -201,11 +220,13 @@ fn save_task_history(tasks: &[TaskInfo]) {
 }
 
 fn trim_history(tasks: &mut Vec<TaskInfo>) {
-    let active: Vec<TaskInfo> = tasks.iter()
+    let active: Vec<TaskInfo> = tasks
+        .iter()
         .filter(|t| t.status == TaskStatus::Queued || t.status == TaskStatus::Running)
         .cloned()
         .collect();
-    let mut completed: Vec<TaskInfo> = tasks.iter()
+    let mut completed: Vec<TaskInfo> = tasks
+        .iter()
         .filter(|t| t.status != TaskStatus::Queued && t.status != TaskStatus::Running)
         .cloned()
         .collect();
@@ -221,6 +242,9 @@ fn trim_history(tasks: &mut Vec<TaskInfo>) {
 
 // global stop_task command
 #[tauri::command]
-pub async fn stop_task(task_id: String, queue: tauri::State<'_, TaskQueue>) -> Result<bool, String> {
+pub async fn stop_task(
+    task_id: String,
+    queue: tauri::State<'_, TaskQueue>,
+) -> Result<bool, String> {
     Ok(queue.stop_task(&task_id).await)
 }

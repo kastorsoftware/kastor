@@ -4,10 +4,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::proxy::ProxyConfig;
 use super::crypto;
 use super::tl;
 use super::transport::MtpTransport;
+use crate::proxy::ProxyConfig;
 
 // errors that indicate the session is permanently dead — no point retrying
 const FATAL_SESSION_ERRORS: &[&str] = &[
@@ -44,18 +44,26 @@ const NETWORK_ERRORS: &[&str] = &[
     "transport error",
 ];
 
+const RETRY_AFTER_PROTOCOL_SYNC: &str = "retry after MTProto synchronization";
+
 pub fn is_fatal_session_error(err: &str) -> bool {
     FATAL_SESSION_ERRORS.iter().any(|m| err.contains(m))
 }
 
 pub fn is_network_error(err: &str) -> bool {
     let lower = err.to_lowercase();
-    NETWORK_ERRORS.iter().any(|m| lower.contains(&m.to_lowercase()))
+    NETWORK_ERRORS
+        .iter()
+        .any(|m| lower.contains(&m.to_lowercase()))
 }
 
-// global salt cache per server address - avoids BAD_SERVER_SALT on first request
+// Salts are tied to an authorization key, not merely a DC address.
 static SALT_CACHE: std::sync::LazyLock<Mutex<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn salt_cache_key(addr: &str, auth_key: &[u8; 256]) -> String {
+    format!("{addr}:{:016x}", crypto::auth_key_id(auth_key))
+}
 
 pub struct MtpClient {
     transport: MtpTransport,
@@ -87,14 +95,20 @@ impl MtpClient {
         auth_key: &[u8; 256],
         proxy: Option<&ProxyConfig>,
     ) -> Result<Self, String> {
-        dbg_log!("MtpClient::connect addr={} auth_key_id={:#018x}", addr, crypto::auth_key_id(auth_key));
+        dbg_log!(
+            "MtpClient::connect addr={} auth_key_id={:#018x}",
+            addr,
+            crypto::auth_key_id(auth_key)
+        );
 
         let transport = MtpTransport::connect(addr, proxy).await?;
         let session_id: u64 = rand::thread_rng().gen();
 
         // use cached salt for this DC if available (avoids BAD_SERVER_SALT round-trip)
-        let cached_salt = SALT_CACHE.lock().ok()
-            .and_then(|cache| cache.get(addr).copied())
+        let cached_salt = SALT_CACHE
+            .lock()
+            .ok()
+            .and_then(|cache| cache.get(&salt_cache_key(addr, auth_key)).copied())
             .unwrap_or(0);
 
         Ok(Self {
@@ -124,7 +138,7 @@ impl MtpClient {
     ) -> Self {
         let session_id: u64 = rand::thread_rng().gen();
         if let Ok(mut cache) = SALT_CACHE.lock() {
-            cache.insert(addr.to_string(), server_salt);
+            cache.insert(salt_cache_key(addr, &auth_key), server_salt);
         }
         Self {
             transport,
@@ -203,7 +217,7 @@ impl MtpClient {
 
         // restore cached salt
         if let Ok(cache) = SALT_CACHE.lock() {
-            if let Some(&salt) = cache.get(&self.addr) {
+            if let Some(&salt) = cache.get(&salt_cache_key(&self.addr, &self.auth_key)) {
                 self.server_salt = salt;
             }
         }
@@ -221,6 +235,13 @@ impl MtpClient {
             match result {
                 Ok(data) => return Ok(data),
                 Err(e) => {
+                    if e == RETRY_AFTER_PROTOCOL_SYNC {
+                        if attempt < 4 {
+                            dbg_log!("MtpClient::invoke retrying after protocol synchronization");
+                            continue;
+                        }
+                        return Err("MTProto synchronization retries exhausted".into());
+                    }
                     if is_fatal_session_error(&e) {
                         // remember the first fatal error so workers that
                         // log-and-continue still mark the account afterwards
@@ -240,7 +261,11 @@ impl MtpClient {
                             };
                             self.emit_log(&crate::i18n::t_with(
                                 "mtproto_network_error",
-                                &[("attempt", &(attempt + 1).to_string()), ("error", &last_err), ("delay", &delay.to_string())]
+                                &[
+                                    ("attempt", &(attempt + 1).to_string()),
+                                    ("error", &last_err),
+                                    ("delay", &delay.to_string()),
+                                ],
                             ));
                             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
                             if let Err(re) = self.reconnect().await {
@@ -263,14 +288,25 @@ impl MtpClient {
         let msg_id = self.gen_msg_id();
         let seq_no = self.next_seq_no(true);
 
-        dbg_log!("MtpClient::invoke msg_id={:#018x} seq_no={} len={}", msg_id, seq_no, request.len());
+        dbg_log!(
+            "MtpClient::invoke msg_id={:#018x} seq_no={} len={}",
+            msg_id,
+            seq_no,
+            request.len()
+        );
 
         let mut plaintext = Vec::new();
-        plaintext.write_u64::<LittleEndian>(self.server_salt).unwrap();
-        plaintext.write_u64::<LittleEndian>(self.session_id).unwrap();
+        plaintext
+            .write_u64::<LittleEndian>(self.server_salt)
+            .unwrap();
+        plaintext
+            .write_u64::<LittleEndian>(self.session_id)
+            .unwrap();
         plaintext.write_u64::<LittleEndian>(msg_id).unwrap();
         plaintext.write_u32::<LittleEndian>(seq_no).unwrap();
-        plaintext.write_u32::<LittleEndian>(request.len() as u32).unwrap();
+        plaintext
+            .write_u32::<LittleEndian>(request.len() as u32)
+            .unwrap();
         plaintext.extend_from_slice(request);
 
         let encrypted = crypto::encrypt_message(&self.auth_key, &plaintext);
@@ -308,33 +344,48 @@ impl MtpClient {
             // bad_server_salt - retry with new salt
             if ctor == super::service_ctors::BAD_SERVER_SALT && body.len() >= 28 {
                 let new_salt = u64::from_le_bytes(body[20..28].try_into().unwrap());
-                dbg_log!("MtpClient::invoke BAD_SERVER_SALT new_salt={:#018x}", new_salt);
+                dbg_log!(
+                    "MtpClient::invoke BAD_SERVER_SALT new_salt={:#018x}",
+                    new_salt
+                );
                 self.server_salt = new_salt;
                 // cache salt for future connections to this DC
                 if let Ok(mut cache) = SALT_CACHE.lock() {
-                    cache.insert(self.addr.clone(), new_salt);
+                    cache.insert(salt_cache_key(&self.addr, &self.auth_key), new_salt);
                 }
-                return self.invoke_inner(request).await;
+                return Err(RETRY_AFTER_PROTOCOL_SYNC.into());
             }
 
             // bad_msg_notification - adjust time if needed
-            if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 16 {
-                let error_code = u32::from_le_bytes(body[12..16].try_into().unwrap());
+            if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 20 {
+                let error_code = u32::from_le_bytes(body[16..20].try_into().unwrap());
                 dbg_log!("MtpClient::invoke BAD_MSG error_code={}", error_code);
-                if error_code == 32 || error_code == 33 {
-                    let server_time = (u64::from_le_bytes(decrypted[16..24].try_into().unwrap()) >> 32) as i64;
+                if error_code == 16 || error_code == 17 {
+                    let server_time =
+                        (u64::from_le_bytes(decrypted[16..24].try_into().unwrap()) >> 32) as i64;
                     let local_time = SystemTime::now()
-                        .duration_since(UNIX_EPOCH).unwrap().as_secs() as i64;
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64;
                     self.time_offset = (server_time - local_time) as i32;
-                    dbg_log!("MtpClient::invoke adjusted time_offset={}", self.time_offset);
-                    return self.invoke_inner(request).await;
+                    // The previous ID may be in the future relative to the
+                    // corrected clock, so it must not constrain the retry.
+                    self.last_msg_id = 0;
+                    dbg_log!(
+                        "MtpClient::invoke adjusted time_offset={}",
+                        self.time_offset
+                    );
+                    return Err(RETRY_AFTER_PROTOCOL_SYNC.into());
                 }
                 return Err(format!("bad_msg_notification error_code={}", error_code));
             }
 
             // service messages that are not responses to our request - read next packet
             if is_service_or_update_ctor(ctor) {
-                dbg_log!("MtpClient::invoke skipping service/update ctor={:#010x}, reading next...", ctor);
+                dbg_log!(
+                    "MtpClient::invoke skipping service/update ctor={:#010x}, reading next...",
+                    ctor
+                );
                 return self.read_next_rpc_response().await;
             }
 
@@ -344,15 +395,26 @@ impl MtpClient {
             if ctor == super::service_ctors::GZIP_PACKED {
                 if let Some(decompressed) = decompress_top_gzip(body) {
                     if decompressed.len() >= 4 {
-                        let inner = u32::from_le_bytes([decompressed[0], decompressed[1], decompressed[2], decompressed[3]]);
-                        if inner == super::service_ctors::RPC_RESULT || inner == super::service_ctors::MSG_CONTAINER {
-                            dbg_log!("MtpClient::invoke gzip wraps rpc_result/container, unwrapping");
+                        let inner = u32::from_le_bytes([
+                            decompressed[0],
+                            decompressed[1],
+                            decompressed[2],
+                            decompressed[3],
+                        ]);
+                        if inner == super::service_ctors::RPC_RESULT
+                            || inner == super::service_ctors::MSG_CONTAINER
+                        {
+                            dbg_log!(
+                                "MtpClient::invoke gzip wraps rpc_result/container, unwrapping"
+                            );
                             let parsed = tl::parse_rpc_response(&decompressed);
                             return self.finalize_rpc(parsed, request).await;
                         }
                     }
                 }
-                dbg_log!("MtpClient::invoke skipping bare gzip_packed push update, reading next...");
+                dbg_log!(
+                    "MtpClient::invoke skipping bare gzip_packed push update, reading next..."
+                );
                 return self.read_next_rpc_response().await;
             }
         }
@@ -364,21 +426,36 @@ impl MtpClient {
 
     // post-process a parsed rpc_result: surface rpc_error, auto-retry FLOOD_WAIT
     // within the configured cap, and chase missing rpc_results across packets
-    async fn finalize_rpc(&mut self, parsed: Result<Vec<u8>, String>, request: &[u8]) -> Result<Vec<u8>, String> {
+    async fn finalize_rpc(
+        &mut self,
+        parsed: Result<Vec<u8>, String>,
+        request: &[u8],
+    ) -> Result<Vec<u8>, String> {
         match parsed {
             Ok(result) => {
                 // check for rpc_error inside result
                 if result.len() >= 4 {
-                    let inner_ctor = u32::from_le_bytes([result[0], result[1], result[2], result[3]]);
-                    if inner_ctor == super::service_ctors::RPC_ERROR { // RPC_ERROR
+                    let inner_ctor =
+                        u32::from_le_bytes([result[0], result[1], result[2], result[3]]);
+                    if inner_ctor == super::service_ctors::RPC_ERROR {
+                        // RPC_ERROR
                         if let Some(wait) = parse_flood_wait(&result) {
                             if self.max_flood_wait > 0 && wait > self.max_flood_wait {
                                 dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec exceeds cap {} sec, prefix='{}', request_ctor={:?}, returning error", wait, self.max_flood_wait, self.log_prefix, request_constructor(request));
-                                self.emit_log(&crate::i18n::t_with("mtproto_flood_over_limit", &[("wait", &wait.to_string()), ("limit", &self.max_flood_wait.to_string())]));
+                                self.emit_log(&crate::i18n::t_with(
+                                    "mtproto_flood_over_limit",
+                                    &[
+                                        ("wait", &wait.to_string()),
+                                        ("limit", &self.max_flood_wait.to_string()),
+                                    ],
+                                ));
                                 return Err(format!("FLOOD_WAIT_{}", wait));
                             }
                             dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec, prefix='{}', request_ctor={:?}, sleeping...", wait, self.log_prefix, request_constructor(request));
-                            self.emit_log(&crate::i18n::t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())]));
+                            self.emit_log(&crate::i18n::t_with(
+                                "mtproto_flood_waiting",
+                                &[("wait", &wait.to_string())],
+                            ));
                             tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                             return self.invoke_inner(request).await;
                         }
@@ -394,11 +471,20 @@ impl MtpClient {
                 if let Some(wait) = extract_wait_from_error(&e) {
                     if self.max_flood_wait > 0 && wait > self.max_flood_wait {
                         dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string exceeds cap {} sec, prefix='{}', request_ctor={:?}", wait, self.max_flood_wait, self.log_prefix, request_constructor(request));
-                        self.emit_log(&crate::i18n::t_with("mtproto_flood_over_limit", &[("wait", &wait.to_string()), ("limit", &self.max_flood_wait.to_string())]));
+                        self.emit_log(&crate::i18n::t_with(
+                            "mtproto_flood_over_limit",
+                            &[
+                                ("wait", &wait.to_string()),
+                                ("limit", &self.max_flood_wait.to_string()),
+                            ],
+                        ));
                         return Err(e);
                     }
                     dbg_log!("MtpClient::invoke FLOOD_WAIT {} sec from error string, prefix='{}', request_ctor={:?}", wait, self.log_prefix, request_constructor(request));
-                    self.emit_log(&crate::i18n::t_with("mtproto_flood_waiting", &[("wait", &wait.to_string())]));
+                    self.emit_log(&crate::i18n::t_with(
+                        "mtproto_flood_waiting",
+                        &[("wait", &wait.to_string())],
+                    ));
                     tokio::time::sleep(std::time::Duration::from_secs(wait + 1)).await;
                     return self.invoke_inner(request).await;
                 }
@@ -413,20 +499,28 @@ impl MtpClient {
         for _ in 0..5 {
             let response = match tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                self.transport.recv()
-            ).await {
+                self.transport.recv(),
+            )
+            .await
+            {
                 Ok(Ok(r)) => r,
                 Ok(Err(e)) => return Err(e),
                 Err(_) => return Err("timeout waiting for rpc_result".into()),
             };
 
-            if response.len() < 24 { continue; }
+            if response.len() < 24 {
+                continue;
+            }
 
             let decrypted = crypto::decrypt_message(&self.auth_key, &response)?;
-            if decrypted.len() < 32 { continue; }
+            if decrypted.len() < 32 {
+                continue;
+            }
 
             let body_len = u32::from_le_bytes(decrypted[28..32].try_into().unwrap()) as usize;
-            if decrypted.len() < 32 + body_len { continue; }
+            if decrypted.len() < 32 + body_len {
+                continue;
+            }
 
             let body = &decrypted[32..32 + body_len];
 
@@ -441,8 +535,15 @@ impl MtpClient {
                 if ctor == super::service_ctors::GZIP_PACKED {
                     if let Some(decompressed) = decompress_top_gzip(body) {
                         if decompressed.len() >= 4 {
-                            let inner = u32::from_le_bytes([decompressed[0], decompressed[1], decompressed[2], decompressed[3]]);
-                            if inner == super::service_ctors::RPC_RESULT || inner == super::service_ctors::MSG_CONTAINER {
+                            let inner = u32::from_le_bytes([
+                                decompressed[0],
+                                decompressed[1],
+                                decompressed[2],
+                                decompressed[3],
+                            ]);
+                            if inner == super::service_ctors::RPC_RESULT
+                                || inner == super::service_ctors::MSG_CONTAINER
+                            {
                                 match tl::parse_rpc_response(&decompressed) {
                                     Ok(result) => return Ok(result),
                                     Err(e) if e.contains("no rpc_result") => continue,
@@ -471,11 +572,17 @@ impl MtpClient {
         let seq_no = self.next_seq_no(true);
 
         let mut plaintext = Vec::new();
-        plaintext.write_u64::<LittleEndian>(self.server_salt).unwrap();
-        plaintext.write_u64::<LittleEndian>(self.session_id).unwrap();
+        plaintext
+            .write_u64::<LittleEndian>(self.server_salt)
+            .unwrap();
+        plaintext
+            .write_u64::<LittleEndian>(self.session_id)
+            .unwrap();
         plaintext.write_u64::<LittleEndian>(msg_id).unwrap();
         plaintext.write_u32::<LittleEndian>(seq_no).unwrap();
-        plaintext.write_u32::<LittleEndian>(request.len() as u32).unwrap();
+        plaintext
+            .write_u32::<LittleEndian>(request.len() as u32)
+            .unwrap();
         plaintext.extend_from_slice(request);
 
         let encrypted = crypto::encrypt_message(&self.auth_key, &plaintext);
@@ -484,7 +591,11 @@ impl MtpClient {
         // read responses until we get rpc_result
         for attempt in 0..10 {
             let response = self.transport.recv().await?;
-            dbg_log!("MtpClient::invoke_inner recv[{}] {} bytes", attempt, response.len());
+            dbg_log!(
+                "MtpClient::invoke_inner recv[{}] {} bytes",
+                attempt,
+                response.len()
+            );
 
             if response.len() < 24 {
                 return Err("response too short".into());
@@ -510,8 +621,8 @@ impl MtpClient {
             if body.len() >= 4 {
                 let ctor = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
 
-                if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 16 {
-                    let error_code = u32::from_le_bytes(body[12..16].try_into().unwrap());
+                if ctor == super::service_ctors::BAD_MSG_NOTIFICATION && body.len() >= 20 {
+                    let error_code = u32::from_le_bytes(body[16..20].try_into().unwrap());
                     return Err(format!("bad_msg_notification error_code={}", error_code));
                 }
 
@@ -532,8 +643,15 @@ impl MtpClient {
                 if ctor == super::service_ctors::GZIP_PACKED {
                     if let Some(decompressed) = decompress_top_gzip(body) {
                         if decompressed.len() >= 4 {
-                            let inner = u32::from_le_bytes([decompressed[0], decompressed[1], decompressed[2], decompressed[3]]);
-                            if inner == super::service_ctors::RPC_RESULT || inner == super::service_ctors::MSG_CONTAINER {
+                            let inner = u32::from_le_bytes([
+                                decompressed[0],
+                                decompressed[1],
+                                decompressed[2],
+                                decompressed[3],
+                            ]);
+                            if inner == super::service_ctors::RPC_RESULT
+                                || inner == super::service_ctors::MSG_CONTAINER
+                            {
                                 if let Ok(result) = tl::parse_rpc_response(&decompressed) {
                                     return Ok(result);
                                 }
@@ -563,7 +681,8 @@ impl MtpClient {
         lang: &str,
     ) -> Result<tl::UserInfo, String> {
         dbg_log!("MtpClient::get_me api_id={}", api_id);
-        let request = tl::build_get_me_request(api_id, device, system, app_version, system_lang, lang);
+        let request =
+            tl::build_get_me_request(api_id, device, system, app_version, system_lang, lang);
         let response = self.invoke(&request).await?;
         tl::parse_users_response(&response)
     }
@@ -592,9 +711,7 @@ impl MtpClient {
         }
         result
     }
-
 }
-
 
 #[derive(Debug, Default, Clone)]
 pub struct DialogStats {
@@ -618,7 +735,6 @@ pub struct OwnedChannel {
     pub is_creator: bool,
 }
 
-
 // true for mtproto service/push-update containers that are never a direct
 // response to our rpc call and should be skipped while waiting for rpc_result.
 fn is_service_or_update_ctor(ctor: u32) -> bool {
@@ -635,12 +751,16 @@ fn is_service_or_update_ctor(ctor: u32) -> bool {
 // decompress a body whose top-level ctor is gzip_packed#3072cfa1.
 // returns the inner TL payload, or None on malformed input.
 fn decompress_top_gzip(body: &[u8]) -> Option<Vec<u8>> {
-    use std::io::Cursor;
     use byteorder::ReadBytesExt;
-    if body.len() < 4 { return None; }
+    use std::io::Cursor;
+    if body.len() < 4 {
+        return None;
+    }
     let mut cursor = Cursor::new(body);
     let ctor = cursor.read_u32::<LittleEndian>().ok()?;
-    if ctor != super::service_ctors::GZIP_PACKED { return None; }
+    if ctor != super::service_ctors::GZIP_PACKED {
+        return None;
+    }
     let compressed = tl::deserialize_bytes(&mut cursor).ok()?;
     tl::decompress_gzip(&compressed).ok()
 }
@@ -648,23 +768,43 @@ fn decompress_top_gzip(body: &[u8]) -> Option<Vec<u8>> {
 // parse FLOOD_WAIT from raw rpc_error bytes
 fn parse_flood_wait(data: &[u8]) -> Option<u64> {
     // rpc_error#2144ca19 error_code:int error_message:string
-    if data.len() < 8 { return None; }
+    if data.len() < 8 {
+        return None;
+    }
     let ctor = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
-    if ctor != super::service_ctors::RPC_ERROR { return None; }
+    if ctor != super::service_ctors::RPC_ERROR {
+        return None;
+    }
     // skip error_code (4 bytes)
     // parse error_message string
     let msg_start = 8; // ctor(4) + error_code(4)
-    if msg_start >= data.len() { return None; }
+    if msg_start >= data.len() {
+        return None;
+    }
     let first = data[msg_start] as usize;
     let (msg_bytes, _) = if first < 254 {
         let len = first;
-        if msg_start + 1 + len > data.len() { return None; }
-        (&data[msg_start + 1..msg_start + 1 + len], msg_start + 1 + len)
+        if msg_start + 1 + len > data.len() {
+            return None;
+        }
+        (
+            &data[msg_start + 1..msg_start + 1 + len],
+            msg_start + 1 + len,
+        )
     } else {
-        if msg_start + 4 > data.len() { return None; }
-        let len = data[msg_start + 1] as usize | (data[msg_start + 2] as usize) << 8 | (data[msg_start + 3] as usize) << 16;
-        if msg_start + 4 + len > data.len() { return None; }
-        (&data[msg_start + 4..msg_start + 4 + len], msg_start + 4 + len)
+        if msg_start + 4 > data.len() {
+            return None;
+        }
+        let len = data[msg_start + 1] as usize
+            | (data[msg_start + 2] as usize) << 8
+            | (data[msg_start + 3] as usize) << 16;
+        if msg_start + 4 + len > data.len() {
+            return None;
+        }
+        (
+            &data[msg_start + 4..msg_start + 4 + len],
+            msg_start + 4 + len,
+        )
     };
     let msg = std::str::from_utf8(msg_bytes).ok()?;
     extract_wait_from_error(msg)

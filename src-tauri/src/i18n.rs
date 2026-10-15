@@ -1,6 +1,6 @@
-use std::sync::OnceLock;
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::OnceLock;
 
 static LOCALE: OnceLock<Mutex<String>> = OnceLock::new();
 
@@ -30,11 +30,13 @@ pub fn set_locale(locale: String) {
 pub fn t(key: &str) -> String {
     let locale = get_locale();
     let dict = if locale == "en" { &*EN } else { &*RU };
-    dict.get(key).map(|s| s.to_string()).unwrap_or_else(|| key.to_string())
+    dict.get(key)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| key.to_string())
 }
 
 /// Translate with a single parameter substitution.
-/// `t_with("invited_user", &[("username", "@john")])` 
+/// `t_with("invited_user", &[("username", "@john")])`
 pub fn t_with(key: &str, params: &[(&str, &str)]) -> String {
     let mut result = t(key);
     for (k, v) in params {
@@ -52,7 +54,7 @@ lazy_static::lazy_static! {
         m.insert("stopped_by_user", "Остановлено пользователем");
         m.insert("db_open_error", "открыть БД: {error}");
         m.insert("db_create_tables_error", "создать таблицы: {error}");
-        
+
         // Parser
         m.insert("parser_collected", "собрано: {count}");
         m.insert("parser_group_done", "группа обработана: {name}");
@@ -103,14 +105,14 @@ lazy_static::lazy_static! {
         m.insert("parser_posts_progress", "Постов: {scanned}, с комментами: {with_comments}, собрано: {collected}");
         m.insert("parser_days_limit_short", "Достигнут лимит {days} дней");
         m.insert("parser_posts_total", "Итого постов: {scanned}, с комментариями: {with_comments}, собрано: {collected}");
-        
+
         // Inviter
         m.insert("inviter_invited", "приглашён: {username}");
         m.insert("inviter_added", "добавлен: {username}");
         m.insert("inviter_peer_flood", "PEER_FLOOD: аккаунт остановлен");
         m.insert("inviter_flood_wait", "FLOOD_WAIT {seconds} сек");
         m.insert("inviter_autostop", "автостоп: достигнут лимит ошибок");
-        
+
         // Boost
         m.insert("boost_done", "выполнено: {detail}");
         m.insert("boost_bot_started", "бот запущен: {name}");
@@ -142,6 +144,7 @@ lazy_static::lazy_static! {
         m.insert("boost_no_reactions_sent", "ни одна реакция не отправлена");
         m.insert("boost_invalid_post_link", "невалидная ссылка на пост");
         m.insert("boost_empty_channel_link", "пустая ссылка на канал");
+        m.insert("boost_no_subscriptions", "не удалось оформить ни одной подписки");
         m.insert("boost_join_link_done", "{prefix} вступление по ссылке {link} выполнено");
         m.insert("boost_archive_error", "{prefix} ошибка архивации: {error}");
         m.insert("boost_archived", "{prefix} перемещено в архив");
@@ -159,12 +162,12 @@ lazy_static::lazy_static! {
         m.insert("boost_left_channel", "{prefix} вышли из канала");
         m.insert("boost_leave_error", "{prefix} ошибка выхода: {error}");
         m.insert("boost_reactions_db_open_error", "открыть БД реакций: {error}");
-        
+
         // Cloner
         m.insert("cloner_copied", "скопировано: пост #{id}");
         m.insert("cloner_skipped", "пропущено: пост #{id}");
         m.insert("cloner_channel_created", "канал создан: {name}");
-        
+
         // Auto-Reply
         m.insert("auto_reply_sent", "ответ отправлен: {username}");
         m.insert("auto_reply_skipped", "пропущено: {reason}");
@@ -189,6 +192,7 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_limit_reached", "достигнут лимит {limit} ответов");
         m.insert("auto_reply_get_diff_error", "getDifference ошибка: {error}");
         m.insert("auto_reply_parse_diff_error", "parse diff ошибка: {error}");
+        m.insert("auto_reply_difference_too_long", "пропущена слишком большая очередь обновлений; новые сообщения будут обработаны дальше");
         m.insert("auto_reply_no_access_hash", "пропущено: не удалось получить access_hash для user_id={user_id}");
         m.insert("auto_reply_not_in_list", "пропущено (не в списке): user_id={user_id}");
         m.insert("auto_reply_ban_word_skip", "пропущено (бан-слово): user_id={user_id}");
@@ -198,12 +202,12 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_forward_label", "переслано");
         m.insert("auto_reply_reply_label", "ответ отправлен");
         m.insert("auto_reply_send_error", "ошибка отправки user_id={user_id}: {error}");
-        
+
         // First Comment
         m.insert("first_comment_sent", "комментарий отправлен: {channel}");
         m.insert("first_comment_monitoring", "мониторинг каналов...");
         m.insert("first_comment_new_post", "новый пост в {channel}");
-        
+
         // Reporter
         m.insert("reporter_sent", "репорт отправлен: {target}");
         m.insert("reporter_db_path", "БД: {path}");
@@ -234,12 +238,12 @@ lazy_static::lazy_static! {
         m.insert("reporter_photo_report_error", "ошибка фото-репорт: {error}");
         m.insert("reporter_db_open_error", "открыть БД репортера: {error}");
         m.insert("reporter_db_tables_error", "создать таблицы: {error}");
-        
+
         // Masslooking
         m.insert("masslooking_viewed", "просмотрено: {username}");
         m.insert("masslooking_reacted", "реакция: {username}");
         m.insert("masslooking_replied", "ответ отправлен: {username}");
-        
+
         // Mailing
         m.insert("mailing_sent", "отправлено: {target}");
         m.insert("mailing_ban", "бан на аккаунте");
@@ -272,10 +276,10 @@ lazy_static::lazy_static! {
         m.insert("mailing_total_sent", "итого отправлено: {count}");
         m.insert("mailing_sent_user", "отправлено user_id={user_id}");
         m.insert("mailing_error_user", "ошибка user_id={user_id}: {error}");
-        
+
         // Stories
         m.insert("stories_published", "опубликовано");
-        
+
         // Warmer
         m.insert("warmer_action_done", "действие выполнено: {action}");
         m.insert("warmer_no_accounts", "не выбраны аккаунты");
@@ -352,22 +356,22 @@ lazy_static::lazy_static! {
         m.insert("warmer_cleanup_tag_error", "ошибка удаления временного тега: {error}");
         m.insert("warmer_cleanup_tag_done", "временный тег удалён");
         m.insert("warmer_session_done", "сессия завершена ({count} действий)");
-        
+
         // Channel Creator
         m.insert("channel_created", "создан: {name}");
-        
+
         // Bot Creator
         m.insert("bot_created", "бот создан: {username}");
         m.insert("bot_token", "токен: {token}");
-        
+
         // Global Search
         m.insert("search_found", "новых: {count}");
-        
+
         // Username Checker
         m.insert("username_free", "свободен: {username}");
         m.insert("username_taken", "занят: {username}");
         m.insert("username_fragment", "fragment: {username}");
-        
+
         // Converter
         m.insert("converter_ok", "конвертировано: {path}");
         m.insert("converter_err", "ошибка: {path}");
@@ -587,6 +591,7 @@ lazy_static::lazy_static! {
         m.insert("interceptor_main_prefix", "[Главный]");
         m.insert("interceptor_admin_granted", "выдана админка user_id={uid} в {dest}");
         m.insert("interceptor_admin_error", "ошибка админки user_id={uid} в {dest}: {error}");
+        m.insert("interceptor_admin_incomplete", "админ-права выданы не во всех каналах назначения");
         m.insert("interceptor_target_channel", "целевой канал: id={id} title=\"{title}\"");
         m.insert("interceptor_joined_channel", "присоединился к каналу");
         m.insert("interceptor_assign_error", "ошибка назначения {dest}: {error}");
@@ -645,6 +650,7 @@ lazy_static::lazy_static! {
 
         // Account statuses
         m.insert("status_clean", "Без ограничений");
+        m.insert("status_unknown", "Неизвестно");
         m.insert("status_invalid", "Невалид");
         m.insert("status_frozen", "Заморожен");
         m.insert("status_perm_spam", "Вечный спамблок");
@@ -871,6 +877,7 @@ lazy_static::lazy_static! {
         m.insert("cloner_skipped_media", "пропущено: msg={id} ({reason})");
         m.insert("cloner_skipped_size", "пропущено: msg={id} ({reason}, {kb} КБ)");
         m.insert("cloner_error_msg", "ошибка: msg={id} {error}");
+        m.insert("cloner_media_resend_unsupported", "медиа нельзя безопасно скопировать в режиме пересылки без автора");
         m.insert("cloner_copied_msg", "скопировано: msg={id} -> dst={dst}");
         m.insert("cloner_sweep_count", "Подчищено служебных сообщений: {count}");
         m.insert("cloner_sweep_result", "Очистка служебных сообщений вернула: {error}");
@@ -892,7 +899,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_task_name", "Чекер юзернеймов");
         m.insert("uchecker_no_input_file", "не указан входной файл");
         m.insert("uchecker_read_file_error", "не удалось прочитать файл: {error}");
-        m.insert("uchecker_invalid_short", "@{name} — тег невалиден (менее 4 символов), пропуск");
+        m.insert("uchecker_invalid_short", "@{name} — тег невалиден (длина должна быть от 5 до 32 символов), пропуск");
         m.insert("uchecker_invalid_chars", "@{name} — тег невалиден (недопустимые символы), пропуск");
         m.insert("uchecker_skipped_invalid", "Пропущено невалидных/дублей: {count}");
         m.insert("uchecker_file_empty", "файл пуст или не содержит валидных юзернеймов");
@@ -910,6 +917,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_autoclaim", "Автозанятие: {free} свободных тегов, {accounts} аккаунтов");
         m.insert("uchecker_claimed", "  @{name} — занят на аккаунте {phone}");
         m.insert("uchecker_claim_failed", "  @{name} — не удалось занять: {error}");
+        m.insert("uchecker_claim_unassigned", "Свободных тегов осталось без аккаунта: {count}");
         m.insert("uchecker_result", "Готово: свободно={free}, занято={taken}, файл: {path}");
 
         // Masslooking extended
@@ -1016,6 +1024,8 @@ lazy_static::lazy_static! {
 
         // Proxy
         m.insert("proxy_no_available", "нет доступных прокси, добавьте прокси или включите работу без прокси в настройках");
+        m.insert("proxy_connect_timeout", "таймаут подключения к прокси");
+        m.insert("proxy_handshake_timeout", "таймаут рукопожатия с прокси");
         m.insert("proxy_connect_error", "Не удалось подключиться к серверам Telegram. Проверьте прокси на валидность. ({error})");
         m.insert("proxy_validate_task", "Проверка {count} прокси");
 
@@ -1072,7 +1082,7 @@ lazy_static::lazy_static! {
 
         m
     };
-    
+
     static ref EN: HashMap<&'static str, &'static str> = {
         let mut m = HashMap::new();
         // Common
@@ -1081,7 +1091,7 @@ lazy_static::lazy_static! {
         m.insert("stopped_by_user", "Stopped by user");
         m.insert("db_open_error", "open DB: {error}");
         m.insert("db_create_tables_error", "create tables: {error}");
-        
+
         // Parser
         m.insert("parser_collected", "collected: {count}");
         m.insert("parser_group_done", "group processed: {name}");
@@ -1132,14 +1142,14 @@ lazy_static::lazy_static! {
         m.insert("parser_posts_progress", "Posts: {scanned}, with comments: {with_comments}, collected: {collected}");
         m.insert("parser_days_limit_short", "Reached {days} day limit");
         m.insert("parser_posts_total", "Total posts: {scanned}, with comments: {with_comments}, collected: {collected}");
-        
+
         // Inviter
         m.insert("inviter_invited", "invited: {username}");
         m.insert("inviter_added", "added: {username}");
         m.insert("inviter_peer_flood", "PEER_FLOOD: account stopped");
         m.insert("inviter_flood_wait", "FLOOD_WAIT {seconds} sec");
         m.insert("inviter_autostop", "autostop: error limit reached");
-        
+
         // Boost
         m.insert("boost_done", "done: {detail}");
         m.insert("boost_bot_started", "bot started: {name}");
@@ -1171,6 +1181,7 @@ lazy_static::lazy_static! {
         m.insert("boost_no_reactions_sent", "no reactions were sent");
         m.insert("boost_invalid_post_link", "invalid post link");
         m.insert("boost_empty_channel_link", "empty channel link");
+        m.insert("boost_no_subscriptions", "could not complete any subscriptions");
         m.insert("boost_join_link_done", "{prefix} join via link {link} done");
         m.insert("boost_archive_error", "{prefix} archive error: {error}");
         m.insert("boost_archived", "{prefix} moved to archive");
@@ -1188,12 +1199,12 @@ lazy_static::lazy_static! {
         m.insert("boost_left_channel", "{prefix} left channel");
         m.insert("boost_leave_error", "{prefix} leave error: {error}");
         m.insert("boost_reactions_db_open_error", "open reactions DB: {error}");
-        
+
         // Cloner
         m.insert("cloner_copied", "copied: post #{id}");
         m.insert("cloner_skipped", "skipped: post #{id}");
         m.insert("cloner_channel_created", "channel created: {name}");
-        
+
         // Auto-Reply
         m.insert("auto_reply_sent", "reply sent: {username}");
         m.insert("auto_reply_skipped", "skipped: {reason}");
@@ -1218,6 +1229,7 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_limit_reached", "reached limit of {limit} replies");
         m.insert("auto_reply_get_diff_error", "getDifference error: {error}");
         m.insert("auto_reply_parse_diff_error", "parse diff error: {error}");
+        m.insert("auto_reply_difference_too_long", "an oversized update backlog was skipped; new messages will be processed from now on");
         m.insert("auto_reply_no_access_hash", "skipped: could not get access_hash for user_id={user_id}");
         m.insert("auto_reply_not_in_list", "skipped (not in list): user_id={user_id}");
         m.insert("auto_reply_ban_word_skip", "skipped (ban word): user_id={user_id}");
@@ -1227,12 +1239,12 @@ lazy_static::lazy_static! {
         m.insert("auto_reply_forward_label", "forwarded");
         m.insert("auto_reply_reply_label", "reply sent");
         m.insert("auto_reply_send_error", "send error user_id={user_id}: {error}");
-        
+
         // First Comment
         m.insert("first_comment_sent", "comment sent: {channel}");
         m.insert("first_comment_monitoring", "monitoring channels...");
         m.insert("first_comment_new_post", "new post in {channel}");
-        
+
         // Reporter
         m.insert("reporter_sent", "report sent: {target}");
         m.insert("reporter_db_path", "DB: {path}");
@@ -1263,12 +1275,12 @@ lazy_static::lazy_static! {
         m.insert("reporter_photo_report_error", "photo-report error: {error}");
         m.insert("reporter_db_open_error", "open reporter DB: {error}");
         m.insert("reporter_db_tables_error", "create tables: {error}");
-        
+
         // Masslooking
         m.insert("masslooking_viewed", "viewed: {username}");
         m.insert("masslooking_reacted", "reacted: {username}");
         m.insert("masslooking_replied", "replied: {username}");
-        
+
         // Mailing
         m.insert("mailing_sent", "sent: {target}");
         m.insert("mailing_ban", "account banned");
@@ -1301,10 +1313,10 @@ lazy_static::lazy_static! {
         m.insert("mailing_total_sent", "total sent: {count}");
         m.insert("mailing_sent_user", "sent user_id={user_id}");
         m.insert("mailing_error_user", "error user_id={user_id}: {error}");
-        
+
         // Stories
         m.insert("stories_published", "published");
-        
+
         // Warmer
         m.insert("warmer_action_done", "action done: {action}");
         m.insert("warmer_no_accounts", "no accounts selected");
@@ -1381,22 +1393,22 @@ lazy_static::lazy_static! {
         m.insert("warmer_cleanup_tag_error", "temp tag removal error: {error}");
         m.insert("warmer_cleanup_tag_done", "temp tag removed");
         m.insert("warmer_session_done", "session complete ({count} actions)");
-        
+
         // Channel Creator
         m.insert("channel_created", "created: {name}");
-        
+
         // Bot Creator
         m.insert("bot_created", "bot created: {username}");
         m.insert("bot_token", "token: {token}");
-        
+
         // Global Search
         m.insert("search_found", "new: {count}");
-        
+
         // Username Checker
         m.insert("username_free", "free: {username}");
         m.insert("username_taken", "taken: {username}");
         m.insert("username_fragment", "fragment: {username}");
-        
+
         // Converter
         m.insert("converter_ok", "converted: {path}");
         m.insert("converter_err", "error: {path}");
@@ -1614,6 +1626,7 @@ lazy_static::lazy_static! {
         m.insert("interceptor_main_prefix", "[Main]");
         m.insert("interceptor_admin_granted", "admin granted user_id={uid} in {dest}");
         m.insert("interceptor_admin_error", "admin error user_id={uid} in {dest}: {error}");
+        m.insert("interceptor_admin_incomplete", "admin rights were not granted in every destination channel");
         m.insert("interceptor_target_channel", "target channel: id={id} title=\"{title}\"");
         m.insert("interceptor_joined_channel", "joined channel");
         m.insert("interceptor_assign_error", "assignment error {dest}: {error}");
@@ -1671,6 +1684,7 @@ lazy_static::lazy_static! {
         m.insert("browser_proxy_unsupported", "Unsupported proxy type: {scheme}");
         // Account statuses
         m.insert("status_clean", "No restrictions");
+        m.insert("status_unknown", "Unknown");
         m.insert("status_invalid", "Invalid");
         m.insert("status_frozen", "Frozen");
         m.insert("status_perm_spam", "Permanent spamblock");
@@ -1898,6 +1912,7 @@ lazy_static::lazy_static! {
         m.insert("cloner_skipped_media", "skipped: msg={id} ({reason})");
         m.insert("cloner_skipped_size", "skipped: msg={id} ({reason}, {kb} KB)");
         m.insert("cloner_error_msg", "error: msg={id} {error}");
+        m.insert("cloner_media_resend_unsupported", "media cannot be copied safely in resend mode");
         m.insert("cloner_copied_msg", "copied: msg={id} -> dst={dst}");
         m.insert("cloner_sweep_count", "Cleaned up service messages: {count}");
         m.insert("cloner_sweep_result", "Service message cleanup returned: {error}");
@@ -1919,7 +1934,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_task_name", "Username Checker");
         m.insert("uchecker_no_input_file", "no input file specified");
         m.insert("uchecker_read_file_error", "could not read file: {error}");
-        m.insert("uchecker_invalid_short", "@{name} — tag invalid (less than 4 chars), skipping");
+        m.insert("uchecker_invalid_short", "@{name} — tag invalid (length must be 5–32 characters), skipping");
         m.insert("uchecker_invalid_chars", "@{name} — tag invalid (disallowed chars), skipping");
         m.insert("uchecker_skipped_invalid", "Skipped invalid/duplicates: {count}");
         m.insert("uchecker_file_empty", "file is empty or contains no valid usernames");
@@ -1937,6 +1952,7 @@ lazy_static::lazy_static! {
         m.insert("uchecker_autoclaim", "Auto-claim: {free} free tags, {accounts} accounts");
         m.insert("uchecker_claimed", "  @{name} — claimed on account {phone}");
         m.insert("uchecker_claim_failed", "  @{name} — could not claim: {error}");
+        m.insert("uchecker_claim_unassigned", "Free tags left without an account: {count}");
         m.insert("uchecker_result", "Done: free={free}, taken={taken}, file: {path}");
 
         // Masslooking extended
@@ -2043,6 +2059,8 @@ lazy_static::lazy_static! {
 
         // Proxy
         m.insert("proxy_no_available", "no available proxies, add proxies or enable no-proxy mode in settings");
+        m.insert("proxy_connect_timeout", "proxy connection timed out");
+        m.insert("proxy_handshake_timeout", "proxy handshake timed out");
         m.insert("proxy_connect_error", "Could not connect to Telegram servers. Check proxy validity. ({error})");
         m.insert("proxy_validate_task", "Validating {count} proxies");
 

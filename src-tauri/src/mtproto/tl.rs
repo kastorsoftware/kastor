@@ -1,24 +1,24 @@
+use super::client::MtpClient;
+use super::tl_gen;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::Deserialize;
 use std::io::{Cursor, Read};
-use super::tl_gen;
-use super::client::MtpClient;
 
 // tl constructors - core (re-exported from tl_gen where available)
 pub use super::tl_gen::VECTOR;
 // mtproto service-layer ctors live in the mtproto module (not the api schema)
-pub use super::service_ctors::RPC_ERROR;
 pub use super::service_ctors::GZIP_PACKED;
+pub use super::service_ctors::RPC_ERROR;
 
 // peers
-pub use super::tl_gen::INPUT_PEER_SELF;
 pub use super::tl_gen::INPUT_PEER_CHANNEL;
+pub use super::tl_gen::INPUT_PEER_SELF;
 
 // reply_markup constructors
+pub use super::tl_gen::KEYBOARD_BUTTON_CALLBACK;
+pub use super::tl_gen::KEYBOARD_BUTTON_ROW;
 pub use super::tl_gen::REPLY_INLINE_MARKUP;
 pub use super::tl_gen::REPLY_KEYBOARD_MARKUP;
-pub use super::tl_gen::KEYBOARD_BUTTON_ROW;
-pub use super::tl_gen::KEYBOARD_BUTTON_CALLBACK;
 
 // account actions
 
@@ -67,19 +67,25 @@ pub fn deserialize_bytes(cursor: &mut Cursor<&[u8]>) -> Result<Vec<u8>, String> 
     };
 
     let mut data = vec![0u8; len];
-    cursor.read_exact(&mut data).map_err(|e| format!("read bytes: {e}"))?;
+    cursor
+        .read_exact(&mut data)
+        .map_err(|e| format!("read bytes: {e}"))?;
 
     let total = header_size + len;
     let padding = (4 - (total % 4)) % 4;
     let mut skip = vec![0u8; padding];
-    cursor.read_exact(&mut skip).map_err(|e| format!("read padding: {e}"))?;
+    cursor
+        .read_exact(&mut skip)
+        .map_err(|e| format!("read padding: {e}"))?;
 
     Ok(data)
 }
 
 fn read_u8(cursor: &mut Cursor<&[u8]>) -> Result<u8, String> {
     let mut buf = [0u8; 1];
-    cursor.read_exact(&mut buf).map_err(|e| format!("read u8: {e}"))?;
+    cursor
+        .read_exact(&mut buf)
+        .map_err(|e| format!("read u8: {e}"))?;
     Ok(buf[0])
 }
 
@@ -112,7 +118,9 @@ pub fn parse_rpc_response(data: &[u8]) -> Result<Vec<u8>, String> {
 
 pub fn parse_users_response(data: &[u8]) -> Result<UserInfo, String> {
     let mut cursor = Cursor::new(data);
-    let ctor = cursor.read_u32::<LittleEndian>().map_err(|e| format!("read ctor: {e}"))?;
+    let ctor = cursor
+        .read_u32::<LittleEndian>()
+        .map_err(|e| format!("read ctor: {e}"))?;
 
     if ctor == GZIP_PACKED {
         let compressed = deserialize_bytes(&mut cursor)?;
@@ -121,7 +129,9 @@ pub fn parse_users_response(data: &[u8]) -> Result<UserInfo, String> {
     }
 
     if ctor == RPC_ERROR {
-        let error_code = cursor.read_i32::<LittleEndian>().map_err(|_| "read error_code")?;
+        let error_code = cursor
+            .read_i32::<LittleEndian>()
+            .map_err(|_| "read error_code")?;
         let error_msg = deserialize_string(&mut cursor)?;
         return Err(format!("rpc error {error_code}: {error_msg}"));
     }
@@ -130,7 +140,9 @@ pub fn parse_users_response(data: &[u8]) -> Result<UserInfo, String> {
         return Err(format!("expected vector, got 0x{ctor:08x}"));
     }
 
-    let count = cursor.read_u32::<LittleEndian>().map_err(|_| "read vector count")?;
+    let count = cursor
+        .read_u32::<LittleEndian>()
+        .map_err(|_| "read vector count")?;
     if count == 0 {
         return Err("empty users vector".into());
     }
@@ -194,9 +206,16 @@ fn tl_user_to_info(user: tl_gen::TlUser) -> Result<UserInfo, String> {
 
 pub fn decompress_gzip(data: &[u8]) -> Result<Vec<u8>, String> {
     use std::io::Read;
-    let mut decoder = flate2::read::GzDecoder::new(data);
+    const MAX_DECOMPRESSED_SIZE: u64 = 64 * 1024 * 1024;
+    let decoder = flate2::read::GzDecoder::new(data);
     let mut result = Vec::new();
-    decoder.read_to_end(&mut result).map_err(|e| format!("gzip decompress: {e}"))?;
+    decoder
+        .take(MAX_DECOMPRESSED_SIZE + 1)
+        .read_to_end(&mut result)
+        .map_err(|e| format!("gzip decompress: {e}"))?;
+    if result.len() as u64 > MAX_DECOMPRESSED_SIZE {
+        return Err("gzip payload exceeds decompression limit".into());
+    }
     Ok(result)
 }
 
@@ -233,7 +252,12 @@ pub fn parse_contacts_found(data: &[u8]) -> Result<Vec<FoundEntry>, String> {
             if let tl_gen::TlUser::User { username, .. } = user {
                 if let Some(uname) = username {
                     if !uname.is_empty() {
-                        entries.push(FoundEntry { username: uname, is_channel: false, is_group: false, is_user: true });
+                        entries.push(FoundEntry {
+                            username: uname,
+                            is_channel: false,
+                            is_group: false,
+                            is_user: true,
+                        });
                     }
                 }
             }
@@ -242,10 +266,20 @@ pub fn parse_contacts_found(data: &[u8]) -> Result<Vec<FoundEntry>, String> {
     for raw in &found.chats {
         if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
             match chat {
-                tl_gen::TlChat::Channel { broadcast, megagroup, username, .. } => {
+                tl_gen::TlChat::Channel {
+                    broadcast,
+                    megagroup,
+                    username,
+                    ..
+                } => {
                     if let Some(uname) = username {
                         if !uname.is_empty() {
-                            entries.push(FoundEntry { username: uname, is_channel: broadcast && !megagroup, is_group: megagroup, is_user: false });
+                            entries.push(FoundEntry {
+                                username: uname,
+                                is_channel: broadcast && !megagroup,
+                                is_group: megagroup,
+                                is_user: false,
+                            });
                         }
                     }
                 }
@@ -257,11 +291,16 @@ pub fn parse_contacts_found(data: &[u8]) -> Result<Vec<FoundEntry>, String> {
 }
 
 // messages.sendMessage (simplified, text only, no_webpage + silent)
-pub fn build_send_message(peer_id: i64, access_hash: i64, message: &str, random_id: i64) -> Vec<u8> {
+pub fn build_send_message(
+    peer_id: i64,
+    access_hash: i64,
+    message: &str,
+    random_id: i64,
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     tl_gen::build_messages_sendMessage(
-        true, true, false, false, false, false, false, false,
-        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
+        true, true, false, false, false, false, false, false, &peer, None, message, random_id,
+        None, None, None, None, None, None, None, None, None, None,
     )
 }
 
@@ -290,7 +329,13 @@ pub fn build_mute_peer(peer_id: i64, access_hash: i64) -> Vec<u8> {
     let inner_peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     let notify_peer = tl_gen::serialize_inputNotifyPeer(&inner_peer);
     let settings = tl_gen::serialize_inputPeerNotifySettings(
-        None, None, Some(2147483647), None, None, None, None,
+        None,
+        None,
+        Some(2147483647),
+        None,
+        None,
+        None,
+        None,
     );
     tl_gen::build_account_updateNotifySettings(&notify_peer, &settings)
 }
@@ -313,7 +358,10 @@ pub fn parse_resolved_peer(data: &[u8]) -> Result<(i64, i64), String> {
         tl_gen::Peer::User(uid) => {
             for raw in &resolved.users {
                 if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-                    if let tl_gen::TlUser::User { id, access_hash, .. } = user {
+                    if let tl_gen::TlUser::User {
+                        id, access_hash, ..
+                    } = user
+                    {
                         if id == uid {
                             return Ok((uid, access_hash.unwrap_or(0)));
                         }
@@ -326,7 +374,9 @@ pub fn parse_resolved_peer(data: &[u8]) -> Result<(i64, i64), String> {
             for raw in &resolved.chats {
                 if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
                     match chat {
-                        tl_gen::TlChat::Channel { id, access_hash, .. } if id == cid => {
+                        tl_gen::TlChat::Channel {
+                            id, access_hash, ..
+                        } if id == cid => {
                             return Ok((cid, access_hash.unwrap_or(0)));
                         }
                         _ => continue,
@@ -396,46 +446,75 @@ pub fn parse_messages_structured(data: &[u8]) -> Result<Vec<ParsedMessage>, Stri
 fn tl_message_to_parsed(msg: tl_gen::TlMessage) -> ParsedMessage {
     match msg {
         tl_gen::TlMessage::Empty { id, .. } => ParsedMessage {
-            id, text: String::new(), reply_markup_rows: 0,
+            id,
+            text: String::new(),
+            reply_markup_rows: 0,
             buttons: Vec::new(),
-            first_button_data: None, first_button_text: None, is_service: false,
-            reply_to_msg_id: None, entity_urls: Vec::new(),
+            first_button_data: None,
+            first_button_text: None,
+            is_service: false,
+            reply_to_msg_id: None,
+            entity_urls: Vec::new(),
         },
-        tl_gen::TlMessage::Message { id, message, reply_markup, entities, reply_to, .. } => {
+        tl_gen::TlMessage::Message {
+            id,
+            message,
+            reply_markup,
+            entities,
+            reply_to,
+            ..
+        } => {
             let (rows, buttons) = match reply_markup {
                 Some(ref rm) => extract_markup_info(rm),
                 None => (0, Vec::new()),
             };
             let (btn_text, btn_data) = match buttons.iter().find_map(|button| {
-                button.data.as_ref().map(|data| (button.text.clone(), data.clone()))
+                button
+                    .data
+                    .as_ref()
+                    .map(|data| (button.text.clone(), data.clone()))
             }) {
                 Some((text, data)) => (Some(text), Some(data)),
                 None => (None, None),
             };
-            let entity_urls = entities.as_ref()
+            let entity_urls = entities
+                .as_ref()
                 .map(|ents| extract_entity_urls(ents))
                 .unwrap_or_default();
             let reply_to_msg_id = reply_to.as_ref().and_then(|rt| {
                 let mut cursor = Cursor::new(rt.as_slice());
-                tl_gen::TlMessageReplyHeader::deserialize(&mut cursor).ok().and_then(|h| {
-                    match h {
-                        tl_gen::TlMessageReplyHeader::MessageReplyHeader { reply_to_msg_id, .. } => reply_to_msg_id,
+                tl_gen::TlMessageReplyHeader::deserialize(&mut cursor)
+                    .ok()
+                    .and_then(|h| match h {
+                        tl_gen::TlMessageReplyHeader::MessageReplyHeader {
+                            reply_to_msg_id,
+                            ..
+                        } => reply_to_msg_id,
                         _ => None,
-                    }
-                })
+                    })
             });
             ParsedMessage {
-                id, text: message, reply_markup_rows: rows,
+                id,
+                text: message,
+                reply_markup_rows: rows,
                 buttons,
-                first_button_data: btn_data, first_button_text: btn_text,
-                is_service: false, reply_to_msg_id, entity_urls,
+                first_button_data: btn_data,
+                first_button_text: btn_text,
+                is_service: false,
+                reply_to_msg_id,
+                entity_urls,
             }
-        },
+        }
         tl_gen::TlMessage::Service { id, .. } => ParsedMessage {
-            id, text: String::new(), reply_markup_rows: 0,
+            id,
+            text: String::new(),
+            reply_markup_rows: 0,
             buttons: Vec::new(),
-            first_button_data: None, first_button_text: None, is_service: true,
-            reply_to_msg_id: None, entity_urls: Vec::new(),
+            first_button_data: None,
+            first_button_text: None,
+            is_service: true,
+            reply_to_msg_id: None,
+            entity_urls: Vec::new(),
         },
     }
 }
@@ -454,24 +533,32 @@ fn extract_entity_urls(entities: &[Vec<u8>]) -> Vec<String> {
 }
 
 fn extract_markup_info(raw: &[u8]) -> (u32, Vec<ParsedButton>) {
-    if raw.len() < 8 { return (0, Vec::new()); }
+    if raw.len() < 8 {
+        return (0, Vec::new());
+    }
     let ctor = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
     let mut pos = 4usize;
 
     // replyKeyboardMarkup#85dd99d1 has flags before rows
     if ctor == REPLY_KEYBOARD_MARKUP {
-        if pos + 4 > raw.len() { return (0, Vec::new()); }
+        if pos + 4 > raw.len() {
+            return (0, Vec::new());
+        }
         pos += 4; // skip flags
     } else if ctor != REPLY_INLINE_MARKUP {
         return (0, Vec::new());
     }
 
     // rows: Vector<KeyboardButtonRow>
-    if pos + 8 > raw.len() { return (0, Vec::new()); }
-    let vec_ctor = u32::from_le_bytes([raw[pos], raw[pos+1], raw[pos+2], raw[pos+3]]);
+    if pos + 8 > raw.len() {
+        return (0, Vec::new());
+    }
+    let vec_ctor = u32::from_le_bytes([raw[pos], raw[pos + 1], raw[pos + 2], raw[pos + 3]]);
     pos += 4;
-    if vec_ctor != VECTOR { return (0, Vec::new()); }
-    let row_count = u32::from_le_bytes([raw[pos], raw[pos+1], raw[pos+2], raw[pos+3]]);
+    if vec_ctor != VECTOR {
+        return (0, Vec::new());
+    }
+    let row_count = u32::from_le_bytes([raw[pos], raw[pos + 1], raw[pos + 2], raw[pos + 3]]);
     pos += 4;
 
     let mut buttons = Vec::new();
@@ -484,83 +571,126 @@ fn extract_markup_info(raw: &[u8]) -> (u32, Vec<ParsedButton>) {
 
 fn extract_buttons_from_row(data: &[u8], pos: &mut usize, buttons: &mut Vec<ParsedButton>) {
     // keyboardButtonRow#77608b83 buttons:Vector<KeyboardButton>
-    if *pos + 4 > data.len() { return; }
-    let row_ctor = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
-    if row_ctor != KEYBOARD_BUTTON_ROW { return; }
+    if *pos + 4 > data.len() {
+        return;
+    }
+    let row_ctor = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
+    if row_ctor != KEYBOARD_BUTTON_ROW {
+        return;
+    }
     *pos += 4;
 
-    if *pos + 8 > data.len() { return; }
-    let vec_ctor = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+    if *pos + 8 > data.len() {
+        return;
+    }
+    let vec_ctor = u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
-    if vec_ctor != VECTOR { return; }
-    let btn_count = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+    if vec_ctor != VECTOR {
+        return;
+    }
+    let btn_count =
+        u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
     *pos += 4;
 
     for _ in 0..btn_count {
-        if *pos + 4 > data.len() { return; }
+        if *pos + 4 > data.len() {
+            return;
+        }
         let btn_start = *pos;
-        let btn_ctor = u32::from_le_bytes([data[*pos], data[*pos+1], data[*pos+2], data[*pos+3]]);
+        let btn_ctor =
+            u32::from_le_bytes([data[*pos], data[*pos + 1], data[*pos + 2], data[*pos + 3]]);
         *pos += 4;
 
         if btn_ctor == KEYBOARD_BUTTON_CALLBACK {
             // keyboardButtonCallback#35bbdb6b flags:# text:string data:bytes
-            if *pos + 4 > data.len() { return; }
+            if *pos + 4 > data.len() {
+                return;
+            }
             *pos += 4; // flags
-            let Some((text, new_pos)) = read_tl_string(data, *pos) else { return; };
+            let Some((text, new_pos)) = read_tl_string(data, *pos) else {
+                return;
+            };
             *pos = new_pos;
-            let Some((btn_data, new_pos2)) = read_tl_bytes(data, *pos) else { return; };
+            let Some((btn_data, new_pos2)) = read_tl_bytes(data, *pos) else {
+                return;
+            };
             *pos = new_pos2;
-            buttons.push(ParsedButton { text, data: Some(btn_data) });
+            buttons.push(ParsedButton {
+                text,
+                data: Some(btn_data),
+            });
         } else {
             let mut cursor = Cursor::new(&data[btn_start..]);
-            if tl_gen::skip_tl(&mut cursor).is_err() { return; }
+            if tl_gen::skip_tl(&mut cursor).is_err() {
+                return;
+            }
             *pos = btn_start + cursor.position() as usize;
         }
     }
 }
 
 fn read_tl_string(data: &[u8], pos: usize) -> Option<(String, usize)> {
-    if pos >= data.len() { return None; }
+    if pos >= data.len() {
+        return None;
+    }
     let first = data[pos];
     let (str_data, new_pos) = if first == 254 {
         // long string: 3 bytes length
-        if pos + 4 > data.len() { return None; }
-        let len = (data[pos+1] as usize) | ((data[pos+2] as usize) << 8) | ((data[pos+3] as usize) << 16);
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let len = (data[pos + 1] as usize)
+            | ((data[pos + 2] as usize) << 8)
+            | ((data[pos + 3] as usize) << 16);
         let start = pos + 4;
-        if start + len > data.len() { return None; }
+        if start + len > data.len() {
+            return None;
+        }
         let total = 4 + len;
         let padding = (4 - (total % 4)) % 4;
-        (&data[start..start+len], start + len + padding)
+        (&data[start..start + len], start + len + padding)
     } else {
         let len = first as usize;
         let start = pos + 1;
-        if start + len > data.len() { return None; }
+        if start + len > data.len() {
+            return None;
+        }
         let total = 1 + len;
         let padding = (4 - (total % 4)) % 4;
-        (&data[start..start+len], start + len + padding)
+        (&data[start..start + len], start + len + padding)
     };
     let s = String::from_utf8_lossy(str_data).to_string();
     Some((s, new_pos))
 }
 
 fn read_tl_bytes(data: &[u8], pos: usize) -> Option<(Vec<u8>, usize)> {
-    if pos >= data.len() { return None; }
+    if pos >= data.len() {
+        return None;
+    }
     let first = data[pos];
     if first == 254 {
-        if pos + 4 > data.len() { return None; }
-        let len = (data[pos+1] as usize) | ((data[pos+2] as usize) << 8) | ((data[pos+3] as usize) << 16);
+        if pos + 4 > data.len() {
+            return None;
+        }
+        let len = (data[pos + 1] as usize)
+            | ((data[pos + 2] as usize) << 8)
+            | ((data[pos + 3] as usize) << 16);
         let start = pos + 4;
-        if start + len > data.len() { return None; }
+        if start + len > data.len() {
+            return None;
+        }
         let total = 4 + len;
         let padding = (4 - (total % 4)) % 4;
-        Some((data[start..start+len].to_vec(), start + len + padding))
+        Some((data[start..start + len].to_vec(), start + len + padding))
     } else {
         let len = first as usize;
         let start = pos + 1;
-        if start + len > data.len() { return None; }
+        if start + len > data.len() {
+            return None;
+        }
         let total = 1 + len;
         let padding = (4 - (total % 4)) % 4;
-        Some((data[start..start+len].to_vec(), start + len + padding))
+        Some((data[start..start + len].to_vec(), start + len + padding))
     }
 }
 
@@ -600,12 +730,18 @@ pub fn parse_stars_status(data: &[u8]) -> Result<i64, String> {
 
 // payments.getStarsStatus for a channel peer (stars balance)
 pub fn build_get_stars_status_peer(channel_id: i64, access_hash: i64) -> Vec<u8> {
-    tl_gen::build_payments_getStarsStatus(false, &tl_gen::serialize_input_peer_channel(channel_id, access_hash))
+    tl_gen::build_payments_getStarsStatus(
+        false,
+        &tl_gen::serialize_input_peer_channel(channel_id, access_hash),
+    )
 }
 
 // payments.getStarsStatus for a channel peer (TON balance, ton=true)
 pub fn build_get_ton_status_peer(channel_id: i64, access_hash: i64) -> Vec<u8> {
-    tl_gen::build_payments_getStarsStatus(true, &tl_gen::serialize_input_peer_channel(channel_id, access_hash))
+    tl_gen::build_payments_getStarsStatus(
+        true,
+        &tl_gen::serialize_input_peer_channel(channel_id, access_hash),
+    )
 }
 
 // payments.getSavedStarGifts#a319e569 flags:# exclude_unsaved:flags.0?true exclude_saved:flags.1?true
@@ -614,9 +750,19 @@ pub fn build_get_ton_status_peer(channel_id: i64, access_hash: i64) -> Vec<u8> {
 //   peer:InputPeer collection_id:flags.6?int offset:string limit:int
 pub fn build_get_saved_star_gifts() -> Vec<u8> {
     tl_gen::build_payments_getSavedStarGifts(
-        false, false, false, false, false, false, false, false, false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
         &tl_gen::serialize_input_peer_self(),
-        None, "", 100,
+        None,
+        "",
+        100,
     )
 }
 
@@ -651,12 +797,26 @@ pub fn parse_saved_star_gifts(data: &[u8]) -> Result<(u32, Vec<String>), String>
 // folder_id=0 for main, folder_id=1 for archive
 pub fn build_get_dialogs_with_folder(folder_id: i32, limit: i32) -> Vec<u8> {
     let peer = tl_gen::INPUT_PEER_EMPTY.to_le_bytes().to_vec();
-    let folder = if folder_id != 0 { Some(folder_id) } else { None };
+    let folder = if folder_id != 0 {
+        Some(folder_id)
+    } else {
+        None
+    };
     tl_gen::build_messages_getDialogs(false, folder, 0, 0, &peer, limit, 0)
 }
 
-pub fn build_get_dialogs_paged(folder_id: i32, limit: i32, offset_date: i32, offset_id: i32, offset_peer: &[u8]) -> Vec<u8> {
-    let folder = if folder_id != 0 { Some(folder_id) } else { None };
+pub fn build_get_dialogs_paged(
+    folder_id: i32,
+    limit: i32,
+    offset_date: i32,
+    offset_id: i32,
+    offset_peer: &[u8],
+) -> Vec<u8> {
+    let folder = if folder_id != 0 {
+        Some(folder_id)
+    } else {
+        None
+    };
     tl_gen::build_messages_getDialogs(false, folder, offset_date, offset_id, offset_peer, limit, 0)
 }
 
@@ -683,12 +843,19 @@ pub fn parse_dialog_stats(data: &[u8]) -> Result<crate::mtproto::client::DialogS
         .map_err(|e| format!("deserialize dialogs: {e}"))?;
 
     let (dialogs_count, chats_raw, users_raw) = match resp {
-        tl_gen::TlMessagesDialogs::Dialogs { dialogs, chats, users, .. } =>
-            (dialogs.len() as u32, chats, users),
-        tl_gen::TlMessagesDialogs::Slice { count, chats, users, .. } =>
-            (count as u32, chats, users),
-        tl_gen::TlMessagesDialogs::NotModified { .. } =>
-            return Ok(DialogStats::default()),
+        tl_gen::TlMessagesDialogs::Dialogs {
+            dialogs,
+            chats,
+            users,
+            ..
+        } => (dialogs.len() as u32, chats, users),
+        tl_gen::TlMessagesDialogs::Slice {
+            count,
+            chats,
+            users,
+            ..
+        } => (count as u32, chats, users),
+        tl_gen::TlMessagesDialogs::NotModified { .. } => return Ok(DialogStats::default()),
     };
 
     let mut stats = DialogStats::default();
@@ -696,7 +863,18 @@ pub fn parse_dialog_stats(data: &[u8]) -> Result<crate::mtproto::client::DialogS
 
     for raw in &chats_raw {
         if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
-            if let tl_gen::TlChat::Channel { id, access_hash, creator, broadcast, megagroup, title, username, participants_count, .. } = chat {
+            if let tl_gen::TlChat::Channel {
+                id,
+                access_hash,
+                creator,
+                broadcast,
+                megagroup,
+                title,
+                username,
+                participants_count,
+                ..
+            } = chat
+            {
                 let ch = crate::mtproto::client::OwnedChannel {
                     channel_id: id,
                     access_hash: access_hash.unwrap_or(0),
@@ -707,11 +885,17 @@ pub fn parse_dialog_stats(data: &[u8]) -> Result<crate::mtproto::client::DialogS
                     is_creator: creator,
                 };
                 if ch.is_broadcast {
-                    if ch.is_creator { stats.owned_channels.push(ch); }
-                    else { stats.subscribed_channels += 1; }
+                    if ch.is_creator {
+                        stats.owned_channels.push(ch);
+                    } else {
+                        stats.subscribed_channels += 1;
+                    }
                 } else {
-                    if ch.is_creator { stats.owned_groups.push(ch); }
-                    else { stats.subscribed_groups += 1; }
+                    if ch.is_creator {
+                        stats.owned_groups.push(ch);
+                    } else {
+                        stats.subscribed_groups += 1;
+                    }
                 }
             }
         }
@@ -723,8 +907,12 @@ pub fn parse_dialog_stats(data: &[u8]) -> Result<crate::mtproto::client::DialogS
             if let tl_gen::TlUser::User { bot, username, .. } = user {
                 if bot {
                     if let Some(ref u) = username {
-                        if u == "send" { stats.has_send_bot = true; }
-                        if u == "xrocket" { stats.has_xrocket_bot = true; }
+                        if u == "send" {
+                            stats.has_send_bot = true;
+                        }
+                        if u == "xrocket" {
+                            stats.has_xrocket_bot = true;
+                        }
                     }
                 }
             }
@@ -752,8 +940,15 @@ pub struct SavedDocument {
     pub size: i64,
 }
 
-pub fn build_upload_get_file(doc_id: i64, access_hash: i64, file_reference: &[u8], offset: i64, limit: i32) -> Vec<u8> {
-    let location = tl_gen::serialize_inputDocumentFileLocation(doc_id, access_hash, file_reference, "");
+pub fn build_upload_get_file(
+    doc_id: i64,
+    access_hash: i64,
+    file_reference: &[u8],
+    offset: i64,
+    limit: i32,
+) -> Vec<u8> {
+    let location =
+        tl_gen::serialize_inputDocumentFileLocation(doc_id, access_hash, file_reference, "");
     tl_gen::build_upload_getFile(true, false, &location, offset, limit)
 }
 
@@ -764,7 +959,9 @@ pub fn parse_upload_file(data: &[u8]) -> Result<Vec<u8>, String> {
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlUploadFile>(&inner)?;
     match obj {
         tl_gen::TlUploadFile::File { bytes, .. } => Ok(bytes),
-        tl_gen::TlUploadFile::CdnRedirect { .. } => Err("upload.fileCdnRedirect not supported".into()),
+        tl_gen::TlUploadFile::CdnRedirect { .. } => {
+            Err("upload.fileCdnRedirect not supported".into())
+        }
     }
 }
 
@@ -790,7 +987,10 @@ pub fn parse_saved_messages(data: &[u8]) -> Result<Vec<SavedMessage>, String> {
                 tl_gen::TlMessage::Message { message, media, .. } => {
                     let document = media.as_ref().and_then(|m| extract_document_from_media(m));
                     if !message.is_empty() || document.is_some() {
-                        results.push(SavedMessage { text: message, document });
+                        results.push(SavedMessage {
+                            text: message,
+                            document,
+                        });
                     }
                 }
                 _ => {}
@@ -808,18 +1008,37 @@ fn extract_document_from_media(media_raw: &[u8]) -> Option<SavedDocument> {
             let doc_raw = document?;
             let doc = tl_gen::deserialize_tl_obj::<tl_gen::TlDocument>(&doc_raw).ok()?;
             match doc {
-                tl_gen::TlDocument::Document { id, access_hash, file_reference, dc_id, size, attributes, .. } => {
+                tl_gen::TlDocument::Document {
+                    id,
+                    access_hash,
+                    file_reference,
+                    dc_id,
+                    size,
+                    attributes,
+                    ..
+                } => {
                     let mut filename = String::new();
                     for attr_raw in &attributes {
-                        if let Ok(attr) = tl_gen::deserialize_tl_obj::<tl_gen::TlDocumentAttribute>(attr_raw) {
+                        if let Ok(attr) =
+                            tl_gen::deserialize_tl_obj::<tl_gen::TlDocumentAttribute>(attr_raw)
+                        {
                             if let tl_gen::TlDocumentAttribute::Filename { file_name } = attr {
                                 filename = file_name;
                                 break;
                             }
                         }
                     }
-                    if filename.is_empty() { return None; }
-                    Some(SavedDocument { id, access_hash, file_reference, dc_id, filename, size })
+                    if filename.is_empty() {
+                        return None;
+                    }
+                    Some(SavedDocument {
+                        id,
+                        access_hash,
+                        file_reference,
+                        dc_id,
+                        filename,
+                        size,
+                    })
                 }
                 _ => None,
             }
@@ -829,14 +1048,17 @@ fn extract_document_from_media(media_raw: &[u8]) -> Option<SavedDocument> {
 }
 
 // build messages.getBotCallbackAnswer request (click inline button)
-pub fn build_bot_callback_answer(peer_id: i64, access_hash: i64, msg_id: i32, callback_data: &[u8]) -> Vec<u8> {
+pub fn build_bot_callback_answer(
+    peer_id: i64,
+    access_hash: i64,
+    msg_id: i32,
+    callback_data: &[u8],
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     tl_gen::build_messages_getBotCallbackAnswer(false, &peer, msg_id, Some(callback_data), None)
 }
 
-
 // === auth flow constructors ===
-
 
 pub fn build_auth_send_code(phone: &str, api_id: i32, api_hash: &str) -> Vec<u8> {
     build_auth_send_code_with_settings(phone, api_id, api_hash, &AuthCodeSettings::default())
@@ -916,7 +1138,15 @@ pub fn wrap_init_connection(
     system_lang: &str,
     lang: &str,
 ) -> Vec<u8> {
-    tl_gen::wrap_invoke_with_layer(inner, api_id, device, system, app_version, system_lang, lang)
+    tl_gen::wrap_invoke_with_layer(
+        inner,
+        api_id,
+        device,
+        system,
+        app_version,
+        system_lang,
+        lang,
+    )
 }
 
 // parsed auth.sentCode result
@@ -966,10 +1196,14 @@ pub fn parse_auth_sent_code_inner(inner: &[u8]) -> Result<SentCode, String> {
                     tl_gen::TlAuthSentCodeType::TypeFirebaseSms { .. } => "firebase",
                     tl_gen::TlAuthSentCodeType::TypeSmsWord { .. } => "sms_word",
                     tl_gen::TlAuthSentCodeType::TypeSmsPhrase { .. } => "sms_phrase",
-                }.to_string(),
+                }
+                .to_string(),
                 Err(_) => {
                     if r#type.len() >= 4 {
-                        format!("unknown_{:#x}", u32::from_le_bytes([r#type[0], r#type[1], r#type[2], r#type[3]]))
+                        format!(
+                            "unknown_{:#x}",
+                            u32::from_le_bytes([r#type[0], r#type[1], r#type[2], r#type[3]])
+                        )
                     } else {
                         "unknown".to_string()
                     }
@@ -1096,9 +1330,12 @@ pub fn parse_account_password(data: &[u8]) -> Result<PasswordInfo, String> {
     // new_algo is always present and defines the params for setting a new password
     let (new_g, new_p, new_salt1, new_salt2) =
         match tl_gen::deserialize_tl_obj::<tl_gen::TlPasswordKdfAlgo>(&obj.new_algo) {
-            Ok(tl_gen::TlPasswordKdfAlgo::SHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow { salt1, salt2, g, p }) => {
-                (g as u32, p, salt1, salt2)
-            }
+            Ok(tl_gen::TlPasswordKdfAlgo::SHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow {
+                salt1,
+                salt2,
+                g,
+                p,
+            }) => (g as u32, p, salt1, salt2),
             _ => (0, Vec::new(), Vec::new(), Vec::new()),
         };
 
@@ -1112,7 +1349,10 @@ pub fn parse_account_password(data: &[u8]) -> Result<PasswordInfo, String> {
             srp_id: 0,
             srp_b: Vec::new(),
             hint: String::new(),
-            new_g, new_p, new_salt1, new_salt2,
+            new_g,
+            new_p,
+            new_salt1,
+            new_salt2,
         });
     }
 
@@ -1120,19 +1360,25 @@ pub fn parse_account_password(data: &[u8]) -> Result<PasswordInfo, String> {
     let algo = tl_gen::deserialize_tl_obj::<tl_gen::TlPasswordKdfAlgo>(&algo_raw)?;
     match algo {
         tl_gen::TlPasswordKdfAlgo::Unknown => Err("unsupported password algo".into()),
-        tl_gen::TlPasswordKdfAlgo::SHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow { salt1, salt2, g, p } => {
-            Ok(PasswordInfo {
-                has_password: true,
-                g: g as u32,
-                p,
-                salt1,
-                salt2,
-                srp_id: obj.srp_id.unwrap_or(0) as u64,
-                srp_b: obj.srp_B.unwrap_or_default(),
-                hint: obj.hint.unwrap_or_default(),
-                new_g, new_p, new_salt1, new_salt2,
-            })
-        }
+        tl_gen::TlPasswordKdfAlgo::SHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow {
+            salt1,
+            salt2,
+            g,
+            p,
+        } => Ok(PasswordInfo {
+            has_password: true,
+            g: g as u32,
+            p,
+            salt1,
+            salt2,
+            srp_id: obj.srp_id.unwrap_or(0) as u64,
+            srp_b: obj.srp_B.unwrap_or_default(),
+            hint: obj.hint.unwrap_or_default(),
+            new_g,
+            new_p,
+            new_salt1,
+            new_salt2,
+        }),
     }
 }
 
@@ -1154,7 +1400,11 @@ pub fn build_account_update_username(username: &str) -> Vec<u8> {
 }
 
 // account.updateProfile#78515775 flags:# first_name:flags.0?string last_name:flags.1?string about:flags.2?string = User
-pub fn build_account_update_profile(first_name: Option<&str>, last_name: Option<&str>, about: Option<&str>) -> Vec<u8> {
+pub fn build_account_update_profile(
+    first_name: Option<&str>,
+    last_name: Option<&str>,
+    about: Option<&str>,
+) -> Vec<u8> {
     tl_gen::build_account_updateProfile(first_name, last_name, about)
 }
 
@@ -1176,7 +1426,8 @@ pub fn build_account_reset_password() -> Vec<u8> {
 
 // photos.deletePhotos
 pub fn build_photos_delete(photos: &[(i64, i64, Vec<u8>)]) -> Vec<u8> {
-    let serialized: Vec<Vec<u8>> = photos.iter()
+    let serialized: Vec<Vec<u8>> = photos
+        .iter()
         .map(|(id, ah, fr)| tl_gen::serialize_inputPhoto(*id, *ah, fr))
         .collect();
     let refs: Vec<&[u8]> = serialized.iter().map(|v| v.as_slice()).collect();
@@ -1199,7 +1450,11 @@ pub fn build_account_set_password(g: u32, p: &[u8], new_salt1: &[u8], new_salt2:
 pub fn build_account_set_password_with_email(g: u32, p: &[u8], new_salt1: &[u8], new_salt2: &[u8], new_password_hash: &[u8], hint: &str, email: Option<&str>) -> Vec<u8> {
     let password = tl_gen::INPUT_CHECK_PASSWORD_EMPTY.to_le_bytes().to_vec();
     let new_settings = tl_gen::serialize_account_passwordInputSettings(
-        Some(&tl_gen::serialize_passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow(new_salt1, new_salt2, g as i32, p)),
+        Some(
+            &tl_gen::serialize_passwordKdfAlgoSHA256SHA256PBKDF2HMACSHA512iter100000SHA256ModPow(
+                new_salt1, new_salt2, g as i32, p,
+            ),
+        ),
         Some(new_password_hash),
         Some(hint),
         email,
@@ -1236,7 +1491,12 @@ pub fn build_upload_save_file_part(file_id: i64, file_part: i32, data: &[u8]) ->
 
 const VOICE_CHUNK_SIZE: usize = 128 * 1024;
 
-pub async fn send_voice_message(client: &mut MtpClient, peer_id: i64, access_hash: i64, voice_data: &[u8]) -> Result<(), String> {
+pub async fn send_voice_message(
+    client: &mut MtpClient,
+    peer_id: i64,
+    access_hash: i64,
+    voice_data: &[u8],
+) -> Result<(), String> {
     let file_id: i64 = rand::random();
     let total_parts = ((voice_data.len() + VOICE_CHUNK_SIZE - 1) / VOICE_CHUNK_SIZE) as i32;
     let is_big = voice_data.len() >= 10 * 1024 * 1024;
@@ -1251,7 +1511,10 @@ pub async fn send_voice_message(client: &mut MtpClient, peer_id: i64, access_has
         } else {
             tl_gen::build_upload_saveFilePart(file_id, part, chunk)
         };
-        client.invoke(&req).await.map_err(|e| format!("upload part {}: {e}", part))?;
+        client
+            .invoke(&req)
+            .await
+            .map_err(|e| format!("upload part {}: {e}", part))?;
     }
 
     let input_file = if is_big {
@@ -1264,17 +1527,29 @@ pub async fn send_voice_message(client: &mut MtpClient, peer_id: i64, access_has
     let audio_attr = tl_gen::serialize_documentAttributeAudio(true, duration, None, None, None);
     let attrs: &[&[u8]] = &[&audio_attr];
     let media = tl_gen::serialize_inputMediaUploadedDocument(
-        false, false, false,
-        &input_file, None, "audio/ogg", attrs, None, None, None, None,
+        false,
+        false,
+        false,
+        &input_file,
+        None,
+        "audio/ogg",
+        attrs,
+        None,
+        None,
+        None,
+        None,
     );
 
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     let random_id: i64 = rand::random();
     let req = tl_gen::build_messages_sendMedia(
-        false, false, false, false, false, false, false,
-        &peer, None, &media, "", random_id, None, None, None, None, None, None, None, None, None,
+        false, false, false, false, false, false, false, &peer, None, &media, "", random_id, None,
+        None, None, None, None, None, None, None, None,
     );
-    client.invoke(&req).await.map_err(|e| format!("sendMedia: {e}"))?;
+    client
+        .invoke(&req)
+        .await
+        .map_err(|e| format!("sendMedia: {e}"))?;
     Ok(())
 }
 
@@ -1297,7 +1572,13 @@ pub fn parse_user_photos(data: &[u8]) -> Result<Vec<(i64, i64, Vec<u8>)>, String
     let mut results = Vec::new();
     for raw in &raw_photos {
         if let Ok(photo) = tl_gen::deserialize_tl_obj::<tl_gen::TlPhoto>(raw) {
-            if let tl_gen::TlPhoto::Photo { id, access_hash, file_reference, .. } = photo {
+            if let tl_gen::TlPhoto::Photo {
+                id,
+                access_hash,
+                file_reference,
+                ..
+            } = photo
+            {
                 results.push((id, access_hash, file_reference));
             }
         }
@@ -1315,7 +1596,9 @@ pub fn parse_emoji_list(data: &[u8]) -> Result<Vec<i64>, String> {
     let inner = tl_gen::unwrap_rpc(data)?;
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlEmojiList>(&inner)?;
     match obj {
-        tl_gen::TlEmojiList::NotModified => Err("emoji list not modified (no cache available)".into()),
+        tl_gen::TlEmojiList::NotModified => {
+            Err("emoji list not modified (no cache available)".into())
+        }
         tl_gen::TlEmojiList::EmojiList { document_id, .. } => Ok(document_id),
     }
 }
@@ -1332,7 +1615,8 @@ pub fn build_contacts_get_contacts() -> Vec<u8> {
 
 // contacts.deleteContacts#096a0e00 id:Vector<InputUser> = Updates
 pub fn build_contacts_delete_contacts(users: &[(i64, i64)]) -> Vec<u8> {
-    let serialized: Vec<Vec<u8>> = users.iter()
+    let serialized: Vec<Vec<u8>> = users
+        .iter()
         .map(|(uid, ah)| tl_gen::serialize_input_user(*uid, *ah))
         .collect();
     let refs: Vec<&[u8]> = serialized.iter().map(|v| v.as_slice()).collect();
@@ -1340,11 +1624,16 @@ pub fn build_contacts_delete_contacts(users: &[(i64, i64)]) -> Vec<u8> {
 }
 
 /// Serialize inputPhoneContact#6a1dc4be for importContacts
-pub fn serialize_input_phone_contact(client_id: i64, phone: &str, first_name: &str, last_name: &str) -> Vec<u8> {
+pub fn serialize_input_phone_contact(
+    client_id: i64,
+    phone: &str,
+    first_name: &str,
+    last_name: &str,
+) -> Vec<u8> {
     use byteorder::WriteBytesExt;
     let mut buf = Vec::new();
     buf.write_u32::<LittleEndian>(0x6a1dc4be).unwrap(); // constructor
-    buf.write_u32::<LittleEndian>(0).unwrap();          // flags (no note)
+    buf.write_u32::<LittleEndian>(0).unwrap(); // flags (no note)
     buf.write_i64::<LittleEndian>(client_id).unwrap();
     buf.extend(serialize_string(phone));
     buf.extend(serialize_string(first_name));
@@ -1366,11 +1655,15 @@ pub fn parse_imported_contact(data: &[u8]) -> Option<(i64, i64)> {
     let mut cursor = std::io::Cursor::new(inner.as_slice());
     let ctor = cursor.read_u32::<LittleEndian>().ok()?;
     // contacts.importedContacts#77d01c3b imported:Vector<ImportedContact> popular_invites:Vector<PopularContact> retry_contacts:Vector<long> users:Vector<User>
-    if ctor != 0x77d01c3b { return None; }
+    if ctor != 0x77d01c3b {
+        return None;
+    }
 
     // skip imported vector
     let imported_ctor = cursor.read_u32::<LittleEndian>().ok()?;
-    if imported_ctor != tl_gen::VECTOR { return None; }
+    if imported_ctor != tl_gen::VECTOR {
+        return None;
+    }
     let imported_count = cursor.read_u32::<LittleEndian>().ok()? as usize;
     for _ in 0..imported_count {
         // importedContact#c13e3c50 user_id:long date:int
@@ -1402,15 +1695,22 @@ pub fn parse_imported_contact(data: &[u8]) -> Option<(i64, i64)> {
 
     // parse users vector — get first user's id + access_hash
     let users_ctor = cursor.read_u32::<LittleEndian>().ok()?;
-    if users_ctor != tl_gen::VECTOR { return None; }
+    if users_ctor != tl_gen::VECTOR {
+        return None;
+    }
     let users_count = cursor.read_u32::<LittleEndian>().ok()? as usize;
-    if users_count == 0 { return None; }
+    if users_count == 0 {
+        return None;
+    }
 
     // read remaining bytes into a buffer and try to deserialize first user
     let pos = cursor.position() as usize;
     let remaining = &inner[pos..];
-    if let Ok(tl_gen::TlUser::User { id, access_hash: Some(hash), .. }) =
-        tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(remaining)
+    if let Ok(tl_gen::TlUser::User {
+        id,
+        access_hash: Some(hash),
+        ..
+    }) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(remaining)
     {
         Some((id, hash))
     } else {
@@ -1437,10 +1737,10 @@ pub fn build_create_temp_chat(title: &str) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.write_u32::<LittleEndian>(0x92ceddd4).unwrap(); // messages.createChat
     buf.write_u32::<LittleEndian>(0).unwrap(); // flags (no ttl_period)
-    // users: Vector<InputUser> — empty vector (just self is creator)
+                                               // users: Vector<InputUser> — empty vector (just self is creator)
     buf.write_u32::<LittleEndian>(tl_gen::VECTOR).unwrap();
     buf.write_u32::<LittleEndian>(0).unwrap(); // 0 users
-    // title: string
+                                               // title: string
     buf.extend(serialize_string(title));
     buf
 }
@@ -1460,8 +1760,8 @@ pub fn parse_created_chat_id(data: &[u8]) -> Option<i64> {
     // scan raw bytes for PEER_CHAT constructor followed by i64
     let peer_chat_ctor_bytes = tl_gen::PEER_CHAT.to_le_bytes();
     for i in 0..inner.len().saturating_sub(12) {
-        if inner[i..i+4] == peer_chat_ctor_bytes {
-            let mut c = std::io::Cursor::new(&inner[i+4..]);
+        if inner[i..i + 4] == peer_chat_ctor_bytes {
+            let mut c = std::io::Cursor::new(&inner[i + 4..]);
             if let Ok(chat_id) = c.read_i64::<LittleEndian>() {
                 if chat_id > 0 {
                     return Some(chat_id);
@@ -1500,14 +1800,24 @@ pub fn build_get_user_info(user_id: i64, access_hash: i64) -> Vec<u8> {
 pub fn parse_user_info(data: &[u8]) -> Option<(String, String, String)> {
     let inner = tl_gen::unwrap_rpc(data).ok()?;
     // response is Vector<User> — skip vector header, parse first user
-    if inner.len() < 8 { return None; }
+    if inner.len() < 8 {
+        return None;
+    }
     let vec_ctor = u32::from_le_bytes([inner[0], inner[1], inner[2], inner[3]]);
-    if vec_ctor != tl_gen::VECTOR { return None; }
+    if vec_ctor != tl_gen::VECTOR {
+        return None;
+    }
     let count = u32::from_le_bytes([inner[4], inner[5], inner[6], inner[7]]);
-    if count == 0 { return None; }
+    if count == 0 {
+        return None;
+    }
     let user_data = &inner[8..];
-    if let Ok(tl_gen::TlUser::User { username, first_name, last_name, .. }) =
-        tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_data)
+    if let Ok(tl_gen::TlUser::User {
+        username,
+        first_name,
+        last_name,
+        ..
+    }) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(user_data)
     {
         Some((
             username.unwrap_or_default(),
@@ -1530,11 +1840,15 @@ pub fn extract_sent_msg_id(data: &[u8]) -> Option<i32> {
         tl_gen::TlUpdates::HortMessage { id, .. } => Some(id),
         tl_gen::TlUpdates::Updates { updates, .. } => {
             for upd_raw in &updates {
-                if let Ok(update) = tl_gen::TlUpdate::deserialize(&mut std::io::Cursor::new(upd_raw.as_slice())) {
+                if let Ok(update) =
+                    tl_gen::TlUpdate::deserialize(&mut std::io::Cursor::new(upd_raw.as_slice()))
+                {
                     match update {
                         tl_gen::TlUpdate::NewMessage { message, .. } => {
                             if let Ok(tl_gen::TlMessage::Message { id, .. }) =
-                                tl_gen::TlMessage::deserialize(&mut std::io::Cursor::new(message.as_slice()))
+                                tl_gen::TlMessage::deserialize(&mut std::io::Cursor::new(
+                                    message.as_slice(),
+                                ))
                             {
                                 return Some(id);
                             }
@@ -1556,7 +1870,9 @@ pub fn parse_contacts_response(data: &[u8]) -> Result<Vec<(i64, i64)>, String> {
 
     match obj {
         tl_gen::TlContactsContacts::NotModified => Ok(Vec::new()),
-        tl_gen::TlContactsContacts::Contacts { contacts, users, .. } => {
+        tl_gen::TlContactsContacts::Contacts {
+            contacts, users, ..
+        } => {
             // collect user_ids from contacts vector
             let mut contact_user_ids = Vec::with_capacity(contacts.len());
             for raw in &contacts {
@@ -1569,7 +1885,10 @@ pub fn parse_contacts_response(data: &[u8]) -> Result<Vec<(i64, i64)>, String> {
             let mut results = Vec::new();
             for raw in &users {
                 if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-                    if let tl_gen::TlUser::User { id, access_hash, .. } = user {
+                    if let tl_gen::TlUser::User {
+                        id, access_hash, ..
+                    } = user
+                    {
                         if contact_user_ids.contains(&id) {
                             results.push((id, access_hash.unwrap_or(0)));
                         }
@@ -1600,7 +1919,9 @@ pub fn parse_contacts_detailed(data: &[u8]) -> Result<Vec<ContactInfo>, String> 
 
     match obj {
         tl_gen::TlContactsContacts::NotModified => Ok(Vec::new()),
-        tl_gen::TlContactsContacts::Contacts { contacts, users, .. } => {
+        tl_gen::TlContactsContacts::Contacts {
+            contacts, users, ..
+        } => {
             let mut contact_user_ids = Vec::with_capacity(contacts.len());
             for raw in &contacts {
                 if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlContact>(raw) {
@@ -1611,7 +1932,16 @@ pub fn parse_contacts_detailed(data: &[u8]) -> Result<Vec<ContactInfo>, String> 
             let mut results = Vec::new();
             for raw in &users {
                 if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-                    if let tl_gen::TlUser::User { id, access_hash, username, phone, first_name, last_name, .. } = user {
+                    if let tl_gen::TlUser::User {
+                        id,
+                        access_hash,
+                        username,
+                        phone,
+                        first_name,
+                        last_name,
+                        ..
+                    } = user
+                    {
                         if contact_user_ids.contains(&id) {
                             results.push(ContactInfo {
                                 user_id: id,
@@ -1631,13 +1961,17 @@ pub fn parse_contacts_detailed(data: &[u8]) -> Result<Vec<ContactInfo>, String> 
 }
 
 // parse contacts.contacts -> Vec<(user_id, access_hash, online_bucket)>
-pub fn parse_contacts_response_with_status(data: &[u8]) -> Result<Vec<(i64, i64, OnlineBucket)>, String> {
+pub fn parse_contacts_response_with_status(
+    data: &[u8],
+) -> Result<Vec<(i64, i64, OnlineBucket)>, String> {
     let inner = tl_gen::unwrap_rpc(data)?;
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlContactsContacts>(&inner)?;
 
     match obj {
         tl_gen::TlContactsContacts::NotModified => Ok(Vec::new()),
-        tl_gen::TlContactsContacts::Contacts { contacts, users, .. } => {
+        tl_gen::TlContactsContacts::Contacts {
+            contacts, users, ..
+        } => {
             let mut contact_user_ids = Vec::with_capacity(contacts.len());
             for raw in &contacts {
                 if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlContact>(raw) {
@@ -1648,7 +1982,14 @@ pub fn parse_contacts_response_with_status(data: &[u8]) -> Result<Vec<(i64, i64,
             let mut results = Vec::new();
             for raw in &users {
                 if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-                    if let tl_gen::TlUser::User { id, access_hash, deleted, status, .. } = user {
+                    if let tl_gen::TlUser::User {
+                        id,
+                        access_hash,
+                        deleted,
+                        status,
+                        ..
+                    } = user
+                    {
                         if contact_user_ids.contains(&id) {
                             let bucket = if deleted {
                                 OnlineBucket::Deleted
@@ -1685,9 +2026,13 @@ pub fn parse_dialog_filter_ids(data: &[u8]) -> Result<Vec<i32>, String> {
     for raw in &obj.filters {
         if let Ok(filter) = tl_gen::deserialize_tl_obj::<tl_gen::TlDialogFilter>(raw) {
             match filter {
-                tl_gen::TlDialogFilter::DialogFilter { id, .. } => { ids.push(id); }
+                tl_gen::TlDialogFilter::DialogFilter { id, .. } => {
+                    ids.push(id);
+                }
                 tl_gen::TlDialogFilter::Default => {}
-                tl_gen::TlDialogFilter::Chatlist { id, .. } => { ids.push(id); }
+                tl_gen::TlDialogFilter::Chatlist { id, .. } => {
+                    ids.push(id);
+                }
             }
         }
     }
@@ -1716,9 +2061,18 @@ pub fn build_add_chat_user(chat_id: i64) -> Vec<u8> {
 // returns Vec<DialogPeer> with peer type info
 #[derive(Debug, Clone)]
 pub enum DialogPeer {
-    User { id: i64, access_hash: i64, is_bot: bool },
-    Chat { id: i64 },
-    Channel { id: i64, access_hash: i64 },
+    User {
+        id: i64,
+        access_hash: i64,
+        is_bot: bool,
+    },
+    Chat {
+        id: i64,
+    },
+    Channel {
+        id: i64,
+        access_hash: i64,
+    },
 }
 
 // parse dialogs to get list of peers with bot detection
@@ -1739,10 +2093,20 @@ pub fn parse_dialog_peers(data: &[u8]) -> Result<Vec<DialogPeer>, String> {
 
     for raw in &users_raw {
         if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-            if let tl_gen::TlUser::User { id, access_hash, bot, .. } = user {
+            if let tl_gen::TlUser::User {
+                id,
+                access_hash,
+                bot,
+                ..
+            } = user
+            {
                 let ah = access_hash.unwrap_or(0);
                 if id != 0 && ah != 0 {
-                    peers.push(DialogPeer::User { id, access_hash: ah, is_bot: bot });
+                    peers.push(DialogPeer::User {
+                        id,
+                        access_hash: ah,
+                        is_bot: bot,
+                    });
                 }
             }
         }
@@ -1751,10 +2115,15 @@ pub fn parse_dialog_peers(data: &[u8]) -> Result<Vec<DialogPeer>, String> {
     for raw in &chats_raw {
         if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
             match chat {
-                tl_gen::TlChat::Channel { id, access_hash, .. } => {
+                tl_gen::TlChat::Channel {
+                    id, access_hash, ..
+                } => {
                     let ah = access_hash.unwrap_or(0);
                     if id != 0 {
-                        peers.push(DialogPeer::Channel { id, access_hash: ah });
+                        peers.push(DialogPeer::Channel {
+                            id,
+                            access_hash: ah,
+                        });
                     }
                 }
                 tl_gen::TlChat::Chat { id, .. } => {
@@ -1770,14 +2139,27 @@ pub fn parse_dialog_peers(data: &[u8]) -> Result<Vec<DialogPeer>, String> {
     Ok(peers)
 }
 
-pub fn parse_dialog_peers_from_parts(chats_raw: &[Vec<u8>], users_raw: &[Vec<u8>]) -> Vec<DialogPeer> {
+pub fn parse_dialog_peers_from_parts(
+    chats_raw: &[Vec<u8>],
+    users_raw: &[Vec<u8>],
+) -> Vec<DialogPeer> {
     let mut peers = Vec::new();
     for raw in users_raw {
         if let Ok(user) = tl_gen::deserialize_tl_obj::<tl_gen::TlUser>(raw) {
-            if let tl_gen::TlUser::User { id, access_hash, bot, .. } = user {
+            if let tl_gen::TlUser::User {
+                id,
+                access_hash,
+                bot,
+                ..
+            } = user
+            {
                 let ah = access_hash.unwrap_or(0);
                 if id != 0 && ah != 0 {
-                    peers.push(DialogPeer::User { id, access_hash: ah, is_bot: bot });
+                    peers.push(DialogPeer::User {
+                        id,
+                        access_hash: ah,
+                        is_bot: bot,
+                    });
                 }
             }
         }
@@ -1785,10 +2167,15 @@ pub fn parse_dialog_peers_from_parts(chats_raw: &[Vec<u8>], users_raw: &[Vec<u8>
     for raw in chats_raw {
         if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
             match chat {
-                tl_gen::TlChat::Channel { id, access_hash, .. } => {
+                tl_gen::TlChat::Channel {
+                    id, access_hash, ..
+                } => {
                     let ah = access_hash.unwrap_or(0);
                     if id != 0 {
-                        peers.push(DialogPeer::Channel { id, access_hash: ah });
+                        peers.push(DialogPeer::Channel {
+                            id,
+                            access_hash: ah,
+                        });
                     }
                 }
                 tl_gen::TlChat::Chat { id, .. } => {
@@ -1818,7 +2205,9 @@ pub fn parse_first_callback_button(data: &[u8]) -> Option<(i32, Vec<u8>)> {
 
 // build channels.createChannel for a broadcast (channel) or megagroup
 pub fn build_create_channel(title: &str, about: &str, broadcast: bool, megagroup: bool) -> Vec<u8> {
-    tl_gen::build_channels_createChannel(broadcast, megagroup, false, false, title, about, None, None, None)
+    tl_gen::build_channels_createChannel(
+        broadcast, megagroup, false, false, title, about, None, None, None,
+    )
 }
 
 // build channels.editPhoto with a previously uploaded InputFile
@@ -1863,18 +2252,25 @@ pub fn parse_created_channel(data: &[u8]) -> Result<(i64, i64), String> {
     // prefer the channel we created (creator flag); fall back to first channel
     let mut fallback: Option<(i64, i64)> = None;
     for chat_raw in &chats {
-        if let Ok(tl_gen::TlChat::Channel { creator, id, access_hash, .. }) =
-            tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(chat_raw)
+        if let Ok(tl_gen::TlChat::Channel {
+            creator,
+            id,
+            access_hash,
+            ..
+        }) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(chat_raw)
         {
             let hash = access_hash.unwrap_or(0);
-            if id == 0 || hash == 0 { continue; }
-            if creator { return Ok((id, hash)); }
+            if id == 0 || hash == 0 {
+                continue;
+            }
+            if creator {
+                return Ok((id, hash));
+            }
             fallback.get_or_insert((id, hash));
         }
     }
     fallback.ok_or_else(|| "no created channel found in response".into())
 }
-
 
 // messageEntity#... = MessageEntity. only the markdown subset we emit.
 // constructor IDs come straight from codegen so they track the schema.
@@ -1898,7 +2294,9 @@ pub fn parse_exported_invite_link(data: &[u8]) -> Result<String, String> {
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlExportedChatInvite>(&inner)?;
     match obj {
         tl_gen::TlExportedChatInvite::ChatInviteExported { link, .. } => Ok(link),
-        tl_gen::TlExportedChatInvite::ChatInvitePublicJoinRequests => Err("public join requests, no link".into()),
+        tl_gen::TlExportedChatInvite::ChatInvitePublicJoinRequests => {
+            Err("public join requests, no link".into())
+        }
     }
 }
 
@@ -1911,13 +2309,35 @@ pub fn build_update_personal_channel(channel_id: i64, access_hash: i64) -> Vec<u
 // represents a single MessageEntity to be sent with a message
 #[derive(Debug, Clone)]
 pub enum MarkdownEntity {
-    Bold { offset: i32, length: i32 },
-    Italic { offset: i32, length: i32 },
-    Underline { offset: i32, length: i32 },
-    Strike { offset: i32, length: i32 },
-    Spoiler { offset: i32, length: i32 },
-    Code { offset: i32, length: i32 },
-    TextUrl { offset: i32, length: i32, url: String },
+    Bold {
+        offset: i32,
+        length: i32,
+    },
+    Italic {
+        offset: i32,
+        length: i32,
+    },
+    Underline {
+        offset: i32,
+        length: i32,
+    },
+    Strike {
+        offset: i32,
+        length: i32,
+    },
+    Spoiler {
+        offset: i32,
+        length: i32,
+    },
+    Code {
+        offset: i32,
+        length: i32,
+    },
+    TextUrl {
+        offset: i32,
+        length: i32,
+        url: String,
+    },
 }
 
 impl MarkdownEntity {
@@ -1960,7 +2380,11 @@ impl MarkdownEntity {
                 buf.write_i32::<LittleEndian>(*offset).unwrap();
                 buf.write_i32::<LittleEndian>(*length).unwrap();
             }
-            Self::TextUrl { offset, length, url } => {
+            Self::TextUrl {
+                offset,
+                length,
+                url,
+            } => {
                 buf.write_u32::<LittleEndian>(MSG_ENTITY_TEXT_URL).unwrap();
                 buf.write_i32::<LittleEndian>(*offset).unwrap();
                 buf.write_i32::<LittleEndian>(*length).unwrap();
@@ -1987,8 +2411,8 @@ pub fn build_send_message_with_entities(
 
     if entities.is_empty() {
         tl_gen::build_messages_sendMessage(
-            false, false, false, false, false, false, false, false,
-            &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
+            false, false, false, false, false, false, false, false, &peer, None, message,
+            random_id, None, None, None, None, None, None, None, None, None, None,
         )
     } else {
         let mut entity_bufs: Vec<Vec<u8>> = Vec::with_capacity(entities.len());
@@ -1999,8 +2423,28 @@ pub fn build_send_message_with_entities(
         }
         let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|v| v.as_slice()).collect();
         tl_gen::build_messages_sendMessage(
-            false, false, false, false, false, false, false, false,
-            &peer, None, message, random_id, None, Some(&entity_refs), None, None, None, None, None, None, None, None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            &peer,
+            None,
+            message,
+            random_id,
+            None,
+            Some(&entity_refs),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
     }
 }
@@ -2022,8 +2466,8 @@ pub fn build_send_media_uploaded_photo(
 
     if entities.is_empty() {
         tl_gen::build_messages_sendMedia(
-            false, false, false, false, false, false, false,
-            &peer, None, &media, caption, random_id, None, None, None, None, None, None, None, None, None,
+            false, false, false, false, false, false, false, &peer, None, &media, caption,
+            random_id, None, None, None, None, None, None, None, None, None,
         )
     } else {
         let mut entity_bufs: Vec<Vec<u8>> = Vec::with_capacity(entities.len());
@@ -2034,8 +2478,27 @@ pub fn build_send_media_uploaded_photo(
         }
         let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|v| v.as_slice()).collect();
         tl_gen::build_messages_sendMedia(
-            false, false, false, false, false, false, false,
-            &peer, None, &media, caption, random_id, None, Some(&entity_refs), None, None, None, None, None, None, None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            &peer,
+            None,
+            &media,
+            caption,
+            random_id,
+            None,
+            Some(&entity_refs),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
         )
     }
 }
@@ -2101,11 +2564,26 @@ pub fn parse_markdown_v2(input: &str) -> (String, Vec<MarkdownEntity>) {
                         entities.push(shift_entity(ent, start_off));
                     }
                     let ent = match ctor {
-                        "bold" => MarkdownEntity::Bold { offset: start_off, length: inner_len },
-                        "italic" => MarkdownEntity::Italic { offset: start_off, length: inner_len },
-                        "underline" => MarkdownEntity::Underline { offset: start_off, length: inner_len },
-                        "strike" => MarkdownEntity::Strike { offset: start_off, length: inner_len },
-                        _ => MarkdownEntity::Spoiler { offset: start_off, length: inner_len },
+                        "bold" => MarkdownEntity::Bold {
+                            offset: start_off,
+                            length: inner_len,
+                        },
+                        "italic" => MarkdownEntity::Italic {
+                            offset: start_off,
+                            length: inner_len,
+                        },
+                        "underline" => MarkdownEntity::Underline {
+                            offset: start_off,
+                            length: inner_len,
+                        },
+                        "strike" => MarkdownEntity::Strike {
+                            offset: start_off,
+                            length: inner_len,
+                        },
+                        _ => MarkdownEntity::Spoiler {
+                            offset: start_off,
+                            length: inner_len,
+                        },
                     };
                     entities.push(ent);
                     output.push_str(&inner_text);
@@ -2152,13 +2630,39 @@ pub fn parse_markdown_v2(input: &str) -> (String, Vec<MarkdownEntity>) {
 
 fn shift_entity(e: MarkdownEntity, by: i32) -> MarkdownEntity {
     match e {
-        MarkdownEntity::Bold { offset, length } => MarkdownEntity::Bold { offset: offset + by, length },
-        MarkdownEntity::Italic { offset, length } => MarkdownEntity::Italic { offset: offset + by, length },
-        MarkdownEntity::Underline { offset, length } => MarkdownEntity::Underline { offset: offset + by, length },
-        MarkdownEntity::Strike { offset, length } => MarkdownEntity::Strike { offset: offset + by, length },
-        MarkdownEntity::Spoiler { offset, length } => MarkdownEntity::Spoiler { offset: offset + by, length },
-        MarkdownEntity::Code { offset, length } => MarkdownEntity::Code { offset: offset + by, length },
-        MarkdownEntity::TextUrl { offset, length, url } => MarkdownEntity::TextUrl { offset: offset + by, length, url },
+        MarkdownEntity::Bold { offset, length } => MarkdownEntity::Bold {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::Italic { offset, length } => MarkdownEntity::Italic {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::Underline { offset, length } => MarkdownEntity::Underline {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::Strike { offset, length } => MarkdownEntity::Strike {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::Spoiler { offset, length } => MarkdownEntity::Spoiler {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::Code { offset, length } => MarkdownEntity::Code {
+            offset: offset + by,
+            length,
+        },
+        MarkdownEntity::TextUrl {
+            offset,
+            length,
+            url,
+        } => MarkdownEntity::TextUrl {
+            offset: offset + by,
+            length,
+            url,
+        },
     }
 }
 
@@ -2181,8 +2685,13 @@ fn find_char(chars: &[char], from: usize, c: char) -> Option<usize> {
 fn find_unescaped(chars: &[char], from: usize, c: char) -> Option<usize> {
     let mut i = from;
     while i < chars.len() {
-        if chars[i] == '\\' { i += 2; continue; }
-        if chars[i] == c { return Some(i); }
+        if chars[i] == '\\' {
+            i += 2;
+            continue;
+        }
+        if chars[i] == c {
+            return Some(i);
+        }
         i += 1;
     }
     None
@@ -2207,13 +2716,24 @@ pub fn build_check_chat_invite(hash: &str) -> Vec<u8> {
 }
 
 // messages.getMessagesViews for channel
-pub fn build_get_messages_views_channel(channel_id: i64, access_hash: i64, msg_ids: &[i32], increment: bool) -> Vec<u8> {
+pub fn build_get_messages_views_channel(
+    channel_id: i64,
+    access_hash: i64,
+    msg_ids: &[i32],
+    increment: bool,
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     tl_gen::build_messages_getMessagesViews(&peer, msg_ids, increment)
 }
 
 // messages.sendReaction for channel
-pub fn build_send_reaction_channel(channel_id: i64, access_hash: i64, msg_id: i32, emoji: Option<&str>, big: bool) -> Vec<u8> {
+pub fn build_send_reaction_channel(
+    channel_id: i64,
+    access_hash: i64,
+    msg_id: i32,
+    emoji: Option<&str>,
+    big: bool,
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     match emoji {
         Some(e) => {
@@ -2221,14 +2741,16 @@ pub fn build_send_reaction_channel(channel_id: i64, access_hash: i64, msg_id: i3
             let reaction_refs: &[&[u8]] = &[&reaction_bytes];
             tl_gen::build_messages_sendReaction(big, true, &peer, msg_id, Some(reaction_refs))
         }
-        None => {
-            tl_gen::build_messages_sendReaction(big, true, &peer, msg_id, None)
-        }
+        None => tl_gen::build_messages_sendReaction(big, true, &peer, msg_id, None),
     }
 }
 
 // folders.editPeerFolders — move channel to folder
-pub fn build_edit_peer_folder_channel(channel_id: i64, access_hash: i64, folder_id: i32) -> Vec<u8> {
+pub fn build_edit_peer_folder_channel(
+    channel_id: i64,
+    access_hash: i64,
+    folder_id: i32,
+) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     let folder_peer = tl_gen::serialize_inputFolderPeer(&peer, folder_id);
     let refs: &[&[u8]] = &[&folder_peer];
@@ -2247,13 +2769,16 @@ pub fn build_join_chatlist_invite(slug: &str, peers_blob: &[u8]) -> Vec<u8> {
     if peers_blob.len() < 4 {
         return tl_gen::build_chatlists_joinChatlistInvite(slug, &[]);
     }
-    let count = u32::from_le_bytes([peers_blob[0], peers_blob[1], peers_blob[2], peers_blob[3]]) as usize;
+    let count =
+        u32::from_le_bytes([peers_blob[0], peers_blob[1], peers_blob[2], peers_blob[3]]) as usize;
     // each inputPeerChannel is 4 (ctor) + 8 (id) + 8 (hash) = 20 bytes
     let item_size = 20;
     let mut refs: Vec<&[u8]> = Vec::with_capacity(count);
     let mut offset = 4;
     for _ in 0..count {
-        if offset + item_size > peers_blob.len() { break; }
+        if offset + item_size > peers_blob.len() {
+            break;
+        }
         refs.push(&peers_blob[offset..offset + item_size]);
         offset += item_size;
     }
@@ -2266,19 +2791,18 @@ pub fn parse_chatlist_invite_as_input_peers(data: &[u8]) -> Result<(String, Vec<
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlChatlistsChatlistInvite>(&inner)?;
 
     let (title, chats_raw) = match obj {
-        tl_gen::TlChatlistsChatlistInvite::ChatlistInvite { chats, .. } => {
-            (String::new(), chats)
-        }
-        tl_gen::TlChatlistsChatlistInvite::Already { chats, .. } => {
-            (String::new(), chats)
-        }
+        tl_gen::TlChatlistsChatlistInvite::ChatlistInvite { chats, .. } => (String::new(), chats),
+        tl_gen::TlChatlistsChatlistInvite::Already { chats, .. } => (String::new(), chats),
     };
 
     // extract (channel_id, access_hash) from chats vector
     let mut found: Vec<(i64, i64)> = Vec::new();
     for raw in &chats_raw {
         if let Ok(chat) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(raw) {
-            if let tl_gen::TlChat::Channel { id, access_hash, .. } = chat {
+            if let tl_gen::TlChat::Channel {
+                id, access_hash, ..
+            } = chat
+            {
                 let ah = access_hash.unwrap_or(0);
                 if !found.iter().any(|(fid, _)| *fid == id) {
                     found.push((id, ah));
@@ -2307,7 +2831,9 @@ pub fn build_get_history_channel(channel_id: i64, access_hash: i64, limit: i32) 
 pub fn build_search_channel_pinned(channel_id: i64, access_hash: i64, limit: i32) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     let filter = tl_gen::INPUT_MESSAGES_FILTER_PINNED.to_le_bytes().to_vec();
-    tl_gen::build_messages_search(&peer, "", None, None, None, None, &filter, 0, 0, 0, 0, limit, 0, 0, 0)
+    tl_gen::build_messages_search(
+        &peer, "", None, None, None, None, &filter, 0, 0, 0, 0, limit, 0, 0, 0,
+    )
 }
 
 // === cloner TL builders ===
@@ -2341,8 +2867,27 @@ pub fn build_forward_messages(
     let to_peer = tl_gen::serialize_input_peer_channel(to_channel_id, to_access_hash);
     let random_ids: Vec<i64> = msg_ids.iter().map(|_| rand::random()).collect();
     tl_gen::build_messages_forwardMessages(
-        silent, false, false, drop_author, drop_captions, false, false,
-        &from_peer, msg_ids, &random_ids, &to_peer, None, None, None, None, None, None, None, None, None, None,
+        silent,
+        false,
+        false,
+        drop_author,
+        drop_captions,
+        false,
+        false,
+        &from_peer,
+        msg_ids,
+        &random_ids,
+        &to_peer,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -2357,7 +2902,20 @@ pub fn build_edit_message_channel(
 ) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_channel(channel_id, access_hash);
     if entities.is_empty() {
-        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, None, None, None, None, None)
+        tl_gen::build_messages_editMessage(
+            no_webpage,
+            false,
+            &peer,
+            msg_id,
+            Some(new_text),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
     } else {
         let mut entity_bufs: Vec<Vec<u8>> = Vec::with_capacity(entities.len());
         for e in entities {
@@ -2366,7 +2924,20 @@ pub fn build_edit_message_channel(
             entity_bufs.push(b);
         }
         let entity_refs: Vec<&[u8]> = entity_bufs.iter().map(|v| v.as_slice()).collect();
-        tl_gen::build_messages_editMessage(no_webpage, false, &peer, msg_id, Some(new_text), None, None, Some(&entity_refs), None, None, None, None)
+        tl_gen::build_messages_editMessage(
+            no_webpage,
+            false,
+            &peer,
+            msg_id,
+            Some(new_text),
+            None,
+            None,
+            Some(&entity_refs),
+            None,
+            None,
+            None,
+            None,
+        )
     }
 }
 
@@ -2410,22 +2981,38 @@ pub fn parse_full_channel(data: &[u8]) -> Result<FullChannelInfo, String> {
     // extract about and photo from full_chat (channelFull)
     if let Ok(full) = tl_gen::deserialize_tl_obj::<tl_gen::TlChatFull>(&obj.full_chat) {
         match full {
-            tl_gen::TlChatFull::ChannelFull { about, chat_photo, .. } => {
+            tl_gen::TlChatFull::ChannelFull {
+                about, chat_photo, ..
+            } => {
                 info.about = about;
                 // decode photo to extract id/access_hash/file_reference
                 if let Ok(photo) = tl_gen::deserialize_tl_obj::<tl_gen::TlPhoto>(&chat_photo) {
-                    if let tl_gen::TlPhoto::Photo { id, access_hash, file_reference, .. } = photo {
+                    if let tl_gen::TlPhoto::Photo {
+                        id,
+                        access_hash,
+                        file_reference,
+                        ..
+                    } = photo
+                    {
                         info.chat_photo_id = id;
                         info.chat_photo_access_hash = access_hash;
                         info.chat_photo_file_reference = file_reference;
                     }
                 }
             }
-            tl_gen::TlChatFull::Full { about, chat_photo, .. } => {
+            tl_gen::TlChatFull::Full {
+                about, chat_photo, ..
+            } => {
                 info.about = about;
                 if let Some(photo_raw) = chat_photo {
                     if let Ok(photo) = tl_gen::deserialize_tl_obj::<tl_gen::TlPhoto>(&photo_raw) {
-                        if let tl_gen::TlPhoto::Photo { id, access_hash, file_reference, .. } = photo {
+                        if let tl_gen::TlPhoto::Photo {
+                            id,
+                            access_hash,
+                            file_reference,
+                            ..
+                        } = photo
+                        {
                             info.chat_photo_id = id;
                             info.chat_photo_access_hash = access_hash;
                             info.chat_photo_file_reference = file_reference;
@@ -2443,7 +3030,9 @@ pub fn parse_full_channel(data: &[u8]) -> Result<FullChannelInfo, String> {
 // scans Updates response from forwardMessages / sendMessage for the freshly
 // created message and returns its ID. returns None if nothing matches.
 pub fn extract_first_new_message_id(data: &[u8]) -> Option<i32> {
-    if data.len() < 4 { return None; }
+    if data.len() < 4 {
+        return None;
+    }
 
     let ctor = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
@@ -2464,13 +3053,22 @@ pub fn extract_first_new_message_id(data: &[u8]) -> Option<i32> {
 
     match updates {
         // updateShortSentMessage carries the id directly
-        tl_gen::TlUpdates::HortSentMessage { id, .. } => if id > 0 { Some(id) } else { None },
+        tl_gen::TlUpdates::HortSentMessage { id, .. } => {
+            if id > 0 {
+                Some(id)
+            } else {
+                None
+            }
+        }
         tl_gen::TlUpdates::Hort { update, .. } => message_id_from_update(&update),
-        tl_gen::TlUpdates::Updates { updates, .. } | tl_gen::TlUpdates::Combined { updates, .. } => {
+        tl_gen::TlUpdates::Updates { updates, .. }
+        | tl_gen::TlUpdates::Combined { updates, .. } => {
             let mut best: Option<i32> = None;
             for raw in &updates {
                 if let Some(id) = message_id_from_update(raw) {
-                    if id > 0 && best.map_or(true, |b| id < b) { best = Some(id); }
+                    if id > 0 && best.map_or(true, |b| id < b) {
+                        best = Some(id);
+                    }
                 }
             }
             best
@@ -2481,7 +3079,9 @@ pub fn extract_first_new_message_id(data: &[u8]) -> Option<i32> {
 
 // extract a new message id from a single raw Update object.
 fn message_id_from_update(raw: &[u8]) -> Option<i32> {
-    if raw.len() < 4 { return None; }
+    if raw.len() < 4 {
+        return None;
+    }
     let ctor = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
     let mut cursor = Cursor::new(raw);
     let _ = cursor.read_u32::<LittleEndian>();
@@ -2494,13 +3094,18 @@ fn message_id_from_update(raw: &[u8]) -> Option<i32> {
             match tl_gen::TlMessage::deserialize(&mut cursor).ok()? {
                 tl_gen::TlMessage::Message { id, .. }
                 | tl_gen::TlMessage::Service { id, .. }
-                | tl_gen::TlMessage::Empty { id, .. } => if id > 0 { Some(id) } else { None },
+                | tl_gen::TlMessage::Empty { id, .. } => {
+                    if id > 0 {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                }
             }
         }
         _ => None,
     }
 }
-
 
 // === full message media decoder (used by cloner for size gating) ===
 
@@ -2543,15 +3148,22 @@ fn media_to_summary(media: &tl_gen::TlMessageMedia) -> Result<MediaSummary, Stri
                 Some(raw) => photo_size_from_raw(raw),
                 None => 0,
             };
-            Ok(MediaSummary { kind: MediaKindRepr::Photo, size_bytes: size })
+            Ok(MediaSummary {
+                kind: MediaKindRepr::Photo,
+                size_bytes: size,
+            })
         }
-        tl_gen::TlMessageMedia::Document { document, .. } => {
-            match document {
-                Some(raw) => document_summary_from_raw(raw),
-                None => Ok(MediaSummary { kind: MediaKindRepr::Document, size_bytes: 0 }),
-            }
-        }
-        _ => Ok(MediaSummary { kind: MediaKindRepr::Other, size_bytes: 0 }),
+        tl_gen::TlMessageMedia::Document { document, .. } => match document {
+            Some(raw) => document_summary_from_raw(raw),
+            None => Ok(MediaSummary {
+                kind: MediaKindRepr::Document,
+                size_bytes: 0,
+            }),
+        },
+        _ => Ok(MediaSummary {
+            kind: MediaKindRepr::Other,
+            size_bytes: 0,
+        }),
     }
 }
 
@@ -2567,7 +3179,9 @@ fn photo_size_from_raw(raw: &[u8]) -> u64 {
             let mut max: u64 = 0;
             for size_raw in &sizes {
                 let sz = photo_size_bytes(size_raw);
-                if sz > max { max = sz; }
+                if sz > max {
+                    max = sz;
+                }
             }
             max
         }
@@ -2585,9 +3199,12 @@ fn photo_size_bytes(raw: &[u8]) -> u64 {
         tl_gen::TlPhotoSize::PhotoSize { size, .. } => size.max(0) as u64,
         tl_gen::TlPhotoSize::PhotoCachedSize { bytes, .. } => bytes.len() as u64,
         tl_gen::TlPhotoSize::PhotoStrippedSize { bytes, .. } => bytes.len() as u64,
-        tl_gen::TlPhotoSize::Progressive { sizes, .. } => {
-            sizes.iter().filter(|&&s| s > 0).last().copied().unwrap_or(0) as u64
-        }
+        tl_gen::TlPhotoSize::Progressive { sizes, .. } => sizes
+            .iter()
+            .filter(|&&s| s > 0)
+            .last()
+            .copied()
+            .unwrap_or(0) as u64,
         tl_gen::TlPhotoSize::PhotoPathSize { bytes, .. } => bytes.len() as u64,
     }
 }
@@ -2597,21 +3214,34 @@ fn document_summary_from_raw(raw: &[u8]) -> Result<MediaSummary, String> {
     let doc = tl_gen::deserialize_tl_obj::<tl_gen::TlDocument>(raw)
         .map_err(|e| format!("doc deser: {e}"))?;
     match doc {
-        tl_gen::TlDocument::Empty { .. } => Ok(MediaSummary { kind: MediaKindRepr::Document, size_bytes: 0 }),
-        tl_gen::TlDocument::Document { size, attributes, .. } => {
+        tl_gen::TlDocument::Empty { .. } => Ok(MediaSummary {
+            kind: MediaKindRepr::Document,
+            size_bytes: 0,
+        }),
+        tl_gen::TlDocument::Document {
+            size, attributes, ..
+        } => {
             let mut kind = MediaKindRepr::Document;
             for attr_raw in &attributes {
-                if let Ok(attr) = tl_gen::deserialize_tl_obj::<tl_gen::TlDocumentAttribute>(attr_raw) {
+                if let Ok(attr) =
+                    tl_gen::deserialize_tl_obj::<tl_gen::TlDocumentAttribute>(attr_raw)
+                {
                     kind = merge_doc_attr_kind(&attr, kind);
                 }
             }
-            Ok(MediaSummary { kind, size_bytes: size.max(0) as u64 })
+            Ok(MediaSummary {
+                kind,
+                size_bytes: size.max(0) as u64,
+            })
         }
     }
 }
 
 // determine media kind from a document attribute, with precedence: Video > Audio > Document
-fn merge_doc_attr_kind(attr: &tl_gen::TlDocumentAttribute, current: MediaKindRepr) -> MediaKindRepr {
+fn merge_doc_attr_kind(
+    attr: &tl_gen::TlDocumentAttribute,
+    current: MediaKindRepr,
+) -> MediaKindRepr {
     match attr {
         tl_gen::TlDocumentAttribute::Video { .. } => MediaKindRepr::Video,
         tl_gen::TlDocumentAttribute::Audio { .. } => {
@@ -2622,7 +3252,11 @@ fn merge_doc_attr_kind(attr: &tl_gen::TlDocumentAttribute, current: MediaKindRep
             }
         }
         _ => {
-            if current == MediaKindRepr::None { MediaKindRepr::Document } else { current }
+            if current == MediaKindRepr::None {
+                MediaKindRepr::Document
+            } else {
+                current
+            }
         }
     }
 }
@@ -2631,7 +3265,11 @@ fn merge_doc_attr_kind(attr: &tl_gen::TlDocumentAttribute, current: MediaKindRep
 pub fn extract_message_media_summary(message_blob: &[u8]) -> Option<MediaSummary> {
     // try deserializing as a TlMessage directly
     if let Ok(msg) = tl_gen::deserialize_tl_obj::<tl_gen::TlMessage>(message_blob) {
-        if let tl_gen::TlMessage::Message { media: Some(ref media_raw), .. } = msg {
+        if let tl_gen::TlMessage::Message {
+            media: Some(ref media_raw),
+            ..
+        } = msg
+        {
             if let Ok(media) = tl_gen::deserialize_tl_obj::<tl_gen::TlMessageMedia>(media_raw) {
                 if let Ok(s) = media_to_summary(&media) {
                     return Some(s);
@@ -2657,13 +3295,15 @@ pub fn extract_message_media_summary(message_blob: &[u8]) -> Option<MediaSummary
     None
 }
 
-
 // channels.deleteMessages#84c1fd4e channel:InputChannel id:Vector<int> = messages.AffectedMessages
-pub fn build_channels_delete_messages(channel_id: i64, access_hash: i64, msg_ids: &[i32]) -> Vec<u8> {
+pub fn build_channels_delete_messages(
+    channel_id: i64,
+    access_hash: i64,
+    msg_ids: &[i32],
+) -> Vec<u8> {
     let channel = tl_gen::serialize_input_channel(channel_id, access_hash);
     tl_gen::build_channels_deleteMessages(&channel, msg_ids)
 }
-
 
 // scans bytes for a Channel object whose id matches `channel_id`
 // and returns whether it is a broadcast channel. returns `None` if not found.
@@ -2671,11 +3311,17 @@ pub fn scan_channel_is_broadcast_opt(data: &[u8], channel_id: i64) -> Option<boo
     // scan for TlChat::Channel at 4-byte boundaries
     let mut i = 0usize;
     while i + 4 <= data.len() {
-        let c = u32::from_le_bytes([data[i], data[i+1], data[i+2], data[i+3]]);
+        let c = u32::from_le_bytes([data[i], data[i + 1], data[i + 2], data[i + 3]]);
         if c == tl_gen::CHANNEL {
             let mut cursor = Cursor::new(&data[i..]);
             if let Ok(chat) = tl_gen::TlChat::deserialize(&mut cursor) {
-                if let tl_gen::TlChat::Channel { id, broadcast, megagroup, .. } = chat {
+                if let tl_gen::TlChat::Channel {
+                    id,
+                    broadcast,
+                    megagroup,
+                    ..
+                } = chat
+                {
                     if id == channel_id {
                         return Some(broadcast && !megagroup);
                     }
@@ -2699,11 +3345,14 @@ pub fn parse_first_accessible_channel(data: &[u8]) -> Result<(i64, i64), String>
 
     let mut i = 0usize;
     while i + 4 <= inner.len() {
-        let c = u32::from_le_bytes([inner[i], inner[i+1], inner[i+2], inner[i+3]]);
+        let c = u32::from_le_bytes([inner[i], inner[i + 1], inner[i + 2], inner[i + 3]]);
         if c == tl_gen::CHANNEL {
             let mut cursor = Cursor::new(&inner[i..]);
             if let Ok(chat) = tl_gen::TlChat::deserialize(&mut cursor) {
-                if let tl_gen::TlChat::Channel { id, access_hash, .. } = chat {
+                if let tl_gen::TlChat::Channel {
+                    id, access_hash, ..
+                } = chat
+                {
                     let ah = access_hash.unwrap_or(0);
                     if id != 0 && ah != 0 {
                         return Ok((id, ah));
@@ -2733,24 +3382,33 @@ pub fn parse_chat_invite_summary(data: &[u8]) -> Result<ChatInviteSummary, Strin
     let obj = tl_gen::deserialize_tl_obj::<tl_gen::TlChatInvite>(&inner)?;
 
     match obj {
-        tl_gen::TlChatInvite::ChatInvite { broadcast, megagroup, request_needed, title, .. } => {
-            Ok(ChatInviteSummary {
-                is_chat_invite: true,
-                broadcast,
-                megagroup,
-                request_needed,
-                title,
-                channel_id: None,
-                access_hash: None,
-            })
-        }
+        tl_gen::TlChatInvite::ChatInvite {
+            broadcast,
+            megagroup,
+            request_needed,
+            title,
+            ..
+        } => Ok(ChatInviteSummary {
+            is_chat_invite: true,
+            broadcast,
+            megagroup,
+            request_needed,
+            title,
+            channel_id: None,
+            access_hash: None,
+        }),
         tl_gen::TlChatInvite::Already { chat, .. } => {
-            let (channel_id, access_hash) = if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(&chat) {
-                match c {
-                    tl_gen::TlChat::Channel { id, access_hash, .. } => (Some(id), Some(access_hash.unwrap_or(0))),
-                    _ => (None, None),
-                }
-            } else { (None, None) };
+            let (channel_id, access_hash) =
+                if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(&chat) {
+                    match c {
+                        tl_gen::TlChat::Channel {
+                            id, access_hash, ..
+                        } => (Some(id), Some(access_hash.unwrap_or(0))),
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
+                };
 
             Ok(ChatInviteSummary {
                 is_chat_invite: false,
@@ -2763,12 +3421,17 @@ pub fn parse_chat_invite_summary(data: &[u8]) -> Result<ChatInviteSummary, Strin
             })
         }
         tl_gen::TlChatInvite::Peek { chat, .. } => {
-            let (channel_id, access_hash) = if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(&chat) {
-                match c {
-                    tl_gen::TlChat::Channel { id, access_hash, .. } => (Some(id), Some(access_hash.unwrap_or(0))),
-                    _ => (None, None),
-                }
-            } else { (None, None) };
+            let (channel_id, access_hash) =
+                if let Ok(c) = tl_gen::deserialize_tl_obj::<tl_gen::TlChat>(&chat) {
+                    match c {
+                        tl_gen::TlChat::Channel {
+                            id, access_hash, ..
+                        } => (Some(id), Some(access_hash.unwrap_or(0))),
+                        _ => (None, None),
+                    }
+                } else {
+                    (None, None)
+                };
 
             Ok(ChatInviteSummary {
                 is_chat_invite: false,
@@ -2868,16 +3531,27 @@ pub fn parse_channel_participants(data: &[u8]) -> Result<ParticipantsBatch, Stri
 
     match obj {
         tl_gen::TlChannelsChannelParticipants::NotModified => Ok(ParticipantsBatch::default()),
-        tl_gen::TlChannelsChannelParticipants::ChannelParticipants { count, participants, users, .. } => {
+        tl_gen::TlChannelsChannelParticipants::ChannelParticipants {
+            count,
+            participants,
+            users,
+            ..
+        } => {
             // collect admin/self markers from participants vector
             let mut admin_ids: Vec<i64> = Vec::new();
             let mut self_ids: Vec<i64> = Vec::new();
             for raw in &participants {
                 if let Ok(p) = tl_gen::deserialize_tl_obj::<tl_gen::TlChannelParticipant>(raw) {
                     match p {
-                        tl_gen::TlChannelParticipant::Creator { user_id, .. } => { admin_ids.push(user_id); }
-                        tl_gen::TlChannelParticipant::Admin { user_id, .. } => { admin_ids.push(user_id); }
-                        tl_gen::TlChannelParticipant::Myself { user_id, .. } => { self_ids.push(user_id); }
+                        tl_gen::TlChannelParticipant::Creator { user_id, .. } => {
+                            admin_ids.push(user_id);
+                        }
+                        tl_gen::TlChannelParticipant::Admin { user_id, .. } => {
+                            admin_ids.push(user_id);
+                        }
+                        tl_gen::TlChannelParticipant::Myself { user_id, .. } => {
+                            self_ids.push(user_id);
+                        }
                         _ => {}
                     }
                 }
@@ -2891,14 +3565,20 @@ pub fn parse_channel_participants(data: &[u8]) -> Result<ParticipantsBatch, Stri
                     Ok(user) => {
                         parsed_users.push(tl_user_to_participant(user));
                     }
-                    Err(_) => { parse_skipped += 1; }
+                    Err(_) => {
+                        parse_skipped += 1;
+                    }
                 }
             }
 
             // merge admin/self markers
             for u in &mut parsed_users {
-                if admin_ids.contains(&u.id) { u.is_admin = true; }
-                if self_ids.contains(&u.id) { u.is_self = true; }
+                if admin_ids.contains(&u.id) {
+                    u.is_admin = true;
+                }
+                if self_ids.contains(&u.id) {
+                    u.is_self = true;
+                }
             }
 
             Ok(ParticipantsBatch {
@@ -2914,14 +3594,33 @@ pub fn parse_channel_participants(data: &[u8]) -> Result<ParticipantsBatch, Stri
 fn tl_user_to_participant(user: tl_gen::TlUser) -> ParticipantUser {
     match user {
         tl_gen::TlUser::Empty { id, .. } => ParticipantUser {
-            id, access_hash: 0, first_name: String::new(), last_name: String::new(),
-            username: String::new(), phone: String::new(), is_bot: false,
-            is_deleted: true, is_admin: false, is_self: false, premium: false,
+            id,
+            access_hash: 0,
+            first_name: String::new(),
+            last_name: String::new(),
+            username: String::new(),
+            phone: String::new(),
+            is_bot: false,
+            is_deleted: true,
+            is_admin: false,
+            is_self: false,
+            premium: false,
             bucket: OnlineBucket::Deleted,
         },
         tl_gen::TlUser::User {
-            id, access_hash, first_name, last_name, username, phone,
-            bot, deleted, self_, premium, status, usernames, ..
+            id,
+            access_hash,
+            first_name,
+            last_name,
+            username,
+            phone,
+            bot,
+            deleted,
+            self_,
+            premium,
+            status,
+            usernames,
+            ..
         } => {
             let access_hash = access_hash.unwrap_or(0);
             let first_name = first_name.unwrap_or_default();
@@ -2952,10 +3651,17 @@ fn tl_user_to_participant(user: tl_gen::TlUser) -> ParticipantUser {
             };
 
             ParticipantUser {
-                id, access_hash, first_name, last_name,
-                username: final_username, phone,
-                is_bot: bot, is_deleted: deleted,
-                is_admin: false, is_self: self_, premium,
+                id,
+                access_hash,
+                first_name,
+                last_name,
+                username: final_username,
+                phone,
+                is_bot: bot,
+                is_deleted: deleted,
+                is_admin: false,
+                is_self: self_,
+                premium,
                 bucket,
             }
         }
@@ -2963,7 +3669,9 @@ fn tl_user_to_participant(user: tl_gen::TlUser) -> ParticipantUser {
 }
 
 fn classify_user_status_raw(raw: &[u8]) -> OnlineBucket {
-    if raw.len() < 4 { return OnlineBucket::Unknown; }
+    if raw.len() < 4 {
+        return OnlineBucket::Unknown;
+    }
     let ctor = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
     match ctor {
         tl_gen::USER_STATUS_EMPTY => OnlineBucket::Unknown,
@@ -2998,8 +3706,8 @@ pub fn build_send_saved_message(message: &str) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_self();
     let random_id: i64 = rand::random();
     tl_gen::build_messages_sendMessage(
-        true, false, false, false, false, false, false, false,
-        &peer, None, message, random_id, None, None, None, None, None, None, None, None, None, None,
+        true, false, false, false, false, false, false, false, &peer, None, message, random_id,
+        None, None, None, None, None, None, None, None, None, None,
     )
 }
 
@@ -3009,8 +3717,19 @@ pub fn build_search_global(query: &str) -> Vec<u8> {
     let filter = tl_gen::INPUT_MESSAGES_FILTER_EMPTY.to_le_bytes().to_vec();
     let empty_peer = tl_gen::INPUT_PEER_EMPTY.to_le_bytes().to_vec();
     tl_gen::build_messages_searchGlobal(
-        false, false, false, None, None, query, &filter,
-        0, 0, 0, &empty_peer, 0, 20,
+        false,
+        false,
+        false,
+        None,
+        None,
+        query,
+        &filter,
+        0,
+        0,
+        0,
+        &empty_peer,
+        0,
+        20,
     )
 }
 
@@ -3020,12 +3739,20 @@ pub fn build_get_dialogs() -> Vec<u8> {
 }
 
 // messages.sendReaction
-pub fn build_send_reaction(peer_ctor: u32, peer_id: i64, peer_hash: i64, msg_id: i32, emoticon: &str) -> Vec<u8> {
+pub fn build_send_reaction(
+    peer_ctor: u32,
+    peer_id: i64,
+    peer_hash: i64,
+    msg_id: i32,
+    emoticon: &str,
+) -> Vec<u8> {
     // build peer bytes manually (same as before — ctor + id + optional hash)
     let mut peer = Vec::new();
     peer.write_u32::<LittleEndian>(peer_ctor).unwrap();
     peer.write_i64::<LittleEndian>(peer_id).unwrap();
-    if peer_ctor != INPUT_PEER_SELF { peer.write_i64::<LittleEndian>(peer_hash).unwrap(); }
+    if peer_ctor != INPUT_PEER_SELF {
+        peer.write_i64::<LittleEndian>(peer_hash).unwrap();
+    }
 
     let reaction_bytes = tl_gen::serialize_reactionEmoji(emoticon);
     let reaction_refs: &[&[u8]] = &[&reaction_bytes];
@@ -3038,7 +3765,13 @@ pub fn build_delete_messages(msg_ids: &[i32], revoke: bool) -> Vec<u8> {
 }
 
 // contacts.addContact
-pub fn build_add_contact(user_id: i64, access_hash: i64, first_name: &str, last_name: &str, phone: &str) -> Vec<u8> {
+pub fn build_add_contact(
+    user_id: i64,
+    access_hash: i64,
+    first_name: &str,
+    last_name: &str,
+    phone: &str,
+) -> Vec<u8> {
     let id = tl_gen::serialize_input_user(user_id, access_hash);
     tl_gen::build_contacts_addContact(false, &id, first_name, last_name, phone, None)
 }
@@ -3047,21 +3780,23 @@ pub fn build_add_contact(user_id: i64, access_hash: i64, first_name: &str, last_
 pub fn build_get_history_peer(peer_id: i64, access_hash: i64, limit: i32) -> Vec<u8> {
     let peer = tl_gen::serialize_input_peer_user(peer_id, access_hash);
     tl_gen::build_messages_getHistory(&peer, 0, 0, 0, limit, 0, 0, 0)
-}   
+}
 
 // === stories ===
 
 // privacy rule: allow everyone
 pub fn serialize_privacy_allow_all() -> Vec<u8> {
     let mut buf = Vec::with_capacity(4);
-    buf.write_u32::<LittleEndian>(tl_gen::INPUT_PRIVACY_VALUE_ALLOW_ALL).unwrap();
+    buf.write_u32::<LittleEndian>(tl_gen::INPUT_PRIVACY_VALUE_ALLOW_ALL)
+        .unwrap();
     buf
 }
 
 // privacy rule: allow contacts only
 pub fn serialize_privacy_allow_contacts() -> Vec<u8> {
     let mut buf = Vec::with_capacity(4);
-    buf.write_u32::<LittleEndian>(tl_gen::INPUT_PRIVACY_VALUE_ALLOW_CONTACTS).unwrap();
+    buf.write_u32::<LittleEndian>(tl_gen::INPUT_PRIVACY_VALUE_ALLOW_CONTACTS)
+        .unwrap();
     buf
 }
 
@@ -3074,20 +3809,32 @@ pub fn build_send_photo_story(
     file_parts: i32,
     file_name: &str,
     caption: Option<&str>,
+    entities: &[&[u8]],
     period: Option<i32>,
     pinned: bool,
     privacy_rules: &[&[u8]],
     random_id: i64,
 ) -> Vec<u8> {
     let input_file = tl_gen::serialize_inputFile(file_id, file_parts, file_name, "");
-    let media = tl_gen::serialize_inputMediaUploadedPhoto(false, false, &input_file, None, None, None);
+    let media =
+        tl_gen::serialize_inputMediaUploadedPhoto(false, false, &input_file, None, None, None);
     let peer = tl_gen::serialize_input_peer_self();
     tl_gen::build_stories_sendStory(
-        pinned, false, false,
-        &peer, &media, None,
-        caption, None,
-        privacy_rules, random_id, period,
-        None, None, None, None,
+        pinned,
+        false,
+        false,
+        &peer,
+        &media,
+        None,
+        caption,
+        (!entities.is_empty()).then_some(entities),
+        privacy_rules,
+        random_id,
+        period,
+        None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -3097,20 +3844,32 @@ pub fn build_send_photo_story_big(
     file_parts: i32,
     file_name: &str,
     caption: Option<&str>,
+    entities: &[&[u8]],
     period: Option<i32>,
     pinned: bool,
     privacy_rules: &[&[u8]],
     random_id: i64,
 ) -> Vec<u8> {
     let input_file = tl_gen::serialize_inputFileBig(file_id, file_parts, file_name);
-    let media = tl_gen::serialize_inputMediaUploadedPhoto(false, false, &input_file, None, None, None);
+    let media =
+        tl_gen::serialize_inputMediaUploadedPhoto(false, false, &input_file, None, None, None);
     let peer = tl_gen::serialize_input_peer_self();
     tl_gen::build_stories_sendStory(
-        pinned, false, false,
-        &peer, &media, None,
-        caption, None,
-        privacy_rules, random_id, period,
-        None, None, None, None,
+        pinned,
+        false,
+        false,
+        &peer,
+        &media,
+        None,
+        caption,
+        (!entities.is_empty()).then_some(entities),
+        privacy_rules,
+        random_id,
+        period,
+        None,
+        None,
+        None,
+        None,
     )
 }
 
@@ -3124,6 +3883,7 @@ pub fn build_send_video_story(
     w: i32,
     h: i32,
     caption: Option<&str>,
+    entities: &[&[u8]],
     period: Option<i32>,
     pinned: bool,
     privacy_rules: &[&[u8]],
@@ -3131,21 +3891,39 @@ pub fn build_send_video_story(
 ) -> Vec<u8> {
     let input_file = tl_gen::serialize_inputFileBig(file_id, file_parts, file_name);
     let video_attr = tl_gen::serialize_documentAttributeVideo(
-        false, true, false,
-        duration, w, h, None, None, None,
+        false, true, false, duration, w, h, None, None, None,
     );
     let attrs: &[&[u8]] = &[&video_attr];
     let media = tl_gen::serialize_inputMediaUploadedDocument(
-        false, false, false,
-        &input_file, None, "video/mp4", attrs, None, None, None, None,
+        false,
+        false,
+        false,
+        &input_file,
+        None,
+        "video/mp4",
+        attrs,
+        None,
+        None,
+        None,
+        None,
     );
     let peer = tl_gen::serialize_input_peer_self();
     tl_gen::build_stories_sendStory(
-        pinned, false, false,
-        &peer, &media, None,
-        caption, None,
-        privacy_rules, random_id, period,
-        None, None, None, None,
+        pinned,
+        false,
+        false,
+        &peer,
+        &media,
+        None,
+        caption,
+        (!entities.is_empty()).then_some(entities),
+        privacy_rules,
+        random_id,
+        period,
+        None,
+        None,
+        None,
+        None,
     )
 }
 

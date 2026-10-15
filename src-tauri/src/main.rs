@@ -4,6 +4,7 @@
 #[macro_use]
 mod debug;
 mod accounts;
+mod app_update;
 mod audio;
 mod auto_reply;
 mod boost;
@@ -39,8 +40,8 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use queue::TaskQueue;
 use crate::i18n::t;
+use queue::TaskQueue;
 
 static APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
 
@@ -105,7 +106,11 @@ pub fn update_app_config(app_id: i32, app_hash: String, dc_addresses: HashMap<i3
     if !dc_addresses.is_empty() {
         c.dc_addresses = dc_addresses;
     }
-    dbg_log!("app_config updated: app_id={}, dc_count={}", c.app_id, c.dc_addresses.len());
+    dbg_log!(
+        "app_config updated: app_id={}, dc_count={}",
+        c.app_id,
+        c.dc_addresses.len()
+    );
 }
 
 pub fn check_and_mark_dead_session(error: &str, id: &str) -> bool {
@@ -141,8 +146,6 @@ const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 #[derive(Serialize, Clone)]
 pub struct DashboardStats {
     accounts: u32,
-    messages_today: u32,
-    queue: u32,
     proxies: u32,
 }
 
@@ -166,8 +169,8 @@ fn get_version() -> String {
 
 #[tauri::command]
 async fn check_telegram_connectivity() -> bool {
-    use tokio::net::TcpStream;
     use std::time::Duration;
+    use tokio::net::TcpStream;
 
     let targets: &[(&str, u16)] = &[
         // Telegram DC IPs (DC1-DC5)
@@ -189,7 +192,10 @@ async fn check_telegram_connectivity() -> bool {
     for &(host, port) in targets {
         let addr = format!("{}:{}", host, port);
         handles.push(tokio::spawn(async move {
-            tokio::time::timeout(timeout, TcpStream::connect(&addr)).await.is_ok()
+            matches!(
+                tokio::time::timeout(timeout, TcpStream::connect(&addr)).await,
+                Ok(Ok(_))
+            )
         }));
     }
 
@@ -223,30 +229,54 @@ struct InstalledTools {
 fn check_installed_tools() -> InstalledTools {
     let beekeeper = is_installed_beekeeper();
     let notepadpp = is_installed_notepadpp();
-    dbg_log!("check_installed_tools: beekeeper={}, notepadpp={}", beekeeper, notepadpp);
-    InstalledTools { beekeeper, notepadpp }
+    dbg_log!(
+        "check_installed_tools: beekeeper={}, notepadpp={}",
+        beekeeper,
+        notepadpp
+    );
+    InstalledTools {
+        beekeeper,
+        notepadpp,
+    }
 }
 
 fn is_installed_beekeeper() -> bool {
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let p = std::path::PathBuf::from(local).join("Programs").join("beekeeper-studio").join("Beekeeper Studio.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(local)
+            .join("Programs")
+            .join("beekeeper-studio")
+            .join("Beekeeper Studio.exe");
+        if p.exists() {
+            return true;
+        }
     }
     if let Some(pf) = std::env::var_os("PROGRAMFILES") {
-        let p = std::path::PathBuf::from(pf).join("Beekeeper Studio").join("Beekeeper Studio.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Beekeeper Studio")
+            .join("Beekeeper Studio.exe");
+        if p.exists() {
+            return true;
+        }
     }
     false
 }
 
 fn is_installed_notepadpp() -> bool {
     if let Some(pf) = std::env::var_os("PROGRAMFILES") {
-        let p = std::path::PathBuf::from(pf).join("Notepad++").join("notepad++.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Notepad++")
+            .join("notepad++.exe");
+        if p.exists() {
+            return true;
+        }
     }
     if let Some(pf) = std::env::var_os("PROGRAMFILES(X86)") {
-        let p = std::path::PathBuf::from(pf).join("Notepad++").join("notepad++.exe");
-        if p.exists() { return true; }
+        let p = std::path::PathBuf::from(pf)
+            .join("Notepad++")
+            .join("notepad++.exe");
+        if p.exists() {
+            return true;
+        }
     }
     false
 }
@@ -256,28 +286,46 @@ fn get_stats() -> DashboardStats {
     dbg_log!("get_stats called");
     let storage = accounts::commands::get_storage_pub();
     let accounts = std::fs::read_dir(storage.session_json_dir())
-        .map(|e| e.flatten().filter(|f| {
-            f.path().extension().map(|x| x == "session").unwrap_or(false)
-        }).count())
+        .map(|e| {
+            e.flatten()
+                .filter(|f| {
+                    f.path()
+                        .extension()
+                        .map(|x| x == "session")
+                        .unwrap_or(false)
+                })
+                .count()
+        })
         .unwrap_or(0) as u32;
     let proxies = proxy::ProxyList::load().proxies.len() as u32;
 
     dbg_log!("get_stats accounts={} proxies={}", accounts, proxies);
-    DashboardStats {
-        accounts,
-        messages_today: 0,
-        queue: 0,
-        proxies,
-    }
+    DashboardStats { accounts, proxies }
 }
 
 #[tauri::command]
 fn get_quick_actions() -> Vec<QuickAction> {
     vec![
-        QuickAction { id: "mailing".into(), label: t("quick_mailing"), icon: "Send".into() },
-        QuickAction { id: "checker".into(), label: t("quick_checker"), icon: "ShieldCheck".into() },
-        QuickAction { id: "inviter".into(), label: t("quick_inviter"), icon: "UserPlus".into() },
-        QuickAction { id: "parser".into(), label: t("quick_parser"), icon: "Database".into() },
+        QuickAction {
+            id: "mailing".into(),
+            label: t("quick_mailing"),
+            icon: "Send".into(),
+        },
+        QuickAction {
+            id: "checker".into(),
+            label: t("quick_checker"),
+            icon: "ShieldCheck".into(),
+        },
+        QuickAction {
+            id: "inviter".into(),
+            label: t("quick_inviter"),
+            icon: "UserPlus".into(),
+        },
+        QuickAction {
+            id: "parser".into(),
+            label: t("quick_parser"),
+            icon: "Database".into(),
+        },
     ]
 }
 
@@ -294,6 +342,17 @@ async fn get_queue_stats(queue: tauri::State<'_, TaskQueue>) -> Result<(u32, u32
 }
 
 #[tauri::command]
+async fn get_active_task_count(
+    queue: tauri::State<'_, TaskQueue>,
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<u32, String> {
+    let queued = queue.queue_size().await;
+    let running = queue.running_count().await;
+    let validating = state.lock().unwrap().validating_ids.len() as u32;
+    Ok(queued + running + validating)
+}
+
+#[tauri::command]
 fn get_validating_ids(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Vec<String> {
     let ids = state.lock().unwrap().validating_ids.clone();
     dbg_log!("get_validating_ids -> {} ids", ids.len());
@@ -306,6 +365,7 @@ fn get_validation_errors(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> std::
 }
 
 fn main() {
+    app_update::apply_previous_cleanup_from_args();
     dbg_log!("=== Kastor v{} starting (DEBUG BUILD) ===", APP_VERSION);
 
     let state = Arc::new(Mutex::new(AppState {
@@ -318,7 +378,10 @@ fn main() {
     // startup dedup: remove sessions with duplicate auth_keys
     let removed = accounts::commands::dedup_sessions_by_auth_key();
     if removed > 0 {
-        dbg_log!("startup: removed {} duplicate sessions (by auth_key)", removed);
+        dbg_log!(
+            "startup: removed {} duplicate sessions (by auth_key)",
+            removed
+        );
     }
 
     dbg_log!("main: initializing tauri...");
@@ -328,6 +391,7 @@ fn main() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(state)
         .manage(task_queue)
+        .manage(app_update::UpdateState(Mutex::new(None)))
         .manage(accounts::auth_login::AuthSessions::new())
         .manage(registrar::manual::RegistrationSessions::new())
         .invoke_handler(tauri::generate_handler![
@@ -343,8 +407,11 @@ fn main() {
             accounts::commands::launch_telegram,
             get_task_queue,
             get_queue_stats,
+            get_active_task_count,
             get_validating_ids,
             get_validation_errors,
+            app_update::check_for_update,
+            app_update::download_and_apply_update,
             settings::get_settings,
             settings::save_settings,
             settings::patch_settings,
@@ -401,6 +468,8 @@ fn main() {
             accounts::commands::delete_role,
             accounts::commands::assign_role,
             accounts::commands::delete_accounts,
+            accounts::commands::export_account,
+            accounts::commands::export_accounts,
             accounts::commands::distribute_proxies,
             accounts::commands::get_proxy_distribution_info,
             accounts::commands::check_accounts_have_proxy,
@@ -477,7 +546,10 @@ fn main() {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                     let removed = accounts::commands::dedup_sessions_by_user_id();
                     if removed > 0 {
-                        dbg_log!("periodic dedup: removed {} duplicate sessions (by user_id)", removed);
+                        dbg_log!(
+                            "periodic dedup: removed {} duplicate sessions (by user_id)",
+                            removed
+                        );
                     }
                 }
             });

@@ -16,21 +16,29 @@ pub fn parse_invite_link(link: &str) -> Option<(&'static str, String)> {
 
     if let Some(rest) = path.strip_prefix("addlist/") {
         let slug = rest.trim_end_matches('/');
-        if slug.is_empty() { return None; }
+        if slug.is_empty() {
+            return None;
+        }
         return Some(("addlist", slug.to_string()));
     }
     if let Some(rest) = path.strip_prefix("joinchat/") {
         let h = rest.trim_end_matches('/');
-        if h.is_empty() { return None; }
+        if h.is_empty() {
+            return None;
+        }
         return Some(("private", h.to_string()));
     }
     if let Some(rest) = path.strip_prefix('+') {
         let h = rest.trim_end_matches('/');
-        if h.is_empty() { return None; }
+        if h.is_empty() {
+            return None;
+        }
         return Some(("private", h.to_string()));
     }
     let username = path.trim_end_matches('/').trim_start_matches('@');
-    if username.is_empty() { return None; }
+    if username.is_empty() {
+        return None;
+    }
     Some(("public", username.to_string()))
 }
 

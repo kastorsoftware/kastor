@@ -9,8 +9,7 @@ use symphonia::core::probe::Hint;
 
 pub fn convert_to_ogg_opus(input_path: &str) -> Result<Vec<u8>, String> {
     let (pcm_i16, _rate) = decode_audio_to_i16_mono(input_path)?;
-    ogg_opus::encode::<48000, 1>(&pcm_i16)
-        .map_err(|e| format!("ogg-opus encode: {:?}", e))
+    ogg_opus::encode::<48000, 1>(&pcm_i16).map_err(|e| format!("ogg-opus encode: {:?}", e))
 }
 
 fn decode_audio_to_i16_mono(path: &str) -> Result<(Vec<i16>, u32), String> {
@@ -32,7 +31,10 @@ fn decode_audio_to_i16_mono(path: &str) -> Result<(Vec<i16>, u32), String> {
         .find(|t| t.codec_params.codec != CODEC_TYPE_NULL)
         .ok_or("no audio track found")?;
 
-    let sample_rate = track.codec_params.sample_rate.ok_or("unknown sample rate")?;
+    let sample_rate = track
+        .codec_params
+        .sample_rate
+        .ok_or("unknown sample rate")?;
     let n_channels = track
         .codec_params
         .channels
@@ -47,7 +49,9 @@ fn decode_audio_to_i16_mono(path: &str) -> Result<(Vec<i16>, u32), String> {
     let mut pcm_f32: Vec<f32> = Vec::new();
 
     while let Ok(packet) = format.next_packet() {
-        let decoded = decoder.decode(&packet).map_err(|e| format!("decode packet: {e}"))?;
+        let decoded = decoder
+            .decode(&packet)
+            .map_err(|e| format!("decode packet: {e}"))?;
         if sample_buf.is_none() {
             let spec = *decoded.spec();
             sample_buf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
@@ -97,14 +101,8 @@ fn resample_f32_to_48k(input: &[f32], orig_rate: u32) -> Result<Vec<f32>, String
         oversampling_factor: 256,
         window: WindowFunction::BlackmanHarris2,
     };
-    let mut resampler = SincFixedIn::<f32>::new(
-        ratio,
-        0.95,
-        params,
-        input.len().min(8192),
-        1,
-    )
-    .map_err(|e| format!("resampler create: {:?}", e))?;
+    let mut resampler = SincFixedIn::<f32>::new(ratio, 0.95, params, input.len().min(8192), 1)
+        .map_err(|e| format!("resampler create: {:?}", e))?;
 
     let waves = vec![input.to_vec()];
     let output = resampler

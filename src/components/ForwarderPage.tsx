@@ -124,7 +124,7 @@ export function ForwarderPage() {
         <div className="p-6 space-y-5">
 
           <div>
-            <label className="text-sm font-medium text-foreground">{t("forwarder.groupLink")}</label>
+            <label className="block text-sm font-medium text-foreground">{t("forwarder.groupLink")}</label>
             <input value={config.groupLink} onChange={(e) => set("groupLink", e.target.value)}
               placeholder="@group, https://t.me/group, https://t.me/+invite"
               className="mt-1.5 w-full max-w-md rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary/50" />

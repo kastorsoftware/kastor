@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { WifiOff, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { Download, WifiOff, X } from "lucide-react";
 import { toast } from "sonner";
 import { Dashboard } from "@/components/Dashboard";
 import { ToolsRecommendation } from "@/components/ToolsRecommendation";
@@ -11,8 +12,187 @@ import { ru } from "@/i18n/ru";
 
 const IS_DEV = !("__TAURI_INTERNALS__" in window);
 
+interface UpdateInfo {
+  current_version: string;
+  version: string;
+}
+
+interface StoredSettings {
+  auto_update: boolean;
+}
+
+interface DownloadProgress {
+  downloaded_bytes: number;
+  total_bytes: number | null;
+}
+
+function UpdateToast({ update, automatic, onInstall, onCancel }: {
+  update: UpdateInfo;
+  automatic: boolean;
+  onInstall: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const [seconds, setSeconds] = useState(30);
+  const [downloading, setDownloading] = useState(false);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+  const automaticAttempted = useRef(false);
+  const locale = localStorage.getItem("app_locale") || "en";
+  const ru = locale !== "en";
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<DownloadProgress>("update-download-progress", (event) => setProgress(event.payload))
+      .then((stop) => { if (disposed) stop(); else unlisten = stop; })
+      .catch((error) => console.error("Update progress listener failed", error));
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
+  useEffect(() => {
+    if (!automatic || automaticAttempted.current) return;
+    if (seconds === 0) {
+      automaticAttempted.current = true;
+      setDownloading(true);
+      void onInstall().finally(() => setDownloading(false));
+      return;
+    }
+    const timer = window.setTimeout(() => setSeconds((value) => value - 1), 1000);
+    return () => window.clearTimeout(timer);
+  }, [automatic, onInstall, seconds]);
+
+  const startInstall = () => {
+    setDownloading(true);
+    void onInstall().finally(() => setDownloading(false));
+  };
+
+  const progressText = progress?.total_bytes
+    ? `${Math.min(100, Math.floor(progress.downloaded_bytes / progress.total_bytes * 100))}%`
+    : progress ? `${Math.round(progress.downloaded_bytes / 1024 / 1024)} MB` : null;
+
+  return (
+    <div className="update-toast">
+      <div className="update-toast__icon"><Download className="h-4 w-4" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="update-toast__title">{ru ? "Доступно обновление" : "Update available"}</div>
+        <div className="update-toast__text">
+          {downloading
+            ? (ru ? `Скачивание обновления: ${progressText ?? "0%"}` : `Downloading update: ${progressText ?? "0%"}`)
+            : <>{update.current_version} → {update.version}{automatic && !automaticAttempted.current && ` · ${ru ? `через ${seconds} сек.` : `in ${seconds}s`}`}</>}
+        </div>
+      </div>
+      {automatic && !automaticAttempted.current ? (
+        <button className="update-toast__close" type="button" onClick={onCancel} disabled={downloading} title={ru ? "Отменить" : "Cancel"} aria-label={ru ? "Отменить" : "Cancel"}>
+          <X className="h-4 w-4" />
+        </button>
+      ) : (
+        <button className="update-toast__close" type="button" onClick={startInstall} disabled={downloading} title={ru ? "Обновить" : "Update"} aria-label={ru ? "Обновить" : "Update"}>
+          <Download className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function WaitingForTasksToast({ update, onCancel }: { update: UpdateInfo; onCancel: () => void }) {
+  const locale = localStorage.getItem("app_locale") || "en";
+  const ru = locale !== "en";
+
+  return (
+    <div className="update-toast">
+      <div className="update-toast__icon"><Download className="h-4 w-4" /></div>
+      <div className="min-w-0 flex-1">
+        <div className="update-toast__title">{ru ? "Обновление ожидает" : "Update pending"}</div>
+        <div className="update-toast__text">
+          {update.current_version} → {update.version} · {ru ? "установится через 30 сек. после завершения задач" : "will install 30s after tasks finish"}
+        </div>
+      </div>
+      <button className="update-toast__close" type="button" onClick={onCancel} title={ru ? "Отменить" : "Cancel"} aria-label={ru ? "Отменить" : "Cancel"}>
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
 function App() {
   const [showToolsRec, setShowToolsRec] = useState(false);
+  const updateStarted = useRef(false);
+  const updateCancelled = useRef(false);
+
+  const installUpdate = useCallback(async () => {
+    if (updateStarted.current) return;
+    updateStarted.current = true;
+    try {
+      await invoke("download_and_apply_update");
+    } catch (error) {
+      updateStarted.current = false;
+      const ru = localStorage.getItem("app_locale") === "ru";
+      toast.error(String(error).includes("UPDATE_TASKS_ACTIVE")
+        ? (ru ? "Обновление отложено: сначала завершите активные задачи." : "Update deferred: finish active tasks first.")
+        : String(error));
+    }
+  }, []);
+
+  useEffect(() => {
+    if (IS_DEV) return;
+    let retryTimer: number | undefined;
+    let dismissed = false;
+
+    const showUpdate = (update: UpdateInfo, automatic: boolean) => {
+      const id = toast.custom(
+        () => <UpdateToast
+          update={update}
+          automatic={automatic}
+          onInstall={installUpdate}
+          onCancel={() => { updateCancelled.current = true; toast.dismiss(id); }}
+        />,
+        { duration: Infinity, position: "bottom-right" },
+      );
+    };
+
+    const waitForTasks = async (update: UpdateInfo, waitingToastId: string | number) => {
+      if (dismissed || updateCancelled.current) return;
+      try {
+        const activeTasks = await invoke<number>("get_active_task_count");
+        if (dismissed || updateCancelled.current) return;
+        if (activeTasks === 0) {
+          toast.dismiss(waitingToastId);
+          showUpdate(update, true);
+          return;
+        }
+      } catch {
+        toast.dismiss(waitingToastId);
+        return;
+      }
+      retryTimer = window.setTimeout(() => { void waitForTasks(update, waitingToastId); }, 2000);
+    };
+
+    const check = async () => {
+      try {
+        const settings = await invoke<StoredSettings>("get_settings");
+        if (dismissed) return;
+        const update = await invoke<UpdateInfo | null>("check_for_update");
+        if (dismissed || !update) return;
+        if (!settings.auto_update) {
+          showUpdate(update, false);
+          return;
+        }
+        const waitingToastId = toast.custom(
+          (id) => <WaitingForTasksToast update={update} onCancel={() => { updateCancelled.current = true; toast.dismiss(id); }} />,
+          { duration: Infinity, position: "bottom-right" },
+        );
+        await waitForTasks(update, waitingToastId);
+      } catch (error) {
+        // The update check must never block application startup.
+        console.warn("Update check failed", error);
+      }
+    };
+
+    void check();
+    return () => {
+      dismissed = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [installUpdate]);
 
   useEffect(() => {
     if (!localStorage.getItem("tools_rec_skipped")) setShowToolsRec(true);

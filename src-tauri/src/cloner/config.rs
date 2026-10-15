@@ -77,7 +77,9 @@ pub enum DestinationSpec {
         copy_description: bool,
         copy_photo: bool,
     },
-    Existing { id_or_link: String },
+    Existing {
+        id_or_link: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -91,9 +93,19 @@ impl ClonerConfig {
         // clamp pacing per spec (3..60 sec)
         let dmin = p.delay_min_sec.clamp(3, 60) as u64 * 1000;
         let dmax = p.delay_max_sec.clamp(3, 60) as u64 * 1000;
-        let (dmin, dmax) = if dmin > dmax { (dmax, dmax) } else { (dmin, dmax) };
+        let (dmin, dmax) = if dmin > dmax {
+            (dmax, dmax)
+        } else {
+            (dmin, dmax)
+        };
 
-        let mb = |v: u64| if v == 0 { 0 } else { v.saturating_mul(1024 * 1024) };
+        let mb = |v: u64| {
+            if v == 0 {
+                0
+            } else {
+                v.saturating_mul(1024 * 1024)
+            }
+        };
 
         let destination = match p.destination_mode.as_str() {
             "new_channel" => {
@@ -102,7 +114,9 @@ impl ClonerConfig {
                     "private" => NewChannelVisibility::Private,
                     other => return Err(format!("unknown visibility: {other}")),
                 };
-                if visibility == NewChannelVisibility::Public && p.new_channel_username.trim().is_empty() {
+                if visibility == NewChannelVisibility::Public
+                    && p.new_channel_username.trim().is_empty()
+                {
                     return Err(crate::i18n::t("cloner_cfg_public_no_username"));
                 }
                 DestinationSpec::NewChannel {
@@ -117,7 +131,9 @@ impl ClonerConfig {
                 if p.existing_channel_id.trim().is_empty() {
                     return Err(crate::i18n::t("cloner_cfg_no_existing_id"));
                 }
-                DestinationSpec::Existing { id_or_link: p.existing_channel_id.trim().to_string() }
+                DestinationSpec::Existing {
+                    id_or_link: p.existing_channel_id.trim().to_string(),
+                }
             }
             other => return Err(format!("unknown destination_mode: {other}")),
         };
@@ -138,7 +154,12 @@ impl ClonerConfig {
             max_photo_bytes: mb(p.max_photo_size_mb),
             destination,
             replacements: p.replacements,
-            skip_keywords: p.skip_keywords.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
+            skip_keywords: p
+                .skip_keywords
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
             delay_min_ms: dmin,
             delay_max_ms: dmax,
             preserve_replies: p.preserve_replies,

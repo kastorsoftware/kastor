@@ -37,6 +37,19 @@ impl AccountStorage {
         self.tdatas_dir().join(id)
     }
 
+    pub fn export_dir(&self) -> PathBuf {
+        self.base.parent().unwrap_or(&self.base).join("export")
+    }
+
+    pub fn create_export_dir(&self) -> Result<PathBuf, String> {
+        let root = self.export_dir();
+        fs::create_dir_all(&root).map_err(|e| format!("create export directory: {e}"))?;
+        // Each operation owns a new directory; previous exports are user data.
+        let destination = root.join(format!("export-{}", uuid::Uuid::new_v4()));
+        fs::create_dir(&destination).map_err(|e| format!("create export directory: {e}"))?;
+        Ok(destination)
+    }
+
     pub fn contains_phone(&self, phone: &str) -> Result<bool, String> {
         let expected = phone_digits(phone);
         if expected.is_empty() {
@@ -83,6 +96,23 @@ fn phone_digits(phone: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exports_do_not_replace_previous_results() {
+        let root =
+            std::env::temp_dir().join(format!("kastor-export-test-{}", uuid::Uuid::new_v4()));
+        let storage = AccountStorage::new(&root.join("accounts"));
+        let first = storage.create_export_dir().unwrap();
+        fs::write(first.join("account.session"), b"previous export").unwrap();
+        let second = storage.create_export_dir().unwrap();
+        assert_ne!(first, second);
+        assert_eq!(
+            fs::read(first.join("account.session")).unwrap(),
+            b"previous export"
+        );
+        assert!(second.starts_with(root.join("export")));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn existing_session_phone_matches_across_formatting() {

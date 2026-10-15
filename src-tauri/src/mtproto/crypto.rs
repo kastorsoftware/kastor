@@ -62,15 +62,19 @@ pub fn ige_decrypt(data: &[u8], key: &[u8; 32], iv: &[u8; 32]) -> Vec<u8> {
     result
 }
 
-// msg_key = sha256(auth_key[88..120] + plaintext)[8..24]
-pub fn calc_msg_key(auth_key: &[u8; 256], plaintext: &[u8]) -> [u8; 16] {
+// msg_key = sha256(auth_key[88+x..120+x] + plaintext)[8..24]
+fn calc_msg_key_with_x(auth_key: &[u8; 256], plaintext: &[u8], x: usize) -> [u8; 16] {
     let mut hasher = Sha256::new();
-    hasher.update(&auth_key[88..120]);
+    hasher.update(&auth_key[88 + x..120 + x]);
     hasher.update(plaintext);
     let hash = hasher.finalize();
     let mut msg_key = [0u8; 16];
     msg_key.copy_from_slice(&hash[8..24]);
     msg_key
+}
+
+pub fn calc_msg_key(auth_key: &[u8; 256], plaintext: &[u8]) -> [u8; 16] {
+    calc_msg_key_with_x(auth_key, plaintext, 0)
 }
 
 // kdf for client->server (x=0)
@@ -109,7 +113,7 @@ fn kdf(auth_key: &[u8; 256], msg_key: &[u8; 16], x: usize) -> ([u8; 32], [u8; 32
 
 // auth_key_id = lower 64 bits of sha1(auth_key)
 pub fn auth_key_id(auth_key: &[u8; 256]) -> u64 {
-    use sha1::{Sha1, Digest as _};
+    use sha1::{Digest as _, Sha1};
     let mut hasher = Sha1::new();
     hasher.update(auth_key);
     let hash = hasher.finalize();
@@ -122,7 +126,11 @@ pub fn auth_key_id(auth_key: &[u8; 256]) -> u64 {
 pub fn encrypt_message(auth_key: &[u8; 256], plaintext: &[u8]) -> Vec<u8> {
     // mtproto 2.0: padding 12..1024 bytes, total divisible by 16
     let padding_needed = (16 - (plaintext.len() % 16)) % 16;
-    let total_padding = if padding_needed < 12 { padding_needed + 16 } else { padding_needed };
+    let total_padding = if padding_needed < 12 {
+        padding_needed + 16
+    } else {
+        padding_needed
+    };
     let mut padded = Vec::with_capacity(plaintext.len() + total_padding);
     padded.extend_from_slice(plaintext);
     let mut rng_buf = vec![0u8; total_padding];
@@ -143,7 +151,7 @@ pub fn encrypt_message(auth_key: &[u8; 256], plaintext: &[u8]) -> Vec<u8> {
 
 // decrypt received message
 pub fn decrypt_message(auth_key: &[u8; 256], data: &[u8]) -> Result<Vec<u8>, String> {
-    if data.len() < 24 {
+    if data.len() < 40 || (data.len() - 24) % 16 != 0 {
         return Err("message too short".into());
     }
     let msg_key: [u8; 16] = data[8..24].try_into().unwrap();
@@ -151,6 +159,31 @@ pub fn decrypt_message(auth_key: &[u8; 256], data: &[u8]) -> Result<Vec<u8>, Str
 
     let (aes_key, aes_iv) = kdf_server(auth_key, &msg_key);
     let decrypted = ige_decrypt(encrypted, &aes_key, &aes_iv);
+    if calc_msg_key_with_x(auth_key, &decrypted, 8) != msg_key {
+        return Err("message key mismatch".into());
+    }
 
     Ok(decrypted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifies_incoming_message_key_and_rejects_tampering() {
+        let key = [7; 256];
+        let plaintext = [42; 64];
+        let message_key = calc_msg_key_with_x(&key, &plaintext, 8);
+        let (aes_key, iv) = kdf_server(&key, &message_key);
+        let mut packet = auth_key_id(&key).to_le_bytes().to_vec();
+        packet.extend_from_slice(&message_key);
+        packet.extend_from_slice(&ige_encrypt(&plaintext, &aes_key, &iv));
+        assert_eq!(decrypt_message(&key, &packet).unwrap(), plaintext);
+        let mut tampered = packet.clone();
+        tampered[32] ^= 1;
+        assert!(decrypt_message(&key, &tampered).is_err());
+        assert!(decrypt_message(&key, &packet[..packet.len() - 1]).is_err());
+        assert!(decrypt_message(&key, &packet[..24]).is_err());
+    }
 }

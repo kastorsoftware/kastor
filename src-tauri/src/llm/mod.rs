@@ -1,8 +1,8 @@
 // llm: OpenAI-compatible API client for text generation.
 // requests are proxied through a random proxy from the pool.
 
-use std::time::Duration;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 use crate::proxy::{ProxyConfig, ProxyList, ProxyType};
 use crate::settings::AppSettings;
@@ -42,7 +42,10 @@ pub struct ModelEntry {
 // send a prompt to the configured LLM and return the assistant's reply
 pub fn complete(system_prompt: &str, user_message: &str) -> Result<String, String> {
     let settings = AppSettings::load();
-    if settings.llm_api_url.is_empty() || settings.llm_token.is_empty() || settings.llm_model.is_empty() {
+    if settings.llm_api_url.is_empty()
+        || settings.llm_token.is_empty()
+        || settings.llm_model.is_empty()
+    {
         return Err(crate::i18n::t("llm_not_configured"));
     }
 
@@ -54,30 +57,56 @@ pub fn complete(system_prompt: &str, user_message: &str) -> Result<String, Strin
     }
 }
 
-fn complete_openai(agent: &ureq::Agent, settings: &AppSettings, system_prompt: &str, user_message: &str) -> Result<String, String> {
+fn complete_openai(
+    agent: &ureq::Agent,
+    settings: &AppSettings,
+    system_prompt: &str,
+    user_message: &str,
+) -> Result<String, String> {
     let messages = vec![
-        ChatMessage { role: "system".to_string(), content: system_prompt.to_string() },
-        ChatMessage { role: "user".to_string(), content: user_message.to_string() },
+        ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt.to_string(),
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+        },
     ];
-    let body = ChatRequest { model: settings.llm_model.clone(), messages };
-    let url = format!("{}/chat/completions", settings.llm_api_url.trim_end_matches('/'));
+    let body = ChatRequest {
+        model: settings.llm_model.clone(),
+        messages,
+    };
+    let url = format!(
+        "{}/chat/completions",
+        settings.llm_api_url.trim_end_matches('/')
+    );
 
-    let resp = agent.post(&url)
+    let resp = agent
+        .post(&url)
         .header("Authorization", &format!("Bearer {}", settings.llm_token))
         .header("Content-Type", "application/json")
         .send_json(&body)
         .map_err(|e| format!("LLM request failed: {e}"))?;
 
-    let parsed: ChatResponse = resp.into_body()
+    let parsed: ChatResponse = resp
+        .into_body()
         .read_json()
         .map_err(|e| format!("LLM response parse error: {e}"))?;
 
-    parsed.choices.first()
+    parsed
+        .choices
+        .first()
         .map(|c| c.message.content.clone())
         .ok_or_else(|| "LLM returned empty choices".into())
 }
 
-fn complete_claude(agent: &ureq::Agent, settings: &AppSettings, system_prompt: &str, user_message: &str) -> Result<String, String> {
+fn complete_claude(
+    agent: &ureq::Agent,
+    settings: &AppSettings,
+    system_prompt: &str,
+    user_message: &str,
+) -> Result<String, String> {
     let body = serde_json::json!({
         "model": settings.llm_model,
         "max_tokens": 4096,
@@ -86,18 +115,21 @@ fn complete_claude(agent: &ureq::Agent, settings: &AppSettings, system_prompt: &
     });
     let url = format!("{}/messages", settings.llm_api_url.trim_end_matches('/'));
 
-    let resp = agent.post(&url)
+    let resp = agent
+        .post(&url)
         .header("x-api-key", &settings.llm_token)
         .header("anthropic-version", "2023-06-01")
         .header("Content-Type", "application/json")
         .send_json(&body)
         .map_err(|e| format!("Claude request failed: {e}"))?;
 
-    let parsed: serde_json::Value = resp.into_body()
+    let parsed: serde_json::Value = resp
+        .into_body()
         .read_json()
         .map_err(|e| format!("Claude response parse error: {e}"))?;
 
-    parsed["content"].as_array()
+    parsed["content"]
+        .as_array()
         .and_then(|arr| arr.first())
         .and_then(|block| block["text"].as_str())
         .map(|s| s.to_string())
@@ -129,7 +161,8 @@ fn llm_get_models_sync() -> Result<Vec<String>, String> {
         .call()
         .map_err(|e| format!("request failed: {e}"))?;
 
-    let parsed: ModelsResponse = resp.into_body()
+    let parsed: ModelsResponse = resp
+        .into_body()
         .read_json()
         .map_err(|e| format!("parse error: {e}"))?;
 
@@ -160,7 +193,8 @@ fn llm_detect_api_type_sync() -> Result<String, String> {
 
     // try openai-style: GET /models with Bearer token
     let openai_url = format!("{base}/models");
-    if let Ok(mut resp) = agent.get(&openai_url)
+    if let Ok(mut resp) = agent
+        .get(&openai_url)
         .header("Authorization", &format!("Bearer {}", settings.llm_token))
         .call()
     {
@@ -177,7 +211,8 @@ fn llm_detect_api_type_sync() -> Result<String, String> {
     }
 
     // try claude-style: GET /models with x-api-key + anthropic-version
-    if let Ok(mut resp) = agent.get(&openai_url)
+    if let Ok(mut resp) = agent
+        .get(&openai_url)
         .header("x-api-key", &settings.llm_token)
         .header("anthropic-version", "2023-06-01")
         .call()
@@ -192,7 +227,8 @@ fn llm_detect_api_type_sync() -> Result<String, String> {
     // fallback: check if /chat/completions endpoint exists (openai)
     // vs /messages endpoint (claude) by sending OPTIONS or checking 404/405
     let chat_url = format!("{base}/chat/completions");
-    if let Ok(_) = agent.post(&chat_url)
+    if let Ok(_) = agent
+        .post(&chat_url)
         .header("Authorization", &format!("Bearer {}", settings.llm_token))
         .header("Content-Type", "application/json")
         .send_json(&serde_json::json!({"model":"x","messages":[]}))

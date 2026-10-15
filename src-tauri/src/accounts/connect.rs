@@ -5,7 +5,9 @@ use crate::mtproto::client::MtpClient;
 use crate::mtproto::tl;
 use crate::proxy;
 
-pub async fn connect_account_with_info(account_id: &str) -> Result<(MtpClient, tl::UserInfo, u64), String> {
+pub async fn connect_account_with_info(
+    account_id: &str,
+) -> Result<(MtpClient, tl::UserInfo, u64), String> {
     let storage = get_storage_pub();
     let session_path = storage.session_path(account_id);
     let json_path = storage.json_path(account_id);
@@ -22,14 +24,17 @@ pub async fn connect_account_with_info(account_id: &str) -> Result<(MtpClient, t
     let mut key = [0u8; 256];
     key.copy_from_slice(&session.auth_key);
     let addr = format!("{}:{}", session.server_address, session.port);
-    let proxy = proxy::select_proxy_for_account(json.proxy.as_deref()).ok().flatten();
+    let proxy = proxy::select_proxy_for_account(json.proxy.as_deref())?;
 
     let mut client = {
         let mut last_err = String::new();
         let mut connected = None;
         for attempt in 0..5 {
             match MtpClient::connect(&addr, &key, proxy.as_ref()).await {
-                Ok(c) => { connected = Some(c); break; }
+                Ok(c) => {
+                    connected = Some(c);
+                    break;
+                }
                 Err(e) => {
                     last_err = e;
                     if attempt < 4 {
@@ -42,15 +47,27 @@ pub async fn connect_account_with_info(account_id: &str) -> Result<(MtpClient, t
     };
 
     let dev = if !json.device.is_empty() && !json.sdk.is_empty() {
-        devices::DeviceInfo { device: json.device.clone(), sdk: json.sdk.clone(), app_version: json.app_version.clone() }
+        devices::DeviceInfo {
+            device: json.device.clone(),
+            sdk: json.sdk.clone(),
+            app_version: json.app_version.clone(),
+        }
     } else {
         devices::generate_random_device()
     };
-    let app_id = if json.app_id == 0 { crate::get_app_config().app_id } else { json.app_id };
-    let get_me = tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
-    let resp = client.invoke(&get_me).await.map_err(|e| format!("init: {e}"))?;
-    let user_info = crate::mtproto::tl::parse_users_response(&resp)
-        .map_err(|e| format!("init parse: {e}"))?;
+    let app_id = if json.app_id == 0 {
+        crate::get_app_config().app_id
+    } else {
+        json.app_id
+    };
+    let get_me =
+        tl::build_get_me_request(app_id, &dev.device, &dev.sdk, &dev.app_version, "en", "en");
+    let resp = client
+        .invoke(&get_me)
+        .await
+        .map_err(|e| format!("init: {e}"))?;
+    let user_info =
+        crate::mtproto::tl::parse_users_response(&resp).map_err(|e| format!("init parse: {e}"))?;
     let server_salt = client.server_salt();
     Ok((client, user_info, server_salt))
 }
