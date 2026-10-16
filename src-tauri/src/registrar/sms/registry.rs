@@ -76,7 +76,7 @@ pub fn create_provider(config: SmsProviderConfig) -> Result<Box<dyn SmsProvider>
         SmsProviderKind::SmsMan => Box::new(SmsActivateProvider::sms_man(config.api_key)?),
         SmsProviderKind::Sms365 => Box::new(SmsActivateProvider::sms_365(config.api_key)?),
         SmsProviderKind::Sms24_7 => Box::new(SmsActivateProvider::sms_24_7(config.api_key)?),
-        SmsProviderKind::GreedySms => Box::new(SmsActivateProvider::greedy_sms(config.api_key)?),
+        SmsProviderKind::GreedySms => Box::new(super::greedy_sms::GreedySmsProvider::new(config.api_key)?),
         SmsProviderKind::BringSms => Box::new(SmsActivateProvider::bring_sms(config.api_key)?),
         SmsProviderKind::FiveSim => Box::new(FiveSimProvider::new(config.api_key)?),
         SmsProviderKind::VakSms => Box::new(VakSmsProvider::new(config.api_key)?),

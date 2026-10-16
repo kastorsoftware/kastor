@@ -1,4 +1,5 @@
 mod five_sim;
+mod greedy_sms;
 mod online_sim;
 mod provider;
 mod registry;

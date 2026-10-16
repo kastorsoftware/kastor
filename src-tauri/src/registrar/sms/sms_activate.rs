@@ -197,6 +197,10 @@ impl SmsProvider for SmsActivateProvider {
         action: ActivationAction,
     ) -> Result<ActionResult, SmsError> {
         validate_id(&self.name, activation_id)?;
+        // Greedy starts waiting immediately and only documents statuses 3, 6 and 8.
+        if self.endpoint == GREEDY_SMS_ENDPOINT && action == ActivationAction::MarkReady {
+            return Ok(ActionResult::Ready);
+        }
         let status = match action {
             ActivationAction::MarkReady => "1",
             ActivationAction::RequestAnotherCode => "3",
@@ -269,7 +273,7 @@ fn validate_id(provider: &str, activation_id: &str) -> Result<(), SmsError> {
     Ok(())
 }
 
-fn compatible_service_name(service: &str) -> &str {
+pub(super) fn compatible_service_name(service: &str) -> &str {
     if service.eq_ignore_ascii_case("telegram") {
         "tg"
     } else {
@@ -305,7 +309,10 @@ fn parse_balance(provider: &str, body: &str) -> Result<f64, SmsError> {
 }
 
 fn parse_number(provider: &str, body: &str) -> Result<Activation, SmsError> {
-    if let Some(value) = body.strip_prefix("ACCESS_NUMBER:") {
+    let number = body.strip_prefix("ACCESS_NUMBER:").or_else(|| {
+        (provider == "Greedy-SMS").then(|| body.strip_prefix("STATUS_OK:")).flatten()
+    });
+    if let Some(value) = number {
         let (id, phone) = value.split_once(':').ok_or_else(|| {
             SmsError::new(
                 provider,
@@ -483,6 +490,23 @@ mod tests {
         let activation = parse_number("test", "ACCESS_NUMBER:123:79990001122").unwrap();
         assert_eq!(activation.id, "123");
         assert_eq!(activation.phone, "79990001122");
+    }
+
+    #[test]
+    fn greedy_accepts_documented_number_response_without_affecting_other_providers() {
+        let activation = parse_number("Greedy-SMS", "STATUS_OK:123:79990001122").unwrap();
+        assert_eq!(activation.id, "123");
+        assert_eq!(activation.phone, "79990001122");
+        assert!(parse_number("test", "STATUS_OK:123:79990001122").is_err());
+        assert!(parse_number("Greedy-SMS", "STATUS_OK:123").is_err());
+        assert!(parse_number("Greedy-SMS", "STATUS_OK:123:").is_err());
+    }
+
+    #[test]
+    fn greedy_mark_ready_does_not_send_an_unsupported_status() {
+        let provider = SmsActivateProvider::greedy_sms("test-key").unwrap();
+        assert_eq!(provider.update_activation("123", ActivationAction::MarkReady).unwrap(), ActionResult::Ready);
+        assert!(provider.update_activation("", ActivationAction::MarkReady).is_err());
     }
 
     #[test]
